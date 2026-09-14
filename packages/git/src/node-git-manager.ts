@@ -32,15 +32,16 @@ export class NodeGitManager implements GitManager {
   }
 
   async isRepository(cwd: string): Promise<boolean> {
+    const args = ["rev-parse", "--is-inside-work-tree"];
     const result = await this.runner.run({
       executable: this.gitExecutable,
-      args: ["rev-parse", "--is-inside-work-tree"],
+      args,
       cwd,
     });
-    if (result.outcome.kind === "completed" && result.outcome.code === 0) {
+    if (result.outcome.kind === "completed") {
       return result.stdout.trim() === "true";
     }
-    return false;
+    throw this.gitError("isRepository", args, result);
   }
 
   async resolveHeadRevision(cwd: string): Promise<string> {
@@ -60,7 +61,7 @@ export class NodeGitManager implements GitManager {
 
   async createBranch(cwd: string, branchName: string): Promise<void> {
     const args = ["branch", branchName];
-    requireNonEmpty(branchName, "createBranch", "branch name", args);
+    this.requireNonEmpty(branchName, "createBranch", "branch name", args);
     await this.runGit(cwd, args, "createBranch");
   }
 
@@ -70,8 +71,8 @@ export class NodeGitManager implements GitManager {
     branchName: string,
   ): Promise<void> {
     const args = ["worktree", "add", worktreePath, branchName];
-    requireNonEmpty(worktreePath, "createWorktree", "worktree path", args);
-    requireNonEmpty(branchName, "createWorktree", "branch name", args);
+    this.requireNonEmpty(worktreePath, "createWorktree", "worktree path", args);
+    this.requireNonEmpty(branchName, "createWorktree", "branch name", args);
     await this.runGit(cwd, args, "createWorktree");
   }
 
@@ -95,7 +96,7 @@ export class NodeGitManager implements GitManager {
 
   async commitStaged(cwd: string, message: string): Promise<string> {
     const args = ["commit", "-m", message];
-    requireNonEmpty(message, "commitStaged", "commit message", args);
+    this.requireNonEmpty(message, "commitStaged", "commit message", args);
     await this.runGit(cwd, args, "commitStaged");
     return this.resolveHeadRevision(cwd);
   }
@@ -109,7 +110,7 @@ export class NodeGitManager implements GitManager {
       options?.force === true
         ? ["worktree", "remove", "--force", worktreePath]
         : ["worktree", "remove", worktreePath];
-    requireNonEmpty(worktreePath, "removeWorktree", "worktree path", args);
+    this.requireNonEmpty(worktreePath, "removeWorktree", "worktree path", args);
     await this.runGit(cwd, args, "removeWorktree");
   }
 
@@ -151,6 +152,27 @@ export class NodeGitManager implements GitManager {
       failure,
     );
   }
+
+  private requireNonEmpty(
+    value: string,
+    operation: string,
+    label: string,
+    command: readonly string[],
+  ): void {
+    if (typeof value !== "string" || value.length === 0) {
+      throw new GitError(
+        `Git operation "${operation}" failed (invalid ${label})`,
+        {
+          operation,
+          command: [this.gitExecutable, ...command],
+          exitCode: null,
+          reason: `invalid ${label}`,
+          stdout: "",
+          stderr: "",
+        },
+      );
+    }
+  }
 }
 
 function describeOutcome(outcome: ProcessOutcome): string {
@@ -165,27 +187,6 @@ function describeOutcome(outcome: ProcessOutcome): string {
       return "cancelled";
     case "spawn-error":
       return `spawn error ${outcome.code}: ${outcome.message}`;
-  }
-}
-
-function requireNonEmpty(
-  value: string,
-  operation: string,
-  label: string,
-  command: readonly string[],
-): void {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new GitError(
-      `Git operation "${operation}" failed (invalid ${label})`,
-      {
-        operation,
-        command: [DEFAULT_GIT_EXECUTABLE, ...command],
-        exitCode: null,
-        reason: `invalid ${label}`,
-        stdout: "",
-        stderr: "",
-      },
-    );
   }
 }
 

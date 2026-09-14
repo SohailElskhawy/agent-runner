@@ -111,6 +111,16 @@ describe("NodeGitManager", () => {
     });
 
     await expect(
+      missing.isRepository(baseDir),
+    ).rejects.toThrow(GitError);
+    const repositoryError = await gitFailureOf(
+      missing.isRepository(baseDir),
+    );
+    expect(repositoryError.failure.operation).toBe("isRepository");
+    expect(repositoryError.failure.exitCode).toBeNull();
+    expect(repositoryError.failure.reason).toContain("spawn error");
+
+    await expect(
       missing.resolveHeadRevision(baseDir),
     ).rejects.toThrow(GitError);
     const error = await gitFailureOf(missing.resolveHeadRevision(baseDir));
@@ -206,6 +216,21 @@ describe("NodeGitManager", () => {
     const diff = await git.getStagedDiff(worktreePath);
     expect(diff).toContain("README.md");
     expect(diff).toContain("new file with spaces.txt");
+  });
+
+  it("parses staged rename records with the previous path", async () => {
+    const repo = await createRepository("repo");
+    await runFixtureGit(repo, ["mv", "README.md", "renamed file.md"]);
+
+    const status = await git.status(repo);
+
+    expect(status.clean).toBe(false);
+    expect(status.entries).toHaveLength(1);
+    const renamed = status.entries[0];
+    expect(renamed?.indexStatus).toBe("R");
+    expect(renamed?.worktreeStatus).toBe(" ");
+    expect(renamed?.path).toBe("renamed file.md");
+    expect(renamed?.previousPath).toBe("README.md");
   });
 
   it("commits staged task changes and reports the new revision", async () => {
