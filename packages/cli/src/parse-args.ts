@@ -81,4 +81,13 @@ export const USAGE = `Usage:
   agentic status
   agentic inspect <task-id>
   agentic help
-  agentic version`;
+  agentic version
+
+Local runner state (SQLite database and task worktrees) lives outside the
+repository, per machine, keyed to the normalized repository path. Moving or
+renaming the repository directory therefore creates a new local state
+identity; no state migration is performed.
+
+Verification commands come from explicit runner configuration. Tasks that
+require verification checks with no configured command are rejected before
+execution.`;

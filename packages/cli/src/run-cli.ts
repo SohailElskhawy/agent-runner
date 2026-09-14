@@ -60,7 +60,7 @@ export async function runCli(
                 return await executeInspectCommand(command.taskId, services, io);
             }
           } finally {
-            await services.close();
+            await closeServices(services, io);
           }
         });
     }
@@ -76,6 +76,17 @@ async function withServices<T>(
 ): Promise<T> {
   const services = await resolveServices(servicesFactory);
   return body(services);
+}
+
+async function closeServices(
+  services: RunnerAppService,
+  io: CliIo,
+): Promise<void> {
+  try {
+    await services.close();
+  } catch (error) {
+    io.writeError(`warning: closing runner state failed: ${describeError(error)}`);
+  }
 }
 
 function resolveServices(

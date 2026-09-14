@@ -21,6 +21,11 @@ import {
 
 const AGENTS_MARKDOWN = "# Fixture rules\n\nBe precise.\n";
 
+const EXPLICIT_VERIFICATION_CHECKS = [
+  { name: "typecheck", executable: "node", args: ["--version"] },
+  { name: "unit", executable: "node", args: ["--version"] },
+] as const;
+
 describe("CLI end-to-end over a repository with spaces in its path", () => {
   let directory: string;
   let repositoryPath: string;
@@ -44,8 +49,25 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     const appServices = createAppServices({
       projectRoot: repositoryPath,
       stateDir: stateDirectory,
+      verificationChecks: EXPLICIT_VERIFICATION_CHECKS,
     }, {
       agent,
+      verification: new PassingVerificationEngine(),
+    });
+    return createStoreBackedAppService({
+      storePath: resolveStorePath({ projectRoot: repositoryPath, stateDir: stateDirectory }),
+      projectRoot: repositoryPath,
+      store: appServices.store,
+      orchestrator: appServices.orchestrator,
+    });
+  }
+
+  function defaultWiredServices() {
+    const appServices = createAppServices({
+      projectRoot: repositoryPath,
+      stateDir: stateDirectory,
+    }, {
+      agent: new RecordingAgentRuntime(),
       verification: new PassingVerificationEngine(),
     });
     return createStoreBackedAppService({
@@ -119,5 +141,27 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     const runExit = await runCli(["run", "M999"], { io, servicesFactory: async () => services });
     expect(runExit).toBe(1);
     expect(errors.join("\n")).toContain("rejected");
+  });
+
+  it("rejects tasks whose required verification checks have no configured command", async () => {
+    const { io } = captureIo();
+    const services = defaultWiredServices();
+
+    const initExit = await runCli(["init"], { io, servicesFactory: async () => services });
+    expect(initExit).toBe(0);
+
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ projectId: "proj-local" }));
+    await store.close();
+    store = undefined;
+
+    const { io: runIo, errors: runErrors } = captureIo();
+    const runExit = await runCli(["run", "M001"], { io: runIo, servicesFactory: async () => services });
+    expect(runExit).toBe(1);
+    const stderr = runErrors.join("\n");
+    expect(stderr).toContain("rejected");
+    expect(stderr).toContain("no verification command configured");
+    expect(stderr).toContain("typecheck");
+    expect(stderr).not.toContain("pnpm");
   });
 });

@@ -11,13 +11,10 @@ import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import {
   resolveAgentTimeoutMs,
   resolveStorePath,
+  resolveVerificationChecks,
   resolveWorktreesDir,
   type AppServicesOptions,
 } from "./defaults.js";
-
-const VERIFICATION_CHECK_NAMES = ["typecheck", "unit", "lint"] as const;
-
-const PNPM_EXECUTABLE = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 export type AppServices = {
   readonly store: RunnerStore;
@@ -44,11 +41,7 @@ export function createAppServices(
     git: createGitManager({ runner }),
     agent: overrides.agent ?? new OpenCodeAdapter(runner),
     verification: overrides.verification ?? createVerificationEngine({ runner }),
-    verificationChecks: VERIFICATION_CHECK_NAMES.map((name) => ({
-      name,
-      executable: PNPM_EXECUTABLE,
-      args: ["run", name],
-    })),
+    verificationChecks: resolveVerificationChecks(options),
     projectRoot: options.projectRoot,
     worktreesDir: resolveWorktreesDir(options),
     agentTimeoutMs: resolveAgentTimeoutMs(options),

@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SingleTaskRunOutcome } from "@agentic-dev-runner/orchestrator";
 import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
@@ -9,13 +9,18 @@ import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { createAppServices } from "../src/application/app-services.js";
 import {
   defaultStateDir,
+  normalizeProjectRootForIdentity,
   projectKey,
   resolveAgentTimeoutMs,
+  resolveProjectRoot,
   resolveStorePath,
+  resolveVerificationChecks,
   resolveWorktreesDir,
   type AppServicesOptions,
 } from "../src/application/defaults.js";
 import { createFixtureProject, temporaryDirectory } from "./fixtures.js";
+
+const CASE_INSENSITIVE_PLATFORM = process.platform === "win32" || process.platform === "darwin";
 
 class RecordingOrchestrator implements SingleTaskOrchestrator {
   readonly calls: string[] = [];
@@ -64,6 +69,46 @@ describe("createAppServices wiring", () => {
   it("keeps the worktrees directory outside the repository", () => {
     expect(resolveStorePath({ projectRoot: directory })).not.toContain(directory);
     expect(resolveWorktreesDir({ projectRoot: directory })).not.toContain(directory);
+  });
+
+  it("resolves project roots to absolute normalized paths", () => {
+    expect(resolveProjectRoot(directory)).toBe(resolve(directory));
+    expect(resolveProjectRoot(".")).toBe(resolve(process.cwd()));
+  });
+
+  it("normalizes path representation before identity hashing", () => {
+    expect(projectKey(directory)).toBe(projectKey(resolve(directory)));
+    expect(projectKey(directory)).toBe(projectKey(directory + sep));
+    expect(projectKey(directory)).toBe(projectKey(join(directory, ".")));
+    if (CASE_INSENSITIVE_PLATFORM) {
+      expect(normalizeProjectRootForIdentity(directory)).toBe(
+        resolve(directory).toLowerCase(),
+      );
+    } else {
+      expect(normalizeProjectRootForIdentity(directory)).toBe(resolve(directory));
+    }
+  });
+
+  it("folds path casing on case-insensitive platforms only", () => {
+    const upper = directory.toUpperCase();
+    const lower = directory.toLowerCase();
+    if (CASE_INSENSITIVE_PLATFORM) {
+      expect(projectKey(upper)).toBe(projectKey(lower));
+      expect(defaultStateDir(upper)).toBe(defaultStateDir(lower));
+      expect(normalizeProjectRootForIdentity(upper)).toBe(
+        normalizeProjectRootForIdentity(lower),
+      );
+    } else {
+      expect(projectKey(upper)).not.toBe(projectKey(lower));
+    }
+  });
+
+  it("returns no fabricated verification checks by default", () => {
+    expect(resolveVerificationChecks({ projectRoot: directory })).toEqual([]);
+    const explicit = [{ name: "typecheck", executable: "node", args: ["--version"] }];
+    expect(
+      resolveVerificationChecks({ projectRoot: directory, verificationChecks: explicit }),
+    ).toEqual(explicit);
   });
 
   it("creates a real SQLite store whose state survives reopening", async () => {
