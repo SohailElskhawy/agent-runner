@@ -1,0 +1,37 @@
+{
+  "name": "@agentic-dev-runner/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "agentic": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agentic-dev-runner/agents": "workspace:*",
+    "@agentic-dev-runner/core": "workspace:*",
+    "@agentic-dev-runner/git": "workspace:*",
+    "@agentic-dev-runner/orchestrator": "workspace:*",
+    "@agentic-dev-runner/persistence": "workspace:*",
+    "@agentic-dev-runner/platform": "workspace:*",
+    "@agentic-dev-runner/verification": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.0"
+  }
+}

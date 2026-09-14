@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "paths": {
+      "@agentic-dev-runner/agents": ["../agents/dist/index.d.ts"],
+      "@agentic-dev-runner/core": ["../core/dist/index.d.ts"],
+      "@agentic-dev-runner/git": ["../git/dist/index.d.ts"],
+      "@agentic-dev-runner/orchestrator": ["../orchestrator/dist/index.d.ts"],
+      "@agentic-dev-runner/persistence": ["../persistence/dist/index.d.ts"],
+      "@agentic-dev-runner/platform": ["../platform/dist/index.d.ts"],
+      "@agentic-dev-runner/verification": ["../verification/dist/index.d.ts"]
+    }
+  },
+  "include": ["src"]
+}

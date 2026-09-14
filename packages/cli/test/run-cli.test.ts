@@ -1,0 +1,266 @@
+import { describe, expect, it } from "vitest";
+import type { TaskId } from "@agentic-dev-runner/core";
+import type { RunnerAppService } from "../src/application/runner-app-service.js";
+import { runCli } from "../src/run-cli.js";
+import type { InitResult, ProjectStatus, RunResult, TaskInspection } from "../src/application/ports.js";
+import { captureIo, createFixtureProject, createFixtureTask } from "./fixtures.js";
+
+type RunSpy = { calls: readonly TaskId[] };
+
+function recordingService(result: {
+  init?: InitResult;
+  run?: RunResult;
+  status?: ProjectStatus;
+  inspection?: TaskInspection | null;
+  failure?: Error;
+}): { service: RunnerAppService; runCalls: RunSpy; initCalls: { count: number } } {
+  const runCalls: string[] = [];
+  let initCount = 0;
+  const service: RunnerAppService = {
+    async init() {
+      initCount += 1;
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return result.init ?? {
+        projectId: "proj-local",
+        projectRoot: "fixture",
+        storePath: "fixture/state.db",
+      };
+    },
+    async run(taskId: TaskId) {
+      runCalls.push(taskId);
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return (
+        result.run ?? {
+          kind: "completed",
+          message: `task "${taskId}" completed`,
+        }
+      );
+    },
+    async status() {
+      return result.status ?? {
+        project: createFixtureProject(),
+        tasks: [],
+      };
+    },
+    async inspect() {
+      return result.inspection ?? null;
+    },
+    async close() {
+      return;
+    },
+  };
+  return {
+    service,
+    runCalls: { calls: runCalls },
+    initCalls: {
+      get count() {
+        return initCount;
+      },
+    },
+  };
+}
+
+describe("runCli command dispatch", () => {
+  it("delegates exactly once to the application service on run and exits zero on success", async () => {
+    const recording = recordingService({
+      run: { kind: "completed", message: 'task "M001" completed' },
+    });
+    const { io, lines } = captureIo();
+
+    const exitCode = await runCli(["run", "M001"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(recording.runCalls.calls).toEqual(["M001"]);
+    expect(lines.join("\n")).toContain('task "M001" completed');
+  });
+
+  it("exits non-zero for failed, cancelled, and rejected run outcomes", async () => {
+    for (const kind of ["failed", "cancelled", "rejected"] as const) {
+      const recording = recordingService({
+        run: { kind, message: "task did not go well" },
+      });
+      const { io, errors } = captureIo();
+
+      const exitCode = await runCli(["run", "M001"], {
+        io,
+        servicesFactory: async () => recording.service,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(errors.join("\n")).toContain("task did not go well");
+    }
+  });
+
+  it("renders run outcomes and maps exit codes without duplicating orchestration logic", async () => {
+    const outcomes: Record<string, RunResult> = {
+      completed: { kind: "completed", message: "done" },
+      failed: { kind: "failed", message: "boom" },
+      cancelled: { kind: "cancelled", message: "stop" },
+      rejected: { kind: "rejected", message: "no" },
+    };
+    for (const [kind, run] of Object.entries(outcomes)) {
+      const recording = recordingService({ run });
+      const { io } = captureIo();
+      const exitCode = await runCli(["run", "M001"], {
+        io,
+        servicesFactory: async () => recording.service,
+      });
+      expect(exitCode).toBe(kind === "completed" ? 0 : 1);
+    }
+  });
+
+  it("handles underlying service errors cleanly with non-zero exit and no stack trace", async () => {
+    const recording = recordingService({
+      failure: new Error("store exploded"),
+    });
+    const { io, errors } = captureIo();
+
+    const exitCode = await runCli(["run", "M001"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(1);
+    const stderr = errors.join("\n");
+    expect(stderr).toContain("error: store exploded");
+    expect(stderr).not.toContain("    at ");
+    expect(stderr).not.toContain("Error: ");
+  });
+
+  it("prints usage and exits with usage code for invalid arguments", async () => {
+    const { io, errors } = captureIo();
+
+    const unknownExit = await runCli(["frobnicate"], { io });
+    expect(unknownExit).toBe(2);
+    expect(errors.join("\n")).toContain("unknown command");
+
+    const { io: io2, errors: errors2 } = captureIo();
+    const missingTaskId = await runCli(["run"], { io: io2 });
+    expect(missingTaskId).toBe(2);
+    expect(errors2.join("\n")).toContain("requires a <task-id>");
+  });
+
+  it("prints help with zero exit", async () => {
+    const { io, lines } = captureIo();
+    const exitCode = await runCli(["--help"], { io });
+    expect(exitCode).toBe(0);
+    expect(lines.join("\n")).toContain("agentic init");
+  });
+
+  it("handles unknown tasks for inspect cleanly with non-zero exit", async () => {
+    const recording = recordingService({ inspection: null });
+    const { io, errors } = captureIo();
+
+    const exitCode = await runCli(["inspect", "M999"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain('task "M999" was not found');
+  });
+
+  it("status and inspect render persisted data returned by the application service", async () => {
+    const status: ProjectStatus = {
+      project: createFixtureProject({ id: "proj-local" }),
+      tasks: [
+        {
+          id: "M001",
+          title: "Add a small utility function",
+          status: "FAILED",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          attemptCount: 1,
+          latestAttempt: {
+            id: "att_M001_1",
+            number: 1,
+            status: "FAILED",
+            startedAt: "2026-01-01T00:00:00.000Z",
+            finishedAt: "2026-01-01T00:00:05.000Z",
+            failureMessage: "verification failed",
+          },
+        },
+      ],
+    };
+    const recording = recordingService({ status });
+    const { io, lines } = captureIo();
+
+    const exitCode = await runCli(["status"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(0);
+    const output = lines.join("\n");
+    expect(output).toContain("proj-local");
+    expect(output).toContain("[FAILED]");
+    expect(output).toContain("verification failed");
+
+    const inspection: TaskInspection = {
+      task: createFixtureTask({ status: "FAILED" }),
+      attempts: [
+        {
+          id: "att_M001_1",
+          number: 1,
+          status: "FAILED",
+          agent: "fake-agent",
+          model: null,
+          baseRevision: "abc",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          finishedAt: "2026-01-01T00:00:05.000Z",
+          failure: { kind: "verification_failed", message: "typecheck failed" },
+          commit: null,
+          integration: null,
+        },
+      ],
+      events: [
+        {
+          sequence: 1,
+          type: "task.transitioned",
+          occurredAt: "2026-01-01T00:00:01.000Z",
+          payload: { from: "READY", to: "IMPLEMENTING" },
+        },
+      ],
+    };
+    const inspectRecording = recordingService({ inspection });
+    const inspectCapture = captureIo();
+
+    const inspectExit = await runCli(["inspect", "M001"], {
+      io: inspectCapture.io,
+      servicesFactory: async () => inspectRecording.service,
+    });
+
+    expect(inspectExit).toBe(0);
+    const inspectOutput = inspectCapture.lines.join("\n");
+    expect(inspectOutput).toContain("[FAILED]");
+    expect(inspectOutput).toContain("verification_failed");
+    expect(inspectOutput).toContain("typecheck failed");
+    expect(inspectOutput).toContain("task.transitioned");
+  });
+
+  it("delegates init exactly once and exits zero", async () => {
+    const recording = recordingService({
+      init: {
+        projectId: "proj-local",
+        projectRoot: "fixture",
+        storePath: "fixture/state.db",
+      },
+    });
+    const { io, lines } = captureIo();
+
+    const exitCode = await runCli(["init"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(recording.initCalls.count).toBe(1);
+    expect(lines.join("\n")).toContain("fixture/state.db");
+  });
+});
