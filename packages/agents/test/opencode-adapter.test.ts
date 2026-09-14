@@ -1,4 +1,4 @@
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,13 @@ import {
 import type { ContextPack } from "@agentic-dev-runner/core";
 
 const SPACED_DIR_PREFIX = "agentic worktree vs009 spaced dir ";
+const CONTEXT_DIR_PREFIX = "agentic-opencode-context-";
+
+function countContextDirs(): number {
+  return readdirSync(tmpdir()).filter((entry) =>
+    entry.startsWith(CONTEXT_DIR_PREFIX),
+  ).length;
+}
 
 function fixturePath(name: string): string {
   return fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
@@ -252,6 +259,67 @@ describe("OpenCodeAdapter", () => {
     ) as FakeAgentReport;
     expect(report.argv).toEqual(["run", expect.any(String)]);
     expect(report.argv).not.toContain("--model");
+  });
+
+  it("removes temp context artifacts after a successful invocation", async () => {
+    const before = countContextDirs();
+    const adapter = makeAdapter();
+    const result = await adapter.invoke(makeInvocation());
+
+    expect(result.kind).toBe("success");
+    expect(countContextDirs()).toBe(before);
+  });
+
+  it("removes temp context artifacts after a spawn-error invocation", async () => {
+    const before = countContextDirs();
+    const missing = join(spacedDir, "missing opencode.exe");
+    const adapter = new OpenCodeAdapter(runner, { executable: missing });
+    const result = await adapter.invoke(makeInvocation());
+
+    expect(result.kind).toBe("failure");
+    expect(countContextDirs()).toBe(before);
+  });
+
+  it("does not write the context pack into the supplied task worktree", async () => {
+    const adapter = makeAdapter();
+    const result = await adapter.invoke(makeInvocation());
+
+    expect(result.kind).toBe("success");
+    expect(readdirSync(worktreePath)).toEqual([]);
+  });
+
+  it("resolves with the primary result even when temp cleanup fails", async () => {
+    const adapter = new OpenCodeAdapter(runner, {
+      executable,
+      launcherArgs: [fixturePath("fake-opencode.mjs")],
+      removeDirectory: async () => {
+        throw new Error("simulated cleanup failure");
+      },
+    });
+    const result = await adapter.invoke(makeInvocation());
+
+    expect(result.kind).toBe("success");
+    expect(countContextDirs()).toBeGreaterThan(0);
+    const report = JSON.parse(
+      result.kind === "success" ? (result.output.stdout ?? "") : "",
+    ) as FakeAgentReport;
+    expect(report.contextContent).toBe(stableStringify(contextPack));
+  });
+
+  it("resolves with a normalized failure even when temp cleanup fails", async () => {
+    const missing = join(spacedDir, "missing opencode.exe");
+    const adapter = new OpenCodeAdapter(runner, {
+      executable: missing,
+      removeDirectory: async () => {
+        throw new Error("simulated cleanup failure");
+      },
+    });
+    const result = await adapter.invoke(makeInvocation());
+
+    expect(result.kind).toBe("failure");
+    if (result.kind === "failure") {
+      expect(result.failure.kind).toBe("adapter");
+    }
   });
 });
 

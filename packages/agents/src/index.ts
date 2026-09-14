@@ -12,5 +12,6 @@ export {
   OPENCODE_AGENT_ID,
   OpenCodeAdapter,
   OpenCodeAdapterError,
+  type ContextDirectoryRemover,
   type OpenCodeAdapterOptions,
 } from "./adapters/opencode/opencode-adapter.js";

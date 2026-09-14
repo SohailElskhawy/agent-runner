@@ -23,7 +23,10 @@ export type OpenCodeAdapterOptions = {
   readonly executable?: string | undefined;
   readonly model?: string | undefined;
   readonly launcherArgs?: readonly string[] | undefined;
+  readonly removeDirectory?: ContextDirectoryRemover | undefined;
 };
+
+export type ContextDirectoryRemover = (path: string) => Promise<void>;
 
 export class OpenCodeAdapterError extends Error {
   constructor(message: string) {
@@ -40,10 +43,12 @@ export class OpenCodeAdapter implements AgentRuntime {
 
   private readonly runner: ProcessRunner;
   private readonly options: OpenCodeAdapterOptions;
+  private readonly removeDirectory: ContextDirectoryRemover;
 
   constructor(runner: ProcessRunner, options: OpenCodeAdapterOptions = {}) {
     this.runner = runner;
     this.options = options;
+    this.removeDirectory = options.removeDirectory ?? removeContextDir;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentExecutionResult> {
@@ -60,7 +65,7 @@ export class OpenCodeAdapter implements AgentRuntime {
       await writeFile(
         contextPackPath,
         stableStringify(invocation.contextPack),
-        "utf8",
+        { encoding: "utf8", mode: 0o600 },
       );
 
       const spec: ProcessSpec = {
@@ -79,9 +84,24 @@ export class OpenCodeAdapter implements AgentRuntime {
 
       return normalizeResult(await this.runner.run(spec));
     } finally {
-      await rm(contextDir, { recursive: true, force: true });
+      await runCleanup(this.removeDirectory, contextDir);
     }
   }
+}
+
+async function runCleanup(
+  removeDirectory: ContextDirectoryRemover,
+  path: string,
+): Promise<void> {
+  try {
+    await removeDirectory(path);
+  } catch {
+    return;
+  }
+}
+
+async function removeContextDir(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
 }
 
 function buildRunArgs(input: {
