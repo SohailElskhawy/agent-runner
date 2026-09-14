@@ -9,9 +9,7 @@ export const TASK_TYPES = [
 
 export type TaskType = (typeof TASK_TYPES)[number];
 
-export const TASK_PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
-
-export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+export type TaskPriority = `P${number}`;
 
 export const TASK_RISKS = ["low", "medium", "high", "critical"] as const;
 

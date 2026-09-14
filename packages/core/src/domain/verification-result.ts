@@ -1,4 +1,5 @@
 import type { IsoTimestamp } from "./timestamp.js";
+import type { AttemptId, VerificationResultId } from "./ids.js";
 
 export const VERIFICATION_KINDS = [
   "typecheck",
@@ -21,8 +22,8 @@ export type VerificationFailure = {
 };
 
 export type VerificationResult = {
-  id: string;
-  attemptId: string;
+  id: VerificationResultId;
+  attemptId: AttemptId;
   kind: VerificationKind;
   command: readonly string[];
   outcome: VerificationOutcome;

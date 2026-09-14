@@ -4,6 +4,7 @@ export * from "./project.js";
 export * from "./task-status.js";
 export * from "./task-contract.js";
 export * from "./task.js";
+export * from "./context-manifest.js";
 export * from "./attempt.js";
 export * from "./stage-run.js";
 export * from "./verification-result.js";

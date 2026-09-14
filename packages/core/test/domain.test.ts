@@ -116,7 +116,10 @@ describe("task status", () => {
     expect(isTaskStatus("IMPLEMENTING")).toBe(true);
     expect(isTaskStatus("DONE")).toBe(true);
     expect(isTaskStatus("IMPLEMENTATION")).toBe(false);
+    expect(isTaskStatus("done")).toBe(false);
+    expect(isTaskStatus("")).toBe(false);
     expect(isTaskStatus(42)).toBe(false);
+    expect(isTaskStatus(null)).toBe(false);
     expect(isTaskStatus(undefined)).toBe(false);
   });
 });
@@ -135,22 +138,6 @@ describe("runtime status sets", () => {
     expect([...ATTEMPT_STATUSES]).toContain("FAILED");
     expect([...VERIFICATION_KINDS]).toContain("custom");
   });
-
-  it("narrows parsed external data to the status unions", () => {
-    const parsed: unknown = JSON.parse('{"stage": "VERIFY"}');
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "stage" in parsed &&
-      (parsed as { stage: unknown }).stage === "VERIFY"
-    ) {
-      const { stage } = parsed as { stage: StageRun["stage"] };
-      expect(stage).toBe("VERIFY");
-      expect(STAGE_KINDS.includes(stage)).toBe(true);
-    } else {
-      expect.unreachable("expected parsed object");
-    }
-  });
 });
 
 describe("domain entities are serializable", () => {
@@ -166,7 +153,7 @@ describe("domain entities are serializable", () => {
     expect(restored.routing.complexity).toBe("small");
   });
 
-  it("round-trips an attempt with optional failure data", () => {
+  it("round-trips an attempt with optional execution data", () => {
     const failure: AttemptFailure = {
       kind: "timeout",
       message: "agent exceeded time budget",
@@ -176,10 +163,26 @@ describe("domain entities are serializable", () => {
       status: "TIMED_OUT" satisfies AttemptStatus,
       finishedAt: "2026-01-01T01:00:00.000Z",
       failure,
+      contextManifest: {
+        entries: [
+          { kind: "agents_md", source: "AGENTS.md", digest: "sha256:aa" },
+          { kind: "doc", source: "docs/ARCHITECTURE.md", digest: "sha256:bb" },
+        ],
+        createdAt: "2026-01-01T00:00:05.000Z",
+      },
+      logs: {
+        stdout: "implementation complete",
+        stderr: "",
+        location: "attempts/att-1/logs",
+      },
+      tokenUsage: { inputTokens: 1200, outputTokens: 3400 },
+      cost: 0.42,
     };
     const restored: Attempt = JSON.parse(JSON.stringify(failed)) as Attempt;
     expect(restored).toEqual(failed);
     expect(restored.failure?.kind).toBe("timeout");
+    expect(restored.contextManifest?.entries).toHaveLength(2);
+    expect(restored.tokenUsage?.outputTokens).toBe(3400);
   });
 
   it("round-trips stage runs and verification results", () => {

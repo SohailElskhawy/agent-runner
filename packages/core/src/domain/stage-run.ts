@@ -1,4 +1,5 @@
 import type { IsoTimestamp } from "./timestamp.js";
+import type { AttemptId, StageRunId } from "./ids.js";
 
 export const STAGE_KINDS = [
   "PLAN",
@@ -28,8 +29,8 @@ export type StageRunFailure = {
 };
 
 export type StageRun = {
-  id: string;
-  attemptId: string;
+  id: StageRunId;
+  attemptId: AttemptId;
   stage: StageKind;
   status: StageRunStatus;
   startedAt?: IsoTimestamp;

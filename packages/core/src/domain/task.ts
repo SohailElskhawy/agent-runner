@@ -1,5 +1,5 @@
 import type { IsoTimestamp } from "./timestamp.js";
-import type { TaskId } from "./ids.js";
+import type { ProjectId, TaskId } from "./ids.js";
 import type { TaskStatus } from "./task-status.js";
 import type {
   TaskApproval,
@@ -13,7 +13,7 @@ import type {
 
 export type Task = {
   id: TaskId;
-  projectId: string;
+  projectId: ProjectId;
   title: string;
   milestone: string;
   status: TaskStatus;
