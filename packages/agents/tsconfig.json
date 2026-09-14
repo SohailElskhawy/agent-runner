@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"],
+    "rootDir": "..",
+    "paths": {
+      "@agentic-dev-runner/core": ["../core/src/index.ts"],
+      "@agentic-dev-runner/context": ["../context/src/index.ts"],
+      "@agentic-dev-runner/agents": ["./src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

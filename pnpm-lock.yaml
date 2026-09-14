@@ -179,6 +179,25 @@ importers:
         specifier: ^8.70.0
         version: 8.70.0(eslint@10.10.0)(typescript@6.0.3)
 
+  packages/agents:
+    dependencies:
+      '@agentic-dev-runner/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@agentic-dev-runner/context':
+        specifier: workspace:*
+        version: link:../context
+      '@types/node':
+        specifier: ^26.5.1
+        version: 26.5.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@26.5.1)(vite@8.3.0(@types/node@26.5.1))
+
   packages/context:
     dependencies:
       '@agentic-dev-runner/core':
