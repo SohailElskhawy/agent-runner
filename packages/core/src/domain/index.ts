@@ -8,3 +8,4 @@ export * from "./context-manifest.js";
 export * from "./attempt.js";
 export * from "./stage-run.js";
 export * from "./verification-result.js";
+export * from "./task-state-machine.js";
