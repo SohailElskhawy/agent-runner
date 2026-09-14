@@ -9,6 +9,7 @@ export const ORCHESTRATION_EVENTS = {
   commitCreated: "commit.created",
   integrationCompleted: "integration.completed",
   worktreeCleanupFailed: "worktree.cleanup.failed",
+  recoveryReconciled: "recovery.reconciled",
 } as const;
 
 export type OrchestrationEventType =
@@ -62,4 +63,20 @@ export type WorktreeCleanupFailedPayload = {
   readonly attemptId: string;
   readonly worktreePath: string;
   readonly reason: string;
+};
+
+export type RecoveryOutcomeKind =
+  | "completed"
+  | "safe-to-retry"
+  | "requires-reconciliation"
+  | "requires-human"
+  | "failed"
+  | "cancelled";
+
+export type RecoveryReconciledPayload = {
+  readonly attemptId?: string | undefined;
+  readonly fromStatus: TaskStatus;
+  readonly outcome: RecoveryOutcomeKind;
+  readonly detail: string;
+  readonly revision?: string | undefined;
 };

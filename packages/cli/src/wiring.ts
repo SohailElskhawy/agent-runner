@@ -21,6 +21,7 @@ export function createServices(
     projectRoot: root,
     store: appServices.store,
     orchestrator: appServices.orchestrator,
+    recovery: appServices.recovery,
   });
   return Promise.resolve(service);
 }

@@ -6,16 +6,26 @@ export {
   type ImplementationCompletedPayload,
   type IntegrationCompletedPayload,
   type OrchestrationEventType,
+  type RecoveryOutcomeKind,
+  type RecoveryReconciledPayload,
   type TaskTransitionedPayload,
   type VerificationCompletedPayload,
   type WorktreeCleanupFailedPayload,
   type WorktreeCreatedPayload,
 } from "./orchestration-events.js";
 export type {
+  CancelledRecovery,
   CancelledTaskRun,
+  CompletedRecovery,
   CompletedTaskRun,
+  FailedRecovery,
   FailedTaskRun,
+  NoOpRecovery,
   RejectedTaskRun,
+  RequiresHumanRecovery,
+  RequiresReconciliationRecovery,
+  RecoveryOutcome,
+  SafeToRetryRecovery,
   SingleTaskRunOutcome,
   WorktreeCleanupOutcome,
 } from "./orchestration-outcome.js";
@@ -24,3 +34,10 @@ export {
   type SingleTaskOrchestrator,
   type SingleTaskOrchestratorOptions,
 } from "./single-task-orchestrator.js";
+export {
+  createCrashRecovery,
+  RECOVERY_ACTIVE_STATUSES,
+  type CrashRecovery,
+  type CrashRecoveryOptions,
+  type RecoveryActiveStatus,
+} from "./crash-recovery.js";

@@ -15,17 +15,25 @@ const VERTICAL_SLICE_ACTIVE_STATES = [
   "INTEGRATING",
 ] as const;
 
-const TERMINAL_STATES = ["DONE", "FAILED", "CANCELLED"] as const;
+const EXECUTION_STATES = ["IMPLEMENTING", "VERIFYING", "INTEGRATING"] as const;
+
+const TERMINAL_STATES = ["DONE", "FAILED", "CANCELLED", "NEEDS_HUMAN"] as const;
 
 const UNSUPPORTED_STATES = [
   "BACKLOG",
   "PLANNING",
   "PLAN_REVIEW",
   "CODE_REVIEW",
-  "NEEDS_HUMAN",
 ] as const;
 
 const ESCALATION_STATES = ["BLOCKED", "FAILED", "CANCELLED"] as const;
+
+const RECOVERY_ESCALATION_STATES = [
+  "BLOCKED",
+  "NEEDS_HUMAN",
+  "FAILED",
+  "CANCELLED",
+] as const;
 
 describe("explicit transition table", () => {
   it("covers every task status explicitly", () => {
@@ -41,16 +49,17 @@ describe("explicit transition table", () => {
     ]);
     expect([...getTaskStatusTransitions("IMPLEMENTING")]).toEqual([
       "VERIFYING",
-      ...ESCALATION_STATES,
+      ...RECOVERY_ESCALATION_STATES,
     ]);
     expect([...getTaskStatusTransitions("VERIFYING")]).toEqual([
       "INTEGRATING",
-      ...ESCALATION_STATES,
+      ...RECOVERY_ESCALATION_STATES,
     ]);
     expect([...getTaskStatusTransitions("INTEGRATING")]).toEqual([
       "DONE",
-      ...ESCALATION_STATES,
+      ...RECOVERY_ESCALATION_STATES,
     ]);
+    expect([...getTaskStatusTransitions("NEEDS_HUMAN")]).toEqual([]);
     expect([...getTaskStatusTransitions("BLOCKED")]).toEqual(["READY"]);
     expect([...getTaskStatusTransitions("DONE")]).toEqual([]);
     expect([...getTaskStatusTransitions("FAILED")]).toEqual([]);
@@ -72,6 +81,13 @@ describe("valid transitions", () => {
         expect(canTransitionTaskStatus(from, to)).toBe(true);
       }
     }
+  });
+
+  it("allows execution states to escalate to NEEDS_HUMAN for crash recovery", () => {
+    for (const from of EXECUTION_STATES) {
+      expect(canTransitionTaskStatus(from, "NEEDS_HUMAN")).toBe(true);
+    }
+    expect(canTransitionTaskStatus("READY", "NEEDS_HUMAN")).toBe(false);
   });
 
   it("allows an unblocked task to return to READY", () => {

@@ -59,6 +59,7 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
       projectRoot: repositoryPath,
       store: appServices.store,
       orchestrator: appServices.orchestrator,
+      recovery: appServices.recovery,
     });
   }
 
@@ -75,6 +76,7 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
       projectRoot: repositoryPath,
       store: appServices.store,
       orchestrator: appServices.orchestrator,
+      recovery: appServices.recovery,
     });
   }
 

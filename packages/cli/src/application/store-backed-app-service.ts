@@ -1,8 +1,15 @@
 import { basename } from "node:path";
 import type { Project, TaskId } from "@agentic-dev-runner/core";
-import type { SingleTaskOrchestrator, SingleTaskRunOutcome } from "@agentic-dev-runner/orchestrator";
+import type {
+  CrashRecovery,
+  SingleTaskOrchestrator,
+  SingleTaskRunOutcome,
+} from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
-import { outcomeToRunResult } from "./runner-app-service.js";
+import {
+  outcomeToRunResult,
+  recoveryOutcomeToRunResult,
+} from "./runner-app-service.js";
 import type { RunnerAppService } from "./runner-app-service.js";
 import type {
   InitResult,
@@ -19,6 +26,7 @@ export type StoreBackedAppServiceOptions = {
   readonly projectRoot: string;
   readonly store: RunnerStore;
   readonly orchestrator: SingleTaskOrchestrator;
+  readonly recovery: CrashRecovery;
 };
 
 export function createStoreBackedAppService(
@@ -32,12 +40,14 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly projectRoot: string;
   private readonly store: RunnerStore;
   private readonly orchestrator: SingleTaskOrchestrator;
+  private readonly recovery: CrashRecovery;
 
   constructor(options: StoreBackedAppServiceOptions) {
     this.storePath = options.storePath;
     this.projectRoot = options.projectRoot;
     this.store = options.store;
     this.orchestrator = options.orchestrator;
+    this.recovery = options.recovery;
   }
 
   async init(): Promise<InitResult> {
@@ -63,6 +73,11 @@ class StoreBackedAppService implements RunnerAppService {
 
   async run(taskId: TaskId): Promise<RunResult> {
     await this.store.initialize();
+    const recovery = await this.recovery.reconcileTask(taskId);
+    const recoveryResult = recoveryOutcomeToRunResult(recovery);
+    if (recoveryResult !== null) {
+      return recoveryResult;
+    }
     const outcome: SingleTaskRunOutcome = await this.orchestrator.run(taskId);
     return outcomeToRunResult(outcome);
   }

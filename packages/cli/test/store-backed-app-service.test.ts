@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import type { TaskId } from "@agentic-dev-runner/core";
-import type { SingleTaskRunOutcome } from "@agentic-dev-runner/orchestrator";
+import type {
+  CrashRecovery,
+  RecoveryOutcome,
+  SingleTaskRunOutcome,
+} from "@agentic-dev-runner/orchestrator";
 import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
@@ -24,6 +28,16 @@ class StubOrchestrator implements SingleTaskOrchestrator {
   async run(taskId: TaskId): Promise<SingleTaskRunOutcome> {
     this.calls.push(taskId);
     return this.outcome;
+  }
+}
+
+class StubRecovery implements CrashRecovery {
+  async reconcileTask(taskId: TaskId): Promise<RecoveryOutcome> {
+    return { kind: "no-op", taskId, detail: "stub recovery" };
+  }
+
+  async reconcileUnfinished(): Promise<RecoveryOutcome[]> {
+    return [];
   }
 }
 
@@ -61,6 +75,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(outcome),
+      recovery: new StubRecovery(),
     });
   }
 
@@ -71,6 +86,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator,
+      recovery: new StubRecovery(),
     });
 
     const result = await service.run("M001");
@@ -91,6 +107,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
     });
 
     const status = await service.status();
@@ -124,6 +141,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
     });
 
     const inspection = await service.inspect("M001");
@@ -142,6 +160,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
     });
 
     expect(await service.inspect("M999")).toBeNull();
@@ -214,6 +233,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
     });
     const { io, lines } = captureIo();
 
@@ -230,6 +250,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
     });
     const { io, errors } = captureIo();
 
@@ -245,6 +266,7 @@ describe("StoreBackedAppService", () => {
       projectRoot: directory,
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
     });
     const { io, lines } = captureIo();
 

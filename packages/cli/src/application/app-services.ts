@@ -5,8 +5,14 @@ import { createVerificationEngine } from "@agentic-dev-runner/verification";
 import type { VerificationEngine } from "@agentic-dev-runner/verification";
 import { OpenCodeAdapter } from "@agentic-dev-runner/agents";
 import type { AgentRuntime } from "@agentic-dev-runner/agents";
-import { createSingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
-import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
+import {
+  createCrashRecovery,
+  createSingleTaskOrchestrator,
+} from "@agentic-dev-runner/orchestrator";
+import type {
+  CrashRecovery,
+  SingleTaskOrchestrator,
+} from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import {
   resolveAgentTimeoutMs,
@@ -19,11 +25,13 @@ import {
 export type AppServices = {
   readonly store: RunnerStore;
   readonly orchestrator: SingleTaskOrchestrator;
+  readonly recovery: CrashRecovery;
 };
 
 export type AppServicesOverrides = {
   readonly store?: RunnerStore | undefined;
   readonly orchestrator?: SingleTaskOrchestrator | undefined;
+  readonly recovery?: CrashRecovery | undefined;
   readonly agent?: AgentRuntime | undefined;
   readonly verification?: VerificationEngine | undefined;
 };
@@ -36,15 +44,25 @@ export function createAppServices(
     path: resolveStorePath(options),
   });
   const runner = createNodeProcessRunner();
+  const git = createGitManager({ runner });
+  const verification = overrides.verification ?? createVerificationEngine({ runner });
   const orchestrator = overrides.orchestrator ?? createSingleTaskOrchestrator({
     store,
-    git: createGitManager({ runner }),
+    git,
     agent: overrides.agent ?? new OpenCodeAdapter(runner),
-    verification: overrides.verification ?? createVerificationEngine({ runner }),
+    verification,
     verificationChecks: resolveVerificationChecks(options),
     projectRoot: options.projectRoot,
     worktreesDir: resolveWorktreesDir(options),
     agentTimeoutMs: resolveAgentTimeoutMs(options),
   });
-  return { store, orchestrator };
+  const recovery = overrides.recovery ?? createCrashRecovery({
+    store,
+    git,
+    verification,
+    verificationChecks: resolveVerificationChecks(options),
+    projectRoot: options.projectRoot,
+    worktreesDir: resolveWorktreesDir(options),
+  });
+  return { store, orchestrator, recovery };
 }

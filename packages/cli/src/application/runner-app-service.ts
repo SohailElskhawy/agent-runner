@@ -1,5 +1,8 @@
 import type { TaskId } from "@agentic-dev-runner/core";
-import type { SingleTaskRunOutcome } from "@agentic-dev-runner/orchestrator";
+import type {
+  RecoveryOutcome,
+  SingleTaskRunOutcome,
+} from "@agentic-dev-runner/orchestrator";
 import type {
   InitResult,
   ProjectStatus,
@@ -13,6 +16,41 @@ export interface RunnerAppService {
   status(): Promise<ProjectStatus>;
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
   close(): Promise<void>;
+}
+
+export function recoveryOutcomeToRunResult(
+  outcome: RecoveryOutcome,
+): RunResult | null {
+  switch (outcome.kind) {
+    case "completed":
+      return {
+        kind: "completed",
+        message: `task "${outcome.taskId}" was recovered to DONE (integration revision ${outcome.integration.revision})`,
+      };
+    case "failed":
+      return {
+        kind: "failed",
+        message: `task "${outcome.taskId}" recovery failed: ${outcome.reason}`,
+      };
+    case "cancelled":
+      return {
+        kind: "cancelled",
+        message: `task "${outcome.taskId}" recovery was cancelled: ${outcome.reason}`,
+      };
+    case "requires-reconciliation":
+      return {
+        kind: "rejected",
+        message: `task "${outcome.taskId}" requires reconciliation: ${outcome.detail}`,
+      };
+    case "requires-human":
+      return {
+        kind: "rejected",
+        message: `task "${outcome.taskId}" requires human intervention: ${outcome.detail}`,
+      };
+    case "no-op":
+    case "safe-to-retry":
+      return null;
+  }
 }
 
 export function outcomeToRunResult(

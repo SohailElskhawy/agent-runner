@@ -388,4 +388,70 @@ describe("NodeGitManager", () => {
     const error = await gitFailureOf(git.integrateBranch(repo, ""));
     expect(error.failure.reason).toContain("invalid branch name");
   });
+
+  it("detects whether a task branch exists", async () => {
+    const repo = await createRepository("repo");
+
+    expect(await git.branchExists(repo, "task/M001")).toBe(false);
+    await git.createBranch(repo, "task/M001");
+    expect(await git.branchExists(repo, "task/M001")).toBe(true);
+    expect(await git.branchExists(repo, "task/M002")).toBe(false);
+  });
+
+  it("resolves the revision a task branch points to", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    writeFileSync(join(worktreePath, "feature.txt"), "feature\n");
+    await git.stageAll(worktreePath);
+    const commitRevision = await git.commitStaged(
+      worktreePath,
+      "task M001: add feature",
+    );
+
+    expect(await git.resolveBranchRevision(repo, "task/M001")).toBe(
+      commitRevision,
+    );
+    await expect(
+      git.resolveBranchRevision(repo, "task/M999"),
+    ).rejects.toThrow(GitError);
+  });
+
+  it("reports ancestor relationships between revisions", async () => {
+    const repo = await createRepository("repo");
+    const baseRevision = await git.resolveHeadRevision(repo);
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    writeFileSync(join(worktreePath, "feature.txt"), "feature\n");
+    await git.stageAll(worktreePath);
+    const commitRevision = await git.commitStaged(
+      worktreePath,
+      "task M001: add feature",
+    );
+
+    expect(await git.isAncestor(repo, baseRevision, commitRevision)).toBe(true);
+    expect(await git.isAncestor(repo, commitRevision, baseRevision)).toBe(
+      false,
+    );
+    await expect(git.isAncestor(repo, baseRevision, "missing")).rejects.toThrow(
+      GitError,
+    );
+  });
+
+  it("detects registered worktrees by path", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+
+    expect(await git.worktreeExists(repo, worktreePath)).toBe(true);
+    expect(
+      await git.worktreeExists(repo, join(baseDir, "missing worktree")),
+    ).toBe(false);
+
+    await git.removeWorktree(repo, worktreePath);
+    expect(await git.worktreeExists(repo, worktreePath)).toBe(false);
+  });
 });

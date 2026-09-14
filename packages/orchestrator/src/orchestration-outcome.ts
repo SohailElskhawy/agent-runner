@@ -57,3 +57,69 @@ export type SingleTaskRunOutcome =
   | FailedTaskRun
   | CancelledTaskRun
   | RejectedTaskRun;
+
+export type NoOpRecovery = {
+  readonly kind: "no-op";
+  readonly taskId: TaskId;
+  readonly detail: string;
+};
+
+export type CompletedRecovery = {
+  readonly kind: "completed";
+  readonly taskId: TaskId;
+  readonly attemptId: AttemptId;
+  readonly task: Task;
+  readonly integration: GitIntegrationResult;
+  readonly cleanup?: WorktreeCleanupOutcome | undefined;
+};
+
+export type SafeToRetryRecovery = {
+  readonly kind: "safe-to-retry";
+  readonly taskId: TaskId;
+  readonly attemptId: AttemptId;
+  readonly task: Task;
+  readonly detail: string;
+};
+
+export type RequiresReconciliationRecovery = {
+  readonly kind: "requires-reconciliation";
+  readonly taskId: TaskId;
+  readonly attemptId: AttemptId;
+  readonly task: Task;
+  readonly detail: string;
+};
+
+export type RequiresHumanRecovery = {
+  readonly kind: "requires-human";
+  readonly taskId: TaskId;
+  readonly attemptId?: AttemptId | undefined;
+  readonly task: Task;
+  readonly detail: string;
+};
+
+export type FailedRecovery = {
+  readonly kind: "failed";
+  readonly taskId: TaskId;
+  readonly attemptId: AttemptId;
+  readonly task: Task;
+  readonly reason: string;
+  readonly cleanup?: WorktreeCleanupOutcome | undefined;
+};
+
+export type CancelledRecovery = {
+  readonly kind: "cancelled";
+  readonly taskId: TaskId;
+  readonly attemptId: AttemptId;
+  readonly task: Task;
+  readonly reason: string;
+  readonly cleanup?: WorktreeCleanupOutcome | undefined;
+};
+
+export type RecoveryOutcome =
+  | NoOpRecovery
+  | CompletedRecovery
+  | SafeToRetryRecovery
+  | RequiresReconciliationRecovery
+  | RequiresHumanRecovery
+  | FailedRecovery
+  | CancelledRecovery;

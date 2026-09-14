@@ -24,6 +24,14 @@ export type GitIntegrationResult = {
 export interface GitManager {
   isRepository(cwd: string): Promise<boolean>;
   resolveHeadRevision(cwd: string): Promise<string>;
+  branchExists(cwd: string, branchName: string): Promise<boolean>;
+  resolveBranchRevision(cwd: string, branchName: string): Promise<string>;
+  isAncestor(
+    cwd: string,
+    ancestorRevision: string,
+    descendantRevision: string,
+  ): Promise<boolean>;
+  worktreeExists(cwd: string, worktreePath: string): Promise<boolean>;
   createBranch(cwd: string, branchName: string): Promise<void>;
   createWorktree(
     cwd: string,

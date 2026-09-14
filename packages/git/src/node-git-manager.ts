@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import type {
   ProcessOutcome,
   ProcessResult,
@@ -58,6 +59,93 @@ export class NodeGitManager implements GitManager {
       );
     }
     return revision;
+  }
+
+  async branchExists(cwd: string, branchName: string): Promise<boolean> {
+    const args = ["rev-parse", "--verify", "--quiet", branchRef(branchName)];
+    this.requireNonEmpty(branchName, "branchExists", "branch name", args);
+    const result = await this.runner.run({
+      executable: this.gitExecutable,
+      args: [...args],
+      cwd,
+    });
+    if (result.outcome.kind === "completed") {
+      if (result.outcome.code === 0) {
+        return true;
+      }
+      if (result.outcome.code === 1) {
+        return false;
+      }
+    }
+    throw this.gitError("branchExists", args, result);
+  }
+
+  async resolveBranchRevision(
+    cwd: string,
+    branchName: string,
+  ): Promise<string> {
+    const args = ["rev-parse", "--verify", branchRef(branchName)];
+    this.requireNonEmpty(branchName, "resolveBranchRevision", "branch name", args);
+    const result = await this.runGit(cwd, args, "resolveBranchRevision");
+    const revision = result.stdout.trim();
+    if (revision.length === 0) {
+      throw this.gitError(
+        "resolveBranchRevision",
+        args,
+        result,
+        "empty revision output",
+      );
+    }
+    return revision;
+  }
+
+  async isAncestor(
+    cwd: string,
+    ancestorRevision: string,
+    descendantRevision: string,
+  ): Promise<boolean> {
+    const args = [
+      "merge-base",
+      "--is-ancestor",
+      ancestorRevision,
+      descendantRevision,
+    ];
+    this.requireNonEmpty(
+      ancestorRevision,
+      "isAncestor",
+      "ancestor revision",
+      args,
+    );
+    this.requireNonEmpty(
+      descendantRevision,
+      "isAncestor",
+      "descendant revision",
+      args,
+    );
+    const result = await this.runner.run({
+      executable: this.gitExecutable,
+      args: [...args],
+      cwd,
+    });
+    if (result.outcome.kind === "completed") {
+      if (result.outcome.code === 0) {
+        return true;
+      }
+      if (result.outcome.code === 1) {
+        return false;
+      }
+    }
+    throw this.gitError("isAncestor", args, result);
+  }
+
+  async worktreeExists(cwd: string, worktreePath: string): Promise<boolean> {
+    const args = ["worktree", "list", "--porcelain"];
+    this.requireNonEmpty(worktreePath, "worktreeExists", "worktree path", args);
+    const result = await this.runGit(cwd, args, "worktreeExists");
+    const target = normalizeWorktreePath(worktreePath);
+    return parseWorktreeList(result.stdout).some(
+      (entry) => normalizeWorktreePath(entry) === target,
+    );
   }
 
   async createBranch(cwd: string, branchName: string): Promise<void> {
@@ -227,6 +315,28 @@ function describeOutcome(outcome: ProcessOutcome): string {
     case "spawn-error":
       return `spawn error ${outcome.code}: ${outcome.message}`;
   }
+}
+
+function branchRef(branchName: string): string {
+  return `refs/heads/${branchName}`;
+}
+
+export function parseWorktreeList(output: string): string[] {
+  const paths: string[] = [];
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      paths.push(line.slice("worktree ".length));
+    }
+  }
+  return paths;
+}
+
+function normalizeWorktreePath(worktreePath: string): string {
+  const absolute = isAbsolute(worktreePath)
+    ? worktreePath
+    : resolve(worktreePath);
+  const normalized = resolve(absolute);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 export function parsePorcelainStatus(output: string): GitStatus {
