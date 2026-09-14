@@ -18,10 +18,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agentic-dev-runner/core": "workspace:*"
+    "@agentic-dev-runner/context": "workspace:*",
+    "@agentic-dev-runner/core": "workspace:*",
+    "@agentic-dev-runner/platform": "workspace:*"
   },
   "devDependencies": {
-    "@agentic-dev-runner/context": "workspace:*",
     "@types/node": "^26.5.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.0"

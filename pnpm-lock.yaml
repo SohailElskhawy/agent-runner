@@ -181,13 +181,16 @@ importers:
 
   packages/agents:
     dependencies:
-      '@agentic-dev-runner/core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
       '@agentic-dev-runner/context':
         specifier: workspace:*
         version: link:../context
+      '@agentic-dev-runner/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentic-dev-runner/platform':
+        specifier: workspace:*
+        version: link:../platform
+    devDependencies:
       '@types/node':
         specifier: ^26.5.1
         version: 26.5.1

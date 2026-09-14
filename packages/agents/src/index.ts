@@ -8,3 +8,9 @@ export type {
   AgentFailure,
   AgentOutput,
 } from "./runtime/agent-result.js";
+export {
+  OPENCODE_AGENT_ID,
+  OpenCodeAdapter,
+  OpenCodeAdapterError,
+  type OpenCodeAdapterOptions,
+} from "./adapters/opencode/opencode-adapter.js";
