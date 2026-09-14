@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  ContextPackError,
   buildContextPack,
+  stableStringify,
+  ContextPackError,
   type BuildContextPackInput,
   type Task,
-} from "@agentic-dev-runner/core";
+} from "@agentic-dev-runner/context";
 
 function makeTask(overrides?: Partial<Task>): Task {
   return {
@@ -38,7 +39,9 @@ function makeTask(overrides?: Partial<Task>): Task {
   };
 }
 
-function makeInput(overrides?: Partial<BuildContextPackInput>): BuildContextPackInput {
+function makeInput(
+  overrides?: Partial<BuildContextPackInput>,
+): BuildContextPackInput {
   return {
     task: makeTask(),
     agentsMarkdown: "# Agent Rules\n\nFollow the rules.",
@@ -60,7 +63,10 @@ describe("buildContextPack", () => {
     expect(pack.agentsMarkdownPath).toBe("AGENTS.md");
     expect(pack.agentsMarkdown).toContain("Agent Rules");
     expect(pack.baseRevision).toBe("abc1234");
-    expect(pack.scope.allowedPaths).toEqual(["src/features/**", "src/hooks/**"]);
+    expect(pack.scope.allowedPaths).toEqual([
+      "src/features/**",
+      "src/hooks/**",
+    ]);
     expect(pack.scope.forbiddenPaths).toEqual(["backend/**", "database/**"]);
     expect(pack.manifest.entries.map((entry) => entry.kind)).toEqual([
       "task",
@@ -80,7 +86,9 @@ describe("buildContextPack", () => {
       "docs/ARCHITECTURE.md",
       "docs/PROJECT_SPEC.md",
     ]);
-    expect(pack.manifest.entries.filter((e) => e.kind === "doc")).toHaveLength(2);
+    expect(pack.manifest.entries.filter((e) => e.kind === "doc")).toHaveLength(
+      2,
+    );
   });
 
   it("produces identical manifests for identical inputs", () => {
@@ -206,5 +214,107 @@ describe("buildContextPack", () => {
     expect(sources).not.toContain("package.json");
     expect(sources).not.toContain("pnpm-lock.yaml");
     expect(pack.manifest.entries).toHaveLength(7);
+  });
+
+  it("deduplicates identical duplicate documents deterministically", () => {
+    const pack = buildContextPack(
+      makeInput({
+        documents: [
+          { path: "docs/ARCHITECTURE.md", content: "# Architecture" },
+          { path: "docs/ARCHITECTURE.md", content: "# Architecture" },
+        ],
+      }),
+    );
+
+    expect(pack.documents).toHaveLength(1);
+    expect(
+      pack.manifest.entries.filter((entry) => entry.kind === "doc"),
+    ).toHaveLength(1);
+  });
+
+  it("rejects conflicting duplicate documents with the same path", () => {
+    expect(() =>
+      buildContextPack(
+        makeInput({
+          documents: [
+            { path: "docs/ARCHITECTURE.md", content: "# Architecture v1" },
+            { path: "docs/ARCHITECTURE.md", content: "# Architecture v2" },
+          ],
+        }),
+      ),
+    ).toThrow(ContextPackError);
+
+    try {
+      buildContextPack(
+        makeInput({
+          documents: [
+            { path: "docs/ARCHITECTURE.md", content: "# Architecture v1" },
+            { path: "docs/ARCHITECTURE.md", content: "# Architecture v2" },
+          ],
+        }),
+      );
+    } catch (error) {
+      expect(error).toBeInstanceOf(ContextPackError);
+      expect((error as ContextPackError).message).toContain(
+        "docs/ARCHITECTURE.md",
+      );
+    }
+  });
+
+  it("produces the same task digest regardless of property insertion order", () => {
+    const base = buildContextPack(makeInput());
+    const reorderedTask: Task = {
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      workflow: "default",
+      dependsOn: [],
+      provenance: { source: "manual", kind: "user_request" },
+      routing: { capabilities: ["typescript"], complexity: "small" },
+      definition: {
+        approval: { required: false },
+        limits: { maxReviewCycles: 2, maxAttempts: 3 },
+        verification: { required: ["typecheck", "unit"] },
+        resources: [],
+        scope: {
+          forbiddenPaths: ["backend/**", "database/**"],
+          allowedPaths: ["src/features/**", "src/hooks/**"],
+        },
+        acceptanceCriteria: ["Manifest records everything included."],
+        objective: "Build a deterministic context pack.",
+      },
+      risk: "low",
+      priority: "P0",
+      type: "implementation",
+      status: "READY",
+      milestone: "vertical-slice",
+      title: "Build context pack",
+      projectId: "proj-1",
+      id: "VS007",
+    };
+    const reordered = buildContextPack(
+      makeInput({ task: reorderedTask }),
+    );
+
+    const baseTaskEntry = base.manifest.entries.find(
+      (entry) => entry.kind === "task",
+    );
+    const reorderedTaskEntry = reordered.manifest.entries.find(
+      (entry) => entry.kind === "task",
+    );
+    expect(reorderedTaskEntry?.digest).toEqual(baseTaskEntry?.digest);
+  });
+});
+
+describe("stableStringify", () => {
+  it("serializes equivalent objects with different key order identically", () => {
+    expect(
+      stableStringify({ b: 1, a: { d: 2, c: [3, { f: 4, e: 5 }] } }),
+    ).toBe(stableStringify({ a: { c: [3, { e: 5, f: 4 }], d: 2 }, b: 1 }));
+  });
+
+  it("produces stable output for nested arrays and nulls", () => {
+    expect(stableStringify({ x: [null, "s", 1.5, true] })).toBe(
+      '{"x":[null,"s",1.5,true]}',
+    );
   });
 });

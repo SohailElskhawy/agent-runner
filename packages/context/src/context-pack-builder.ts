@@ -3,11 +3,12 @@ import type {
   ContextDocument,
   ContextPack,
   BuildContextPackInput,
-} from "../domain/context-pack.js";
+} from "@agentic-dev-runner/core";
 import type {
   ContextManifest,
   ContextManifestEntry,
-} from "../domain/context-manifest.js";
+} from "@agentic-dev-runner/core";
+import { stableStringify } from "./stable-serialize.js";
 import { ContextPackError } from "./context-pack-error.js";
 
 function digest(content: string): string {
@@ -17,7 +18,16 @@ function digest(content: string): string {
 function sortDocuments(documents: readonly ContextDocument[]): ContextDocument[] {
   const unique = new Map<string, ContextDocument>();
   for (const document of documents) {
-    unique.set(document.path, document);
+    const existing = unique.get(document.path);
+    if (existing === undefined) {
+      unique.set(document.path, document);
+      continue;
+    }
+    if (existing.content !== document.content) {
+      throw new ContextPackError(
+        `conflicting context documents supplied for path '${document.path}'`,
+      );
+    }
   }
   return [...unique.values()].sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
@@ -49,7 +59,7 @@ export function buildContextPack(input: BuildContextPackInput): ContextPack {
     {
       kind: "task",
       source: input.task.id,
-      digest: digest(JSON.stringify(input.task)),
+      digest: digest(stableStringify(input.task)),
     },
     {
       kind: "agents_md",
