@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"],
+    "rootDir": "..",
+    "paths": {
+      "@agentic-dev-runner/agents": ["../agents/src/index.ts"],
+      "@agentic-dev-runner/context": ["../context/src/index.ts"],
+      "@agentic-dev-runner/core": ["../core/src/index.ts"],
+      "@agentic-dev-runner/git": ["../git/src/index.ts"],
+      "@agentic-dev-runner/persistence": ["../persistence/src/index.ts"],
+      "@agentic-dev-runner/verification": ["../verification/src/index.ts"],
+      "@agentic-dev-runner/orchestrator": ["./src/index.ts"],
+      "@agentic-dev-runner/platform": ["../platform/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

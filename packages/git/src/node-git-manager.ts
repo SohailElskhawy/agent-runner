@@ -4,6 +4,7 @@ import type {
   ProcessRunner,
 } from "@agentic-dev-runner/platform";
 import type {
+  GitIntegrationResult,
   GitManager,
   GitStatus,
   GitStatusEntry,
@@ -101,6 +102,29 @@ export class NodeGitManager implements GitManager {
     return this.resolveHeadRevision(cwd);
   }
 
+  async integrateBranch(
+    cwd: string,
+    branchName: string,
+  ): Promise<GitIntegrationResult> {
+    const args = ["merge", "--ff-only", branchName];
+    this.requireNonEmpty(branchName, "integrateBranch", "branch name", args);
+    const currentStatus = await this.status(cwd);
+    if (!currentStatus.clean) {
+      throw this.preconditionError(
+        "integrateBranch",
+        args,
+        "integration worktree has uncommitted changes",
+      );
+    }
+    const revisionBefore = await this.resolveHeadRevision(cwd);
+    await this.runGit(cwd, args, "integrateBranch");
+    const revisionAfter = await this.resolveHeadRevision(cwd);
+    return {
+      kind: revisionBefore === revisionAfter ? "already-integrated" : "fast-forward",
+      revision: revisionAfter,
+    };
+  }
+
   async removeWorktree(
     cwd: string,
     worktreePath: string,
@@ -172,6 +196,21 @@ export class NodeGitManager implements GitManager {
         },
       );
     }
+  }
+
+  private preconditionError(
+    operation: string,
+    args: readonly string[],
+    reason: string,
+  ): GitError {
+    return new GitError(`Git operation "${operation}" failed (${reason})`, {
+      operation,
+      command: [this.gitExecutable, ...args],
+      exitCode: null,
+      reason,
+      stdout: "",
+      stderr: "",
+    });
   }
 }
 

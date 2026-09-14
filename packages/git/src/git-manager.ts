@@ -14,6 +14,13 @@ export type RemoveWorktreeOptions = {
   readonly force?: boolean | undefined;
 };
 
+export type GitIntegrationKind = "fast-forward" | "already-integrated";
+
+export type GitIntegrationResult = {
+  readonly kind: GitIntegrationKind;
+  readonly revision: string;
+};
+
 export interface GitManager {
   isRepository(cwd: string): Promise<boolean>;
   resolveHeadRevision(cwd: string): Promise<string>;
@@ -27,6 +34,7 @@ export interface GitManager {
   stageAll(cwd: string): Promise<void>;
   getStagedDiff(cwd: string): Promise<string>;
   commitStaged(cwd: string, message: string): Promise<string>;
+  integrateBranch(cwd: string, branchName: string): Promise<GitIntegrationResult>;
   removeWorktree(
     cwd: string,
     worktreePath: string,

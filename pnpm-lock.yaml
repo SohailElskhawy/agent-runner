@@ -245,6 +245,40 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@26.5.1)(vite@8.3.0(@types/node@26.5.1))
 
+  packages/orchestrator:
+    dependencies:
+      '@agentic-dev-runner/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@agentic-dev-runner/context':
+        specifier: workspace:*
+        version: link:../context
+      '@agentic-dev-runner/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentic-dev-runner/git':
+        specifier: workspace:*
+        version: link:../git
+      '@agentic-dev-runner/persistence':
+        specifier: workspace:*
+        version: link:../persistence
+      '@agentic-dev-runner/verification':
+        specifier: workspace:*
+        version: link:../verification
+    devDependencies:
+      '@agentic-dev-runner/platform':
+        specifier: workspace:*
+        version: link:../platform
+      '@types/node':
+        specifier: ^26.5.1
+        version: 26.5.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@types/node@26.5.1)(vite@8.3.0(@types/node@26.5.1))
+
   packages/persistence:
     dependencies:
       '@agentic-dev-runner/core':

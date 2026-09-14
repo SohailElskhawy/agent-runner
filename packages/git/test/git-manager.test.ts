@@ -299,4 +299,93 @@ describe("NodeGitManager", () => {
     await git.removeWorktree(repo, worktreePath, { force: true });
     expect(existsSync(worktreePath)).toBe(false);
   });
+
+  it("integrates a task branch with a fast-forward merge", async () => {
+    const repo = await createRepository("repo");
+    const baseRevision = await git.resolveHeadRevision(repo);
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+
+    writeFileSync(join(worktreePath, "feature.txt"), "feature\n");
+    await git.stageAll(worktreePath);
+    const commitRevision = await git.commitStaged(
+      worktreePath,
+      "task M001: add feature",
+    );
+
+    const integration = await git.integrateBranch(repo, "task/M001");
+
+    expect(integration).toEqual({ kind: "fast-forward", revision: commitRevision });
+    expect(await git.resolveHeadRevision(repo)).toBe(commitRevision);
+    expect((await git.status(repo)).clean).toBe(true);
+    expect(existsSync(join(repo, "feature.txt"))).toBe(true);
+
+    const committedBase = await runFixtureGit(repo, ["rev-parse", "HEAD~1"]);
+    expect(committedBase.trim()).toBe(baseRevision);
+  });
+
+  it("reports already-integrated when the branch tip is the current head", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    writeFileSync(join(worktreePath, "feature.txt"), "feature\n");
+    await git.stageAll(worktreePath);
+    const commitRevision = await git.commitStaged(
+      worktreePath,
+      "task M001: add feature",
+    );
+    await git.integrateBranch(repo, "task/M001");
+
+    const integration = await git.integrateBranch(repo, "task/M001");
+
+    expect(integration).toEqual({
+      kind: "already-integrated",
+      revision: commitRevision,
+    });
+    expect(await git.resolveHeadRevision(repo)).toBe(commitRevision);
+  });
+
+  it("fails without touching the worktree when a fast-forward is impossible", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    writeFileSync(join(worktreePath, "feature.txt"), "feature\n");
+    await git.stageAll(worktreePath);
+    await git.commitStaged(worktreePath, "task M001: add feature");
+
+    writeFileSync(join(repo, "divergent.txt"), "divergent\n");
+    await git.stageAll(repo);
+    const advancedHead = await git.commitStaged(repo, "advance integration");
+
+    const error = await gitFailureOf(git.integrateBranch(repo, "task/M001"));
+
+    expect(error.failure.operation).toBe("integrateBranch");
+    expect(error.failure.exitCode).toBe(128);
+    expect(error.failure.reason).toContain("exit code 128");
+    expect(await git.resolveHeadRevision(repo)).toBe(advancedHead);
+    expect(existsSync(join(repo, "feature.txt"))).toBe(false);
+  });
+
+  it("refuses to integrate when the integration worktree is dirty", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    writeFileSync(join(repo, "uncommitted.txt"), "uncommitted\n");
+
+    const error = await gitFailureOf(git.integrateBranch(repo, "task/M001"));
+
+    expect(error.failure.operation).toBe("integrateBranch");
+    expect(error.failure.exitCode).toBeNull();
+    expect(error.failure.reason).toContain("uncommitted changes");
+  });
+
+  it("rejects an empty branch name for integration", async () => {
+    const repo = await createRepository("repo");
+
+    await expect(git.integrateBranch(repo, "")).rejects.toThrow(GitError);
+    const error = await gitFailureOf(git.integrateBranch(repo, ""));
+    expect(error.failure.reason).toContain("invalid branch name");
+  });
 });
