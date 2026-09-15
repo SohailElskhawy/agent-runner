@@ -1,6 +1,14 @@
-export const SCHEMA_VERSION = 1;
+export type SchemaMigrationDatabase = {
+  readonly exec: (sql: string) => void;
+};
 
-const SCHEMA_STATEMENTS = [
+export type SchemaMigration = {
+  readonly version: number;
+  readonly name: string;
+  readonly up: (db: SchemaMigrationDatabase) => void;
+};
+
+const SCHEMA_V1_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -63,8 +71,19 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
 ];
 
-export function applySchema(db: { exec: (sql: string) => void }): void {
-  for (const statement of SCHEMA_STATEMENTS) {
+export function applySchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V1_STATEMENTS) {
     db.exec(statement);
   }
 }
+
+export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
+  {
+    version: 1,
+    name: "initial-schema",
+    up: applySchema,
+  },
+];
+
+export const SCHEMA_VERSION: number =
+  SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]?.version ?? 0;

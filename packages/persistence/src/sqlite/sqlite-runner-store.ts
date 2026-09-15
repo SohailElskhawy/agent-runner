@@ -28,11 +28,13 @@ import {
   type TaskFilter,
 } from "../ports/runner-store.js";
 import { PersistenceError, StoreClosedError } from "./errors.js";
-import { applySchema } from "./schema.js";
+import { migrateSchema } from "./migrations.js";
+import { SCHEMA_MIGRATIONS, type SchemaMigration } from "./schema.js";
 
 export type SqliteRunnerStoreOptions = {
   path: string;
   busyTimeoutMs?: number | undefined;
+  migrations?: readonly SchemaMigration[] | undefined;
 };
 
 export function createSqliteRunnerStore(
@@ -44,12 +46,14 @@ export function createSqliteRunnerStore(
 export class SqliteRunnerStore implements RunnerStore {
   private readonly path: string;
   private readonly busyTimeoutMs: number;
+  private readonly migrations: readonly SchemaMigration[];
   private db: DatabaseSync | null = null;
   private initializing: Promise<void> | null = null;
 
   constructor(options: SqliteRunnerStoreOptions) {
     this.path = options.path;
     this.busyTimeoutMs = options.busyTimeoutMs ?? 5000;
+    this.migrations = options.migrations ?? SCHEMA_MIGRATIONS;
   }
 
   initialize(): Promise<void> {
@@ -58,27 +62,25 @@ export class SqliteRunnerStore implements RunnerStore {
   }
 
   private async open(): Promise<void> {
+    let db: DatabaseSync | null = null;
     try {
       if (this.path !== ":memory:") {
         mkdirSync(dirname(this.path), { recursive: true });
       }
-      const db = new DatabaseSync(this.path, {
+      db = new DatabaseSync(this.path, {
         enableForeignKeyConstraints: true,
       });
       db.exec(`PRAGMA journal_mode = WAL;`);
       db.exec(`PRAGMA busy_timeout = ${String(this.busyTimeoutMs)};`);
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        applySchema(db);
-        db.exec("COMMIT");
-      } catch (error) {
-        if (db.isTransaction) {
-          db.exec("ROLLBACK");
-        }
-        throw error;
-      }
+      migrateSchema(db, {
+        migrations: this.migrations,
+        source: this.path,
+      });
       this.db = db;
     } catch (error) {
+      if (db !== null && db.isOpen) {
+        db.close();
+      }
       if (error instanceof PersistenceError) {
         throw error;
       }

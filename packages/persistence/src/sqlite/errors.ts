@@ -11,3 +11,16 @@ export class StoreClosedError extends PersistenceError {
     this.name = "StoreClosedError";
   }
 }
+
+export class SchemaVersionTooNewError extends PersistenceError {
+  constructor(
+    databaseVersion: number,
+    supportedVersion: number,
+    source?: string | undefined,
+  ) {
+    super(
+      `SQLite database${source === undefined ? "" : ` at "${source}"`} has schema version ${String(databaseVersion)}, which is newer than the supported schema version ${String(supportedVersion)}`,
+    );
+    this.name = "SchemaVersionTooNewError";
+  }
+}
