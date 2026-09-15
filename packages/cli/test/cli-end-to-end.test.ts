@@ -12,6 +12,7 @@ import {
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
 import {
   captureIo,
+  createFixtureAttempt,
   createFixtureRepository,
   createFixtureTask,
   RecordingAgentRuntime,
@@ -30,13 +31,14 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
   let directory: string;
   let repositoryPath: string;
   let stateDirectory: string;
+  let fixtureHeadRevision: string;
   let store: RunnerStore | undefined;
 
   beforeEach(async () => {
     directory = temporaryDirectory("agentic-cli-e2e");
     repositoryPath = join(directory, "my project repo");
     stateDirectory = defaultStateDir(repositoryPath);
-    await createFixtureRepository(repositoryPath, AGENTS_MARKDOWN);
+    fixtureHeadRevision = await createFixtureRepository(repositoryPath, AGENTS_MARKDOWN);
   });
 
   afterEach(async () => {
@@ -134,6 +136,46 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     expect(inspectOutput).toContain("status: DONE");
     expect(inspectOutput).toContain("task.transitioned");
     expect(inspectOutput).toContain("integration.completed");
+  });
+
+  it("reconciles an interrupted task on startup so status and inspect observe reconciled state", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ status: "IMPLEMENTING" }));
+    await store.putAttempt(
+      createFixtureAttempt({ status: "RUNNING", baseRevision: fixtureHeadRevision }),
+    );
+    await store.close();
+    store = undefined;
+
+    const interruptedAgent = new RecordingAgentRuntime();
+    const { io: statusIo, lines: statusLines } = captureIo();
+    const statusExit = await runCli(["status"], { io: statusIo, servicesFactory: () => servicesForRepository(interruptedAgent) });
+    expect(statusExit).toBe(0);
+    const statusOutput = statusLines.join("\n");
+    expect(statusOutput).toContain("M001 [READY]");
+    expect(statusOutput).not.toContain("[IMPLEMENTING]");
+    expect(interruptedAgent.invocations).toHaveLength(0);
+
+    store = await openRepositoryStore();
+    expect((await store.getTask("M001"))?.status).toBe("READY");
+    const attempts = await store.listAttempts({ taskId: "M001" });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.status).toBe("FAILED");
+    const events = await store.listEvents({ taskId: "M001" });
+    expect(events.some((event) => event.type === "recovery.reconciled")).toBe(true);
+    await store.close();
+    store = undefined;
+
+    const { io: inspectIo, lines: inspectLines } = captureIo();
+    const inspectExit = await runCli(["inspect", "M001"], { io: inspectIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(inspectExit).toBe(0);
+    const inspectOutput = inspectLines.join("\n");
+    expect(inspectOutput).toContain("status: READY");
+    expect(inspectOutput).toContain("recovery.reconciled");
   });
 
   it("exits non-zero when a task is unknown", async () => {

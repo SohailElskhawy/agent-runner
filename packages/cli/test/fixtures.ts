@@ -71,6 +71,7 @@ export function createFixtureAttempt(overrides?: {
   taskId?: string;
   number?: number;
   status?: Attempt["status"];
+  baseRevision?: string;
 }): Attempt {
   return {
     id: overrides?.id ?? "att_M001_1",
@@ -78,7 +79,7 @@ export function createFixtureAttempt(overrides?: {
     number: overrides?.number ?? 1,
     status: overrides?.status ?? "SUCCEEDED",
     agent: "fake-agent",
-    baseRevision: "abcdef1234567890",
+    baseRevision: overrides?.baseRevision ?? "abcdef1234567890",
     startedAt: "2026-01-01T00:00:00.000Z",
     finishedAt: "2026-01-01T00:00:05.000Z",
   };

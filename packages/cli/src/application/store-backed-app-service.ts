@@ -41,6 +41,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly store: RunnerStore;
   private readonly orchestrator: SingleTaskOrchestrator;
   private readonly recovery: CrashRecovery;
+  private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
     this.storePath = options.storePath;
@@ -51,7 +52,7 @@ class StoreBackedAppService implements RunnerAppService {
   }
 
   async init(): Promise<InitResult> {
-    await this.store.initialize();
+    await this.startupReconcile();
     const existing = await this.store.getProject(DEFAULT_PROJECT_ID);
     if (existing === null) {
       const now = new Date().toISOString();
@@ -72,7 +73,7 @@ class StoreBackedAppService implements RunnerAppService {
   }
 
   async run(taskId: TaskId): Promise<RunResult> {
-    await this.store.initialize();
+    await this.startupReconcile();
     const recovery = await this.recovery.reconcileTask(taskId);
     const recoveryResult = recoveryOutcomeToRunResult(recovery);
     if (recoveryResult !== null) {
@@ -83,7 +84,7 @@ class StoreBackedAppService implements RunnerAppService {
   }
 
   async status(): Promise<ProjectStatus> {
-    await this.store.initialize();
+    await this.startupReconcile();
     const project = (await this.store.listProjects()).at(0) ?? null;
     const tasks = await this.store.listTasks();
     const entries: TaskStatusEntry[] = [];
@@ -102,7 +103,7 @@ class StoreBackedAppService implements RunnerAppService {
   }
 
   async inspect(taskId: TaskId): Promise<TaskInspection | null> {
-    await this.store.initialize();
+    await this.startupReconcile();
     const task = await this.store.getTask(taskId);
     if (task === null) {
       return null;
@@ -114,5 +115,14 @@ class StoreBackedAppService implements RunnerAppService {
 
   async close(): Promise<void> {
     await this.store.close();
+    this.startupReconciliation = undefined;
+  }
+
+  private startupReconcile(): Promise<void> {
+    this.startupReconciliation ??= (async () => {
+      await this.store.initialize();
+      await this.recovery.reconcileUnfinished();
+    })();
+    return this.startupReconciliation;
   }
 }

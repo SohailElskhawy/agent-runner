@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import type { TaskId } from "@agentic-dev-runner/core";
-import type {
-  CrashRecovery,
-  RecoveryOutcome,
-  SingleTaskRunOutcome,
+import {
+  OrchestrationError,
+  type CrashRecovery,
+  type RecoveryOutcome,
+  type SingleTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
 import { outcomeToRunResult } from "../src/application/runner-app-service.js";
+import { runCli } from "../src/run-cli.js";
 import {
   captureIo,
   createFixtureAttempt,
@@ -23,11 +25,35 @@ import { executeInitCommand, executeRunCommand, executeStatusCommand, executeIns
 class StubOrchestrator implements SingleTaskOrchestrator {
   readonly calls: TaskId[] = [];
 
-  constructor(private readonly outcome: SingleTaskRunOutcome) {}
+  constructor(
+    private readonly outcome: SingleTaskRunOutcome,
+    private readonly log?: string[],
+  ) {}
 
   async run(taskId: TaskId): Promise<SingleTaskRunOutcome> {
     this.calls.push(taskId);
+    this.log?.push(`orchestrator.run:${taskId}`);
     return this.outcome;
+  }
+}
+
+class RecordingRecovery implements CrashRecovery {
+  constructor(
+    private readonly log: string[],
+    private readonly unfinishedError?: Error,
+  ) {}
+
+  async reconcileTask(taskId: TaskId): Promise<RecoveryOutcome> {
+    this.log.push(`reconcileTask:${taskId}`);
+    return { kind: "no-op", taskId, detail: "stub recovery" };
+  }
+
+  async reconcileUnfinished(): Promise<RecoveryOutcome[]> {
+    this.log.push("reconcileUnfinished");
+    if (this.unfinishedError !== undefined) {
+      throw this.unfinishedError;
+    }
+    return [];
   }
 }
 
@@ -93,6 +119,51 @@ describe("StoreBackedAppService", () => {
 
     expect(orchestrator.calls).toEqual(["M001"]);
     expect(result.kind).toBe("completed");
+  });
+
+  it("reconciles unfinished operations once at startup before any application operation", async () => {
+    const log: string[] = [];
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store,
+      orchestrator: new StubOrchestrator(completedOutcome, log),
+      recovery: new RecordingRecovery(log),
+    });
+
+    await service.status();
+    await service.inspect("M999");
+    await service.run("M001");
+
+    expect(log).toEqual([
+      "reconcileUnfinished",
+      "reconcileTask:M001",
+      "orchestrator.run:M001",
+    ]);
+  });
+
+  it("surfaces startup reconciliation failures through the existing error path", async () => {
+    const log: string[] = [];
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store,
+      orchestrator: new StubOrchestrator(completedOutcome, log),
+      recovery: new RecordingRecovery(
+        log,
+        new OrchestrationError("startup reconciliation failed"),
+      ),
+    });
+
+    await expect(service.status()).rejects.toThrow("startup reconciliation failed");
+    await expect(service.run("M001")).rejects.toThrow("startup reconciliation failed");
+    expect(log.filter((entry) => entry === "reconcileUnfinished")).toHaveLength(1);
+
+    const { io, errors } = captureIo();
+    const exitCode = await runCli(["status"], { io, servicesFactory: () => service });
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("startup reconciliation failed");
+    expect(log.filter((entry) => entry === "reconcileUnfinished")).toHaveLength(1);
   });
 
   it("reads persisted projects, tasks, and attempts for status", async () => {
