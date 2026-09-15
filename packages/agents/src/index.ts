@@ -15,3 +15,9 @@ export {
   type ContextDirectoryRemover,
   type OpenCodeAdapterOptions,
 } from "./adapters/opencode/opencode-adapter.js";
+export {
+  CODEX_AGENT_ID,
+  CodexAdapter,
+  CodexAdapterError,
+  type CodexAdapterOptions,
+} from "./adapters/codex/codex-adapter.js";
