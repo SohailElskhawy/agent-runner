@@ -103,6 +103,19 @@ function runningAttempt(): Attempt {
   };
 }
 
+function failedAfterIntegrationAttempt(): Attempt {
+  return {
+    ...runningAttempt(),
+    status: "FAILED",
+    failure: {
+      kind: "error",
+      message:
+        "failed to persist the integration result for task \"M001\" (original failure: store write failed)",
+    },
+    finishedAt: "2026-01-01T00:00:05.000Z",
+  };
+}
+
 function attemptStartedEvent(): NewEvent {
   return {
     type: ORCHESTRATION_EVENTS.attemptStarted,
@@ -636,18 +649,30 @@ describe("CrashRecovery", () => {
     await git.createWorktree(repoPath, secondWorktreePath, secondBranch);
     writeFileSync(join(secondWorktreePath, change.path), change.content);
     await git.stageAll(secondWorktreePath);
-    await store.putTask(createTask({ id: secondTaskId, status: "VERIFYING" }));
+    const secondRevision = await git.commitStaged(
+      secondWorktreePath,
+      `task ${secondTaskId}: Add a small utility function`,
+    );
+    await runFixtureGit(runner, repoPath, ["merge", "--ff-only", secondBranch]);
+    await store.putTask(createTask({ id: secondTaskId, status: "FAILED" }));
     await store.putAttempt({
       ...runningAttempt(),
       id: "att_M002_1",
       taskId: secondTaskId,
+      status: "FAILED",
+      failure: { kind: "error", message: "integration persistence failed" },
+      finishedAt: "2026-01-01T00:00:05.000Z",
     });
     await store.appendEvents([
       {
-        type: ORCHESTRATION_EVENTS.implementationCompleted,
+        type: ORCHESTRATION_EVENTS.commitCreated,
         taskId: secondTaskId,
-        payload: { attemptId: "att_M002_1", changedPaths: [change.path] },
-        occurredAt: "2026-01-01T00:00:01.000Z",
+        payload: {
+          attemptId: "att_M002_1",
+          revision: secondRevision,
+          message: `task ${secondTaskId}: Add a small utility function`,
+        },
+        occurredAt: "2026-01-01T00:00:02.000Z",
       },
     ]);
 
@@ -659,10 +684,111 @@ describe("CrashRecovery", () => {
     ]);
     expect((await storedTask()).status).toBe("BLOCKED");
     expect((await store.getTask(secondTaskId))?.status).toBe("DONE");
+    expect(
+      (await store.listEvents({ taskId: secondTaskId })).filter(
+        (event) => event.type === ORCHESTRATION_EVENTS.integrationCompleted,
+      ),
+    ).toHaveLength(1);
   });
 
-  it("persists reconciled state that survives a store reopen", async () => {
+  it("converges a task persisted FAILED after a successful integration to DONE without integrating again", async () => {
     const { branch, worktreePath } = await createInterruptedWorktree();
+    const commitRevision = await commitTaskChange(worktreePath);
+    await runFixtureGit(runner, repoPath, ["merge", "--ff-only", branch]);
+    await seedTask("FAILED");
+    await store.putAttempt(failedAfterIntegrationAttempt());
+    await store.appendEvents([
+      attemptStartedEvent(),
+      implementationCompletedEvent([change.path]),
+      commitCreatedEvent(commitRevision),
+    ]);
+
+    const commitsBefore = await commitsSinceBase();
+    const headBefore = await headRevision();
+
+    const outcome = await recovery.reconcileTask(taskId);
+
+    expectCompleted(outcome);
+    expect(outcome.integration).toEqual({
+      kind: "already-integrated",
+      revision: commitRevision,
+    });
+    expect((await storedTask()).status).toBe("DONE");
+    const attempt = await storedAttempt();
+    expect(attempt.status).toBe("SUCCEEDED");
+    expect(attempt.failure).toBeUndefined();
+    expect(await headRevision()).toBe(headBefore);
+    expect(await commitsSinceBase()).toBe(commitsBefore);
+
+    const events = await store.listEvents({ taskId });
+    expect(
+      events.filter(
+        (event) => event.type === ORCHESTRATION_EVENTS.integrationCompleted,
+      ),
+    ).toHaveLength(1);
+    const repeated = await recovery.reconcileTask(taskId);
+    expectNoOp(repeated);
+    expect(
+      (await store.listEvents({ taskId })).filter(
+        (event) => event.type === ORCHESTRATION_EVENTS.integrationCompleted,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not append a second integration.completed event when one was persisted before the crash", async () => {
+    const { branch, worktreePath } = await createInterruptedWorktree();
+    const commitRevision = await commitTaskChange(worktreePath);
+    await runFixtureGit(runner, repoPath, ["merge", "--ff-only", branch]);
+    await seedTask("FAILED");
+    await store.putAttempt(failedAfterIntegrationAttempt());
+    await store.appendEvents([
+      commitCreatedEvent(commitRevision),
+      {
+        type: ORCHESTRATION_EVENTS.integrationCompleted,
+        taskId,
+        payload: { attemptId, revision: commitRevision, kind: "fast-forward" },
+        occurredAt: "2026-01-01T00:00:04.000Z",
+      },
+    ]);
+
+    const outcome = await recovery.reconcileTask(taskId);
+
+    expectCompleted(outcome);
+    expect((await storedTask()).status).toBe("DONE");
+    expect(
+      (await store.listEvents({ taskId })).filter(
+        (event) => event.type === ORCHESTRATION_EVENTS.integrationCompleted,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not reopen a FAILED task whose recorded commit is not integrated", async () => {
+    const { worktreePath } = await createInterruptedWorktree();
+    const commitRevision = await commitTaskChange(worktreePath);
+    await seedTask("FAILED");
+    await store.putAttempt(failedAfterIntegrationAttempt());
+    await store.appendEvents([commitCreatedEvent(commitRevision)]);
+
+    const outcome = await recovery.reconcileTask(taskId);
+
+    expectNoOp(outcome);
+    expect((await storedTask()).status).toBe("FAILED");
+    expect((await storedAttempt()).status).toBe("FAILED");
+    expect(await headRevision()).toBe(baseRevision);
+  });
+
+  it("does not reopen FAILED tasks without integration evidence", async () => {
+    await seedTask("FAILED");
+    await store.putAttempt(failedAfterIntegrationAttempt());
+    await store.putTask(createTask({ id: "M002", status: "CANCELLED" }));
+
+    expectNoOp(await recovery.reconcileTask(taskId));
+    expectNoOp(await recovery.reconcileTask("M002"));
+    expect((await storedTask()).status).toBe("FAILED");
+    expect((await store.getTask("M002"))?.status).toBe("CANCELLED");
+  });
+
+  it("persists reconciled state that survives a store reopen", async () => {    const { branch, worktreePath } = await createInterruptedWorktree();
     const commitRevision = await commitTaskChange(worktreePath);
     await runFixtureGit(runner, repoPath, ["merge", "--ff-only", branch]);
     await seedTask("INTEGRATING");

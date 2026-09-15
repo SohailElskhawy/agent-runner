@@ -17,7 +17,7 @@ const VERTICAL_SLICE_ACTIVE_STATES = [
 
 const EXECUTION_STATES = ["IMPLEMENTING", "VERIFYING", "INTEGRATING"] as const;
 
-const TERMINAL_STATES = ["DONE", "FAILED", "CANCELLED", "NEEDS_HUMAN"] as const;
+const TERMINAL_STATES = ["DONE", "CANCELLED", "NEEDS_HUMAN"] as const;
 
 const UNSUPPORTED_STATES = [
   "BACKLOG",
@@ -62,8 +62,18 @@ describe("explicit transition table", () => {
     expect([...getTaskStatusTransitions("NEEDS_HUMAN")]).toEqual([]);
     expect([...getTaskStatusTransitions("BLOCKED")]).toEqual(["READY"]);
     expect([...getTaskStatusTransitions("DONE")]).toEqual([]);
-    expect([...getTaskStatusTransitions("FAILED")]).toEqual([]);
+    expect([...getTaskStatusTransitions("FAILED")]).toEqual(["DONE"]);
     expect([...getTaskStatusTransitions("CANCELLED")]).toEqual([]);
+  });
+
+  it("allows crash recovery to converge an integrated task persisted as FAILED to DONE only", () => {
+    expect(canTransitionTaskStatus("FAILED", "DONE")).toBe(true);
+    for (const to of TASK_STATUSES) {
+      if (to === "DONE") {
+        continue;
+      }
+      expect(canTransitionTaskStatus("FAILED", to)).toBe(false);
+    }
   });
 });
 
@@ -136,6 +146,12 @@ describe("invalid transitions", () => {
       for (const to of TASK_STATUSES) {
         expect(canTransitionTaskStatus(from, to)).toBe(false);
       }
+    }
+  });
+
+  it("allows FAILED only to converge to DONE through crash recovery", () => {
+    for (const to of TASK_STATUSES) {
+      expect(canTransitionTaskStatus("FAILED", to)).toBe(to === "DONE");
     }
   });
 

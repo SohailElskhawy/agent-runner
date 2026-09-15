@@ -20,7 +20,7 @@ export const TASK_STATUS_TRANSITIONS: Readonly<
   DONE: [],
   BLOCKED: ["READY"],
   NEEDS_HUMAN: [],
-  FAILED: [],
+  FAILED: ["DONE"],
   CANCELLED: [],
 };
 

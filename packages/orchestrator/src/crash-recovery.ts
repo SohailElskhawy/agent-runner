@@ -98,7 +98,7 @@ class SequentialCrashRecovery implements CrashRecovery {
     const tasks = await this.store.listTasks();
     const outcomes: RecoveryOutcome[] = [];
     for (const task of tasks) {
-      if (!isRecoveryActiveStatus(task.status)) {
+      if (!isRecoveryEligibleStatus(task.status)) {
         continue;
       }
       outcomes.push(await this.reconcileTask(task.id));
@@ -110,6 +110,9 @@ class SequentialCrashRecovery implements CrashRecovery {
     const task = await this.store.getTask(taskId);
     if (task === null) {
       return noOp(taskId, `task "${taskId}" does not exist`);
+    }
+    if (task.status === "FAILED") {
+      return await this.reconcileFailedTask(task);
     }
     if (!isRecoveryActiveStatus(task.status)) {
       return noOp(
@@ -337,6 +340,69 @@ class SequentialCrashRecovery implements CrashRecovery {
       branch,
       worktreePath,
       commitEvidence.revision,
+      task.status,
+    );
+  }
+
+  private async reconcileFailedTask(
+    task: Task,
+  ): Promise<RecoveryOutcome> {
+    const attempts = await this.store.listAttempts({ taskId: task.id });
+    const attempt = attempts.at(-1);
+    if (attempt === undefined) {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED without attempts; there is no integration evidence to reconcile`,
+      );
+    }
+    if (attempt.status === "RUNNING") {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED while attempt "${attempt.id}" is RUNNING; the persisted execution state is inconsistent`,
+      );
+    }
+    const commitEvidence = await this.latestCommitEvidence(task.id, attempt.id);
+    if (commitEvidence === undefined) {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED without committed task revision evidence for attempt "${attempt.id}"; there is no integration to reconcile`,
+      );
+    }
+    let headRevision: string;
+    try {
+      headRevision = await this.git.resolveHeadRevision(this.projectRoot);
+    } catch (error) {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED and integration state is unavailable (${describeError(error)}); the FAILED status is kept until Git evidence is available`,
+      );
+    }
+    let integrated: boolean;
+    try {
+      integrated = await this.git.isAncestor(
+        this.projectRoot,
+        commitEvidence.revision,
+        headRevision,
+      );
+    } catch (error) {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED and integration state is unavailable (${describeError(error)}); the FAILED status is kept until Git evidence is available`,
+      );
+    }
+    if (!integrated) {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED and its recorded task commit ${commitEvidence.revision} is not integrated; the FAILED status reflects an observed integration failure`,
+      );
+    }
+    return await this.finishIntegrated(
+      task,
+      attempt,
+      taskWorktreePath(this.worktreesDir, task.id, attempt.number),
+      commitEvidence.revision,
+      { kind: "already-integrated", revision: commitEvidence.revision },
+      `task commit ${commitEvidence.revision} was already integrated before the runner restarted despite the persisted FAILED status; the task converged to DONE without integrating again`,
       task.status,
     );
   }
@@ -661,26 +727,30 @@ class SequentialCrashRecovery implements CrashRecovery {
     fromStatus: TaskStatus,
   ): Promise<RecoveryOutcome> {
     const occurredAt = this.clock();
-    const succeededAttempt: Attempt = {
-      ...attempt,
-      status: "SUCCEEDED",
-      finishedAt: occurredAt,
-    };
+    const succeededAttempt = succeededAttemptOf(attempt, occurredAt);
     assertTaskTransition(fromStatus, "DONE");
     await this.store.transaction(async () => {
       await this.store.putAttempt(succeededAttempt);
       await this.store.setTaskStatus(task.id, "DONE", occurredAt);
+      const recordedIntegration = await this.latestIntegrationEvidence(
+        task.id,
+        attempt.id,
+      );
       await this.store.appendEvents([
-        {
-          type: ORCHESTRATION_EVENTS.integrationCompleted,
-          taskId: task.id,
-          payload: {
-            attemptId: attempt.id,
-            revision: integration.revision,
-            kind: integration.kind,
-          } satisfies IntegrationCompletedPayload,
-          occurredAt,
-        },
+        ...(recordedIntegration === undefined
+          ? [
+              {
+                type: ORCHESTRATION_EVENTS.integrationCompleted,
+                taskId: task.id,
+                payload: {
+                  attemptId: attempt.id,
+                  revision: integration.revision,
+                  kind: integration.kind,
+                } satisfies IntegrationCompletedPayload,
+                occurredAt,
+              },
+            ]
+          : []),
         recoveryEvent(
           task.id,
           attempt.id,
@@ -900,6 +970,19 @@ class SequentialCrashRecovery implements CrashRecovery {
       | undefined;
   }
 
+  private async latestIntegrationEvidence(
+    taskId: TaskId,
+    attemptId: string,
+  ): Promise<IntegrationCompletedPayload | undefined> {
+    const events = await this.store.listEvents({
+      taskId,
+      type: ORCHESTRATION_EVENTS.integrationCompleted,
+    });
+    return latestPayloadOf(events, attemptId) as
+      | IntegrationCompletedPayload
+      | undefined;
+  }
+
   private async requireTask(taskId: TaskId): Promise<Task> {
     const task = await this.store.getTask(taskId);
     if (task === null) {
@@ -1062,6 +1145,35 @@ function isRecoveryActiveStatus(
   status: TaskStatus,
 ): status is RecoveryActiveStatus {
   return (RECOVERY_ACTIVE_STATUSES as readonly string[]).includes(status);
+}
+
+function isRecoveryEligibleStatus(status: TaskStatus): boolean {
+  return isRecoveryActiveStatus(status) || status === "FAILED";
+}
+
+function succeededAttemptOf(
+  attempt: Attempt,
+  finishedAt: IsoTimestamp,
+): Attempt {
+  return {
+    id: attempt.id,
+    taskId: attempt.taskId,
+    number: attempt.number,
+    status: "SUCCEEDED",
+    agent: attempt.agent,
+    ...(attempt.model === undefined ? {} : { model: attempt.model }),
+    baseRevision: attempt.baseRevision,
+    ...(attempt.contextManifest === undefined
+      ? {}
+      : { contextManifest: attempt.contextManifest }),
+    ...(attempt.logs === undefined ? {} : { logs: attempt.logs }),
+    ...(attempt.tokenUsage === undefined
+      ? {}
+      : { tokenUsage: attempt.tokenUsage }),
+    ...(attempt.cost === undefined ? {} : { cost: attempt.cost }),
+    startedAt: attempt.startedAt,
+    finishedAt,
+  };
 }
 
 function selectVerificationChecks(
