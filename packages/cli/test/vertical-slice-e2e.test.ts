@@ -9,7 +9,6 @@ import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import { OpenCodeAdapter } from "@agentic-dev-runner/agents";
-import type { VerificationCheckSpec } from "@agentic-dev-runner/verification";
 import { runCli } from "../src/run-cli.js";
 import { createAppServices } from "../src/application/app-services.js";
 import { resolveStorePath } from "../src/application/defaults.js";
@@ -24,10 +23,21 @@ const TASK_ID = "T001";
 const CLAMP_SOURCE = "src/math/clamp.cjs";
 const CLAMP_TEST = "test/math/clamp.test.cjs";
 
-const REAL_VERIFICATION_CHECKS: readonly VerificationCheckSpec[] = [
-  { name: "typecheck", executable: "node", args: ["--check", CLAMP_SOURCE] },
-  { name: "unit", executable: "node", args: ["--test", "test/**/*.test.cjs"] },
-];
+const PROJECT_CONFIG_YAML = [
+  "verification:",
+  "  checks:",
+  "    typecheck:",
+  "      command: node",
+  "      args:",
+  "        - --check",
+  `        - ${CLAMP_SOURCE}`,
+  "    unit:",
+  "      command: node",
+  "      args:",
+  "        - --test",
+  "        - test/**/*.test.cjs",
+  "",
+].join("\n");
 
 const AGENTS_MARKDOWN = [
   "# Fixture rules",
@@ -115,6 +125,7 @@ describe("VS014 vertical slice through the CLI entry point", () => {
     mkdirSync(repositoryPath, { recursive: true });
     writeFileSync(join(repositoryPath, "AGENTS.md"), AGENTS_MARKDOWN);
     writeFileSync(join(repositoryPath, "README.md"), "fixture\n");
+    writeFileSync(join(repositoryPath, "agentic.yaml"), PROJECT_CONFIG_YAML);
     mkdirSync(join(repositoryPath, "src", "math"), { recursive: true });
     writeFileSync(
       join(repositoryPath, "src", "math", "validate.cjs"),
@@ -140,12 +151,11 @@ describe("VS014 vertical slice through the CLI entry point", () => {
     await run(["commit", "-m", "initial commit"]);
   }
 
-  function services() {
-    const appServices = createAppServices(
+  async function services() {
+    const appServices = await createAppServices(
       {
         projectRoot: repositoryPath,
         stateDir,
-        verificationChecks: REAL_VERIFICATION_CHECKS,
         agentTimeoutMs: 60_000,
       },
       {

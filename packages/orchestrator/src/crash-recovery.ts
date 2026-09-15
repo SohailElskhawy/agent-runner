@@ -15,7 +15,10 @@ import type {
   VerificationEngine,
   VerificationRunResult,
 } from "@agentic-dev-runner/verification";
-import { toVerificationResults } from "@agentic-dev-runner/verification";
+import {
+  resolveVerificationChecksForTask,
+  toVerificationResults,
+} from "@agentic-dev-runner/verification";
 import { OrchestrationError } from "./orchestration-error.js";
 import {
   ORCHESTRATION_EVENTS,
@@ -226,15 +229,15 @@ class SequentialCrashRecovery implements CrashRecovery {
         recorded,
       );
     }
-    const missingChecks = listMissingVerificationChecks(
-      task,
+    const verificationResolution = resolveVerificationChecksForTask(
+      task.definition.verification.required,
       this.verificationChecks,
     );
-    if (missingChecks.length > 0) {
+    if (!verificationResolution.ok) {
       return await this.requiresHuman(
         task,
         attempt,
-        `no verification command is configured for required checks: ${missingChecks.join(", ")}, so verification evidence cannot be produced`,
+        `no verification command is configured for required checks: ${verificationResolution.missingChecks.join(", ")}, so verification evidence cannot be produced`,
       );
     }
     let run: VerificationRunResult;
@@ -242,7 +245,7 @@ class SequentialCrashRecovery implements CrashRecovery {
       run = await this.verification.run({
         attemptId: attempt.id,
         cwd: worktreePath,
-        checks: selectVerificationChecks(task, this.verificationChecks),
+        checks: verificationResolution.checks,
         ...(this.signal === undefined ? {} : { signal: this.signal }),
       });
     } catch (error) {
@@ -1174,23 +1177,6 @@ function succeededAttemptOf(
     startedAt: attempt.startedAt,
     finishedAt,
   };
-}
-
-function selectVerificationChecks(
-  task: Task,
-  configured: readonly VerificationCheckSpec[],
-): VerificationCheckSpec[] {
-  const required = task.definition.verification.required;
-  return configured.filter((check) => required.includes(check.name));
-}
-
-function listMissingVerificationChecks(
-  task: Task,
-  configured: readonly VerificationCheckSpec[],
-): string[] {
-  return task.definition.verification.required.filter(
-    (name) => !configured.some((check) => check.name === name),
-  );
 }
 
 function describeVerificationFailures(run: VerificationRunResult): string {

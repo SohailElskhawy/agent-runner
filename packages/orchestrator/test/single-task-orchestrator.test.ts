@@ -402,6 +402,50 @@ describe("SingleTaskOrchestrator", () => {
     }
   });
 
+  it("resolves required checks in the task-declared order regardless of configuration order", async () => {
+    const base = createTask({ id: "M-ORDER", status: "READY" });
+    await store.putTask({
+      ...base,
+      definition: {
+        ...base.definition,
+        verification: { required: ["unit", "typecheck"] },
+      },
+    });
+    wireOrchestrator({ agent: agentAppliesChange(change) });
+
+    const outcome = await orchestrator.run("M-ORDER");
+
+    expectCompleted(outcome);
+    expect(verification.runs).toHaveLength(1);
+    const run = verification.runs[0];
+    expect(run?.checks.map((check) => check.name)).toEqual([
+      "unit",
+      "typecheck",
+    ]);
+  });
+
+  it("rejects required checks with no configured command before creating an attempt", async () => {
+    const base = createTask({ id: "M-MISSING", status: "READY" });
+    await store.putTask({
+      ...base,
+      definition: {
+        ...base.definition,
+        verification: { required: ["typecheck", "lint"] },
+      },
+    });
+    wireOrchestrator({ agent: agentAppliesChange(change) });
+
+    const outcome = await orchestrator.run("M-MISSING");
+
+    expectRejected(outcome);
+    expect(outcome.reason).toBe(
+      "no verification command configured for required checks: lint",
+    );
+    expect(await store.listAttempts({ taskId: "M-MISSING" })).toHaveLength(0);
+    expect((await store.getTask("M-MISSING"))?.status).toBe("READY");
+    expect(verification.runs).toHaveLength(0);
+  });
+
   it("rejects a task that is not READY without creating an attempt", async () => {
     const nonReadyStatuses = [
       "BACKLOG",

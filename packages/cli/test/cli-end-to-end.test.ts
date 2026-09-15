@@ -18,6 +18,7 @@ import {
   RecordingAgentRuntime,
   PassingVerificationEngine,
   temporaryDirectory,
+  writeProjectConfiguration,
 } from "./fixtures.js";
 
 const AGENTS_MARKDOWN = "# Fixture rules\n\nBe precise.\n";
@@ -47,8 +48,8 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     rmSync(stateDirectory, { recursive: true, force: true });
   });
 
-  function servicesForRepository(agent: RecordingAgentRuntime) {
-    const appServices = createAppServices({
+  async function servicesForRepository(agent: RecordingAgentRuntime) {
+    const appServices = await createAppServices({
       projectRoot: repositoryPath,
       stateDir: stateDirectory,
       verificationChecks: EXPLICIT_VERIFICATION_CHECKS,
@@ -65,8 +66,17 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     });
   }
 
-  function defaultWiredServices() {
-    const appServices = createAppServices({
+  async function defaultWiredServices() {
+    writeProjectConfiguration(repositoryPath, [
+      "verification:",
+      "  checks:",
+      "    build:",
+      "      command: node",
+      "      args:",
+      "        - --version",
+      "",
+    ].join("\n"));
+    const appServices = await createAppServices({
       projectRoot: repositoryPath,
       stateDir: stateDirectory,
     }, {
@@ -189,7 +199,7 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
 
   it("rejects tasks whose required verification checks have no configured command", async () => {
     const { io } = captureIo();
-    const services = defaultWiredServices();
+    const services = await defaultWiredServices();
 
     const initExit = await runCli(["init"], { io, servicesFactory: async () => services });
     expect(initExit).toBe(0);

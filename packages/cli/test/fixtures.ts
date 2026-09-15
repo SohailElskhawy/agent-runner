@@ -138,3 +138,26 @@ export async function createFixtureRepository(
 export function temporaryDirectory(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `${prefix}-`));
 }
+
+export const PROJECT_CONFIG_FILE = "agentic.yaml";
+
+export const DEFAULT_PROJECT_CONFIG_YAML = [
+  "verification:",
+  "  checks:",
+  "    typecheck:",
+  "      command: node",
+  "      args:",
+  "        - --version",
+  "    unit:",
+  "      command: node",
+  "      args:",
+  "        - --version",
+  "",
+].join("\n");
+
+export function writeProjectConfiguration(
+  repositoryPath: string,
+  yaml: string = DEFAULT_PROJECT_CONFIG_YAML,
+): void {
+  writeFileSync(join(repositoryPath, PROJECT_CONFIG_FILE), yaml, "utf8");
+}

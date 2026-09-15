@@ -7,12 +7,12 @@ import {
 } from "./application/defaults.js";
 import type { RunnerAppService } from "./application/runner-app-service.js";
 
-export function createServices(
+export async function createServices(
   projectRoot?: string,
 ): Promise<RunnerAppService> {
   const root = resolveProjectRoot(projectRoot ?? process.cwd());
   const stateDir = defaultStateDir(root);
-  const appServices = createAppServices({
+  const appServices = await createAppServices({
     projectRoot: root,
     stateDir,
   });

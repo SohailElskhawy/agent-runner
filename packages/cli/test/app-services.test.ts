@@ -18,7 +18,7 @@ import {
   resolveWorktreesDir,
   type AppServicesOptions,
 } from "../src/application/defaults.js";
-import { createFixtureProject, temporaryDirectory } from "./fixtures.js";
+import { createFixtureProject, temporaryDirectory, writeProjectConfiguration } from "./fixtures.js";
 
 const CASE_INSENSITIVE_PLATFORM = process.platform === "win32" || process.platform === "darwin";
 
@@ -44,6 +44,7 @@ describe("createAppServices wiring", () => {
 
   beforeEach(() => {
     directory = temporaryDirectory("agentic-cli-wiring");
+    writeProjectConfiguration(directory);
     options = { projectRoot: directory };
   });
 
@@ -112,7 +113,7 @@ describe("createAppServices wiring", () => {
   });
 
   it("creates a real SQLite store whose state survives reopening", async () => {
-    const appServices = createAppServices(options, {
+    const appServices = await createAppServices(options, {
       orchestrator: new RecordingOrchestrator(rejectedOutcome),
     });
     store = appServices.store;
@@ -131,7 +132,7 @@ describe("createAppServices wiring", () => {
 
   it("delegates run to the provided orchestrator override", async () => {
     const orchestrator = new RecordingOrchestrator(rejectedOutcome);
-    const appServices = createAppServices(options, { orchestrator });
+    const appServices = await createAppServices(options, { orchestrator });
     store = appServices.store;
 
     const outcome = await appServices.orchestrator.run("M001");

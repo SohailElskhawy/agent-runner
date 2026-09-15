@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@agentic-dev-runner/agents": "workspace:*",
+    "@agentic-dev-runner/config": "workspace:*",
     "@agentic-dev-runner/core": "workspace:*",
     "@agentic-dev-runner/git": "workspace:*",
     "@agentic-dev-runner/orchestrator": "workspace:*",

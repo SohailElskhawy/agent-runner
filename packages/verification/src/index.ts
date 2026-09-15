@@ -16,3 +16,8 @@ export {
   type VerificationEngineOptions,
 } from "./verification-engine.js";
 export { toVerificationResults } from "./to-verification-results.js";
+export {
+  resolveVerificationChecksForTask,
+  toVerificationCheckSpecs,
+  type TaskVerificationCheckResolution,
+} from "./verification-check-resolution.js";

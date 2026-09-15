@@ -206,6 +206,9 @@ importers:
       '@agentic-dev-runner/agents':
         specifier: workspace:*
         version: link:../agents
+      '@agentic-dev-runner/config':
+        specifier: workspace:*
+        version: link:../config
       '@agentic-dev-runner/core':
         specifier: workspace:*
         version: link:../core
