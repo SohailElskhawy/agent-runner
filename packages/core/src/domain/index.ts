@@ -10,4 +10,5 @@ export * from "./context-pack.js";
 export * from "./attempt.js";
 export * from "./stage-run.js";
 export * from "./verification-result.js";
+export * from "./project-config.js";
 export * from "./task-state-machine.js";
