@@ -2,19 +2,33 @@ import { describe, expect, it } from "vitest";
 import type { TaskId } from "@agentic-dev-runner/core";
 import type { RunnerAppService } from "../src/application/runner-app-service.js";
 import { runCli } from "../src/run-cli.js";
-import type { InitResult, ProjectStatus, RunResult, TaskInspection } from "../src/application/ports.js";
+import type {
+  AddTaskResult,
+  InitResult,
+  ProjectStatus,
+  RunResult,
+  TaskInspection,
+} from "../src/application/ports.js";
 import { captureIo, createFixtureProject, createFixtureTask } from "./fixtures.js";
 
 type RunSpy = { calls: readonly TaskId[] };
 
 function recordingService(result: {
   init?: InitResult;
+  add?: AddTaskResult;
+  addFailure?: Error;
   run?: RunResult;
   status?: ProjectStatus;
   inspection?: TaskInspection | null;
   failure?: Error;
-}): { service: RunnerAppService; runCalls: RunSpy; initCalls: { count: number } } {
+}): {
+  service: RunnerAppService;
+  runCalls: RunSpy;
+  initCalls: { count: number };
+  addCalls: { calls: string[] };
+} {
   const runCalls: string[] = [];
+  const addCalls: string[] = [];
   let initCount = 0;
   const service: RunnerAppService = {
     async init() {
@@ -22,11 +36,27 @@ function recordingService(result: {
       if (result.failure !== undefined) {
         throw result.failure;
       }
-      return result.init ?? {
-        projectId: "proj-local",
-        projectRoot: "fixture",
-        storePath: "fixture/state.db",
-      };
+      return (
+        result.init ?? {
+          projectId: "proj-local",
+          projectRoot: "fixture",
+          storePath: "fixture/state.db",
+        }
+      );
+    },
+    async addTask(taskFilePath: string) {
+      addCalls.push(taskFilePath);
+      if (result.addFailure !== undefined) {
+        throw result.addFailure;
+      }
+      return (
+        result.add ?? {
+          taskId: "M001",
+          projectId: "proj-local",
+          title: "Add a small utility function",
+          status: "READY",
+        }
+      );
     },
     async run(taskId: TaskId) {
       runCalls.push(taskId);
@@ -41,10 +71,12 @@ function recordingService(result: {
       );
     },
     async status() {
-      return result.status ?? {
-        project: createFixtureProject(),
-        tasks: [],
-      };
+      return (
+        result.status ?? {
+          project: createFixtureProject(),
+          tasks: [],
+        }
+      );
     },
     async inspect() {
       return result.inspection ?? null;
@@ -56,6 +88,7 @@ function recordingService(result: {
   return {
     service,
     runCalls: { calls: runCalls },
+    addCalls: { calls: addCalls },
     initCalls: {
       get count() {
         return initCount;

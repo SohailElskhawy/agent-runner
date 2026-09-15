@@ -17,6 +17,7 @@ const COMMAND_FILES = [
   "render/render-run.ts",
   "render/render-status.ts",
   "render/render-inspect.ts",
+  "render/render-tasks-add.ts",
 ];
 
 const FORBIDDEN_SPECIFIERS = [

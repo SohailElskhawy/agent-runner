@@ -6,6 +6,13 @@ export type InitResult = {
   readonly storePath: string;
 };
 
+export type AddTaskResult = {
+  readonly taskId: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly status: Task["status"];
+};
+
 export type RunResult =
   | { readonly kind: "completed"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string }

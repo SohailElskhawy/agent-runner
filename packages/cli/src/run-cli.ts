@@ -3,6 +3,7 @@ import { consoleIo, describeError, type CliIo } from "./io.js";
 import { parseArgs, USAGE } from "./parse-args.js";
 import type { ParsedCommand } from "./parse-args.js";
 import {
+  executeAddTaskCommand,
   executeInitCommand,
   executeInspectCommand,
   executeRunCommand,
@@ -47,6 +48,7 @@ export async function runCli(
       case "run":
       case "status":
       case "inspect":
+      case "tasks":
         return await withServices(options.servicesFactory, async (services) => {
           try {
             switch (command.name) {
@@ -58,6 +60,12 @@ export async function runCli(
                 return await executeStatusCommand(services, io);
               case "inspect":
                 return await executeInspectCommand(command.taskId, services, io);
+              case "tasks":
+                return await executeAddTaskCommand(
+                  command.taskFile,
+                  services,
+                  io,
+                );
             }
           } finally {
             await closeServices(services, io);

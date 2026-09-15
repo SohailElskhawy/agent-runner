@@ -1,17 +1,24 @@
 import { basename } from "node:path";
-import type { Project, TaskId } from "@agentic-dev-runner/core";
+import {
+  buildTaskFromManualInput,
+  validateManualTaskInput,
+  type Project,
+  type TaskId,
+} from "@agentic-dev-runner/core";
 import type {
   CrashRecovery,
   SingleTaskOrchestrator,
   SingleTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
+import { CliError } from "../errors.js";
 import {
   outcomeToRunResult,
   recoveryOutcomeToRunResult,
 } from "./runner-app-service.js";
 import type { RunnerAppService } from "./runner-app-service.js";
 import type {
+  AddTaskResult,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -19,6 +26,7 @@ import type {
 } from "./ports.js";
 import { buildTaskInspection, toLatestAttemptSummary } from "./inspect-view.js";
 import type { TaskStatusEntry } from "./ports.js";
+import { readTaskFile } from "./task-file.js";
 import { DEFAULT_PROJECT_ID } from "./defaults.js";
 
 export type StoreBackedAppServiceOptions = {
@@ -69,6 +77,42 @@ class StoreBackedAppService implements RunnerAppService {
       projectId: DEFAULT_PROJECT_ID,
       projectRoot: this.projectRoot,
       storePath: this.storePath,
+    };
+  }
+
+  async addTask(taskFilePath: string): Promise<AddTaskResult> {
+    await this.startupReconcile();
+    const validation = validateManualTaskInput(readTaskFile(taskFilePath));
+    if (!validation.ok) {
+      throw new CliError(
+        `invalid task definition in "${taskFilePath}": ${validation.issues.join("; ")}`,
+      );
+    }
+    const project = (await this.store.listProjects()).at(0) ?? null;
+    if (project === null) {
+      throw new CliError(
+        'runner is not initialized; run "agentic init" before adding tasks',
+      );
+    }
+    const now = new Date().toISOString();
+    const task = buildTaskFromManualInput(validation.value, {
+      projectId: project.id,
+      now,
+    });
+    await this.store.transaction(async () => {
+      const existing = await this.store.getTask(task.id);
+      if (existing !== null) {
+        throw new CliError(
+          `task "${task.id}" already exists in runner state; duplicate task IDs are rejected`,
+        );
+      }
+      await this.store.putTask(task);
+    });
+    return {
+      taskId: task.id,
+      projectId: task.projectId,
+      title: task.title,
+      status: task.status,
     };
   }
 

@@ -4,6 +4,7 @@ import type {
   SingleTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type {
+  AddTaskResult,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -12,6 +13,7 @@ import type {
 
 export interface RunnerAppService {
   init(): Promise<InitResult>;
+  addTask(taskFilePath: string): Promise<AddTaskResult>;
   run(taskId: TaskId): Promise<RunResult>;
   status(): Promise<ProjectStatus>;
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
