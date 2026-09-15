@@ -113,9 +113,10 @@ export const USAGE = `Usage:
   agentic help
   agentic version
 
-"tasks add" parses one JSON task file matching the task definition contract,
+"tasks add" parses one JSON task file written in the documented task schema
+format (docs/TASK_SCHEMA.md), normalizes it to the runner task contract,
 validates it, and persists it into local runner state. Manual task ingestion
-only; see docs/TASK_SCHEMA.md.
+only.
 
 Local runner state (SQLite database and task worktrees) lives outside the
 repository, per machine, keyed to the normalized repository path. Moving or

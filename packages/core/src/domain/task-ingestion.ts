@@ -18,18 +18,18 @@ import {
 } from "./task-contract.js";
 import type { Task } from "./task.js";
 
-export const MANUAL_TASK_INITIAL_STATUSES = [
+const MANUAL_TASK_INITIAL_STATUSES = [
   "BACKLOG",
   "READY",
 ] as const;
 
 export type ManualTaskInitialStatus = (typeof MANUAL_TASK_INITIAL_STATUSES)[number];
 
-export const TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-export const TASK_PRIORITY_PATTERN = /^P\d+$/;
+const TASK_PRIORITY_PATTERN = /^P\d+$/;
 
-export function isValidTaskIdSyntax(value: unknown): value is TaskId {
+function isValidTaskIdSyntax(value: unknown): value is TaskId {
   return typeof value === "string" && TASK_ID_PATTERN.test(value);
 }
 
@@ -429,7 +429,7 @@ function requireScopePathList(
   return valid ? paths : undefined;
 }
 
-export function isValidScopePathPattern(value: unknown): value is string {
+function isValidScopePathPattern(value: unknown): value is string {
   return (
     typeof value === "string" &&
     value.trim().length > 0 &&

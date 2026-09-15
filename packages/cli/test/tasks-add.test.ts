@@ -36,25 +36,25 @@ function validTaskFileContent(): Record<string, unknown> {
     id: "M070",
     title: "Add manual task ingestion",
     milestone: "cli-product-experience",
-    status: "READY",
+    status: "ready",
     priority: "P1",
     risk: "low",
     type: "implementation",
     objective: "Allow developers to add manually defined tasks to the runner.",
-    acceptanceCriteria: [
+    acceptance_criteria: [
       "A valid JSON task file is parsed, validated, and persisted.",
     ],
-    dependsOn: [],
+    depends_on: [],
     provenance: { kind: "user_request", source: "manual" },
     scope: {
-      allowedPaths: ["packages/cli/**"],
-      forbiddenPaths: ["docs/**"],
+      allowed_paths: ["packages/cli/**"],
+      forbidden_paths: ["docs/**"],
     },
     resources: ["task-ingestion"],
     workflow: "default",
     routing: { complexity: "small", capabilities: ["typescript"] },
     verification: { required: ["typecheck", "unit"] },
-    limits: { maxAttempts: 3, maxReviewCycles: 2 },
+    limits: { max_attempts: 3, max_review_cycles: 2 },
     approval: { required: false },
   };
 }
@@ -131,6 +131,9 @@ describe("agentic tasks add", () => {
       expect(task?.definition.acceptanceCriteria).toEqual([
         "A valid JSON task file is parsed, validated, and persisted.",
       ]);
+      expect(task?.dependsOn).toEqual([]);
+      expect(task?.definition.scope.allowedPaths).toEqual(["packages/cli/**"]);
+      expect(task?.definition.scope.forbiddenPaths).toEqual(["docs/**"]);
       expect(task?.definition.limits).toEqual({
         maxAttempts: 3,
         maxReviewCycles: 2,
@@ -139,6 +142,204 @@ describe("agentic tasks add", () => {
     } finally {
       await store.close();
     }
+  });
+
+  it("accepts a task file authored exactly in the documented task schema style", async () => {
+    const taskFile = writeTaskFile({
+      ...validTaskFileContent(),
+      status: "ready",
+      acceptance_criteria: [
+        "Persisted session is restored before protected routing executes.",
+        "Invalid session data results in an unauthenticated state.",
+      ],
+      depends_on: ["M067", "M068"],
+      scope: {
+        allowed_paths: ["src/features/auth/**", "src/hooks/**"],
+        forbidden_paths: ["backend/**", "database/**"],
+      },
+      limits: { max_attempts: 5, max_review_cycles: 1 },
+    });
+    const { io: initIo } = captureIo();
+    expect(
+      await runCli(["init"], { io: initIo, servicesFactory: () => wiredServices() }),
+    ).toBe(0);
+
+    const { io } = captureIo();
+    const exitCode = await runCli(["tasks", "add", taskFile], {
+      io,
+      servicesFactory: () => wiredServices(),
+    });
+
+    expect(exitCode).toBe(0);
+
+    const store = await openStore();
+    try {
+      const task = await store.getTask("M070");
+      expect(task?.status).toBe("READY");
+      expect(task?.dependsOn).toEqual(["M067", "M068"]);
+      expect(task?.definition.acceptanceCriteria).toEqual([
+        "Persisted session is restored before protected routing executes.",
+        "Invalid session data results in an unauthenticated state.",
+      ]);
+      expect(task?.definition.scope.allowedPaths).toEqual([
+        "src/features/auth/**",
+        "src/hooks/**",
+      ]);
+      expect(task?.definition.scope.forbiddenPaths).toEqual([
+        "backend/**",
+        "database/**",
+      ]);
+      expect(task?.definition.limits).toEqual({
+        maxAttempts: 5,
+        maxReviewCycles: 1,
+      });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("normalizes the documented backlog status to the domain status", async () => {
+    const taskFile = writeTaskFile({
+      ...validTaskFileContent(),
+      status: "backlog",
+    });
+    const { io: initIo } = captureIo();
+    expect(
+      await runCli(["init"], { io: initIo, servicesFactory: () => wiredServices() }),
+    ).toBe(0);
+
+    const { io: addIo } = captureIo();
+    expect(
+      await runCli(["tasks", "add", taskFile], {
+        io: addIo,
+        servicesFactory: () => wiredServices(),
+      }),
+    ).toBe(0);
+
+    const store = await openStore();
+    try {
+      expect((await store.getTask("M070"))?.status).toBe("BACKLOG");
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("rejects unknown external fields, including inside scope", async () => {
+    const { io: initIo } = captureIo();
+    expect(
+      await runCli(["init"], { io: initIo, servicesFactory: () => wiredServices() }),
+    ).toBe(0);
+
+    const unknownTopLevel = writeTaskFile({
+      ...validTaskFileContent(),
+      agent: "codex",
+    });
+    const { io, errors } = captureIo();
+    expect(
+      await runCli(["tasks", "add", unknownTopLevel], {
+        io,
+        servicesFactory: () => wiredServices(),
+      }),
+    ).toBe(1);
+    expect(errors.join("\n")).toContain('unknown field "agent"');
+
+    const unknownNested = writeTaskFile({
+      ...validTaskFileContent(),
+      scope: {
+        allowed_paths: ["src/**"],
+        forbidden_paths: [],
+        extra: 1,
+      },
+    });
+    const nestedCapture = captureIo();
+    expect(
+      await runCli(["tasks", "add", unknownNested], {
+        io: nestedCapture.io,
+        servicesFactory: () => wiredServices(),
+      }),
+    ).toBe(1);
+    expect(nestedCapture.errors.join("\n")).toContain(
+      'scope: unknown field "extra"',
+    );
+
+    const store = await openStore();
+    try {
+      expect(await store.listTasks()).toHaveLength(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("rejects camelCase task-file spellings so only the documented schema is accepted", async () => {
+    const taskFile = writeTaskFile({
+      ...validTaskFileContent(),
+      acceptanceCriteria: ["Camel case is not the documented file format."],
+    });
+    const { io: initIo } = captureIo();
+    expect(
+      await runCli(["init"], { io: initIo, servicesFactory: () => wiredServices() }),
+    ).toBe(0);
+
+    const { io, errors } = captureIo();
+    const exitCode = await runCli(["tasks", "add", taskFile], {
+      io,
+      servicesFactory: () => wiredServices(),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain('unknown field "acceptanceCriteria"');
+  });
+
+  it("rejects runtime statuses in the documented lowercase file format", async () => {
+    const { io: initIo } = captureIo();
+    expect(
+      await runCli(["init"], { io: initIo, servicesFactory: () => wiredServices() }),
+    ).toBe(0);
+
+    for (const status of ["implementing", "done", "failed"]) {
+      const taskFile = writeTaskFile(
+        { ...validTaskFileContent(), status },
+        `M070-${status}.json`,
+      );
+      const { io, errors } = captureIo();
+      const exitCode = await runCli(["tasks", "add", taskFile], {
+        io,
+        servicesFactory: () => wiredServices(),
+      });
+      expect(exitCode).toBe(1);
+      expect(errors.join("\n")).toContain(
+        "status: must be one of backlog or ready",
+      );
+    }
+
+    const store = await openStore();
+    try {
+      expect(await store.listTasks()).toHaveLength(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("rejects domain-uppercase status spellings in the task file", async () => {
+    const taskFile = writeTaskFile({
+      ...validTaskFileContent(),
+      status: "READY",
+    });
+    const { io: initIo } = captureIo();
+    expect(
+      await runCli(["init"], { io: initIo, servicesFactory: () => wiredServices() }),
+    ).toBe(0);
+
+    const { io, errors } = captureIo();
+    const exitCode = await runCli(["tasks", "add", taskFile], {
+      io,
+      servicesFactory: () => wiredServices(),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain(
+      "status: must be one of backlog or ready",
+    );
   });
 
   it("makes the added task visible to status and inspect", async () => {
@@ -289,7 +490,9 @@ describe("agentic tasks add", () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(errors.join("\n")).toContain("BACKLOG or READY");
+    expect(errors.join("\n")).toContain(
+      "status: must be one of backlog or ready",
+    );
   });
 
   it("rejects task files that do not exist", async () => {
