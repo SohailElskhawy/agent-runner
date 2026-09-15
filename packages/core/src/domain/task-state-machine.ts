@@ -7,21 +7,24 @@ export const TASK_STATUS_TRANSITIONS: Readonly<
   READY: ["IMPLEMENTING", "BLOCKED", "FAILED", "CANCELLED"],
   PLANNING: [],
   PLAN_REVIEW: [],
-  IMPLEMENTING: [
-    "VERIFYING",
-    "BLOCKED",
-    "NEEDS_HUMAN",
-    "FAILED",
-    "CANCELLED",
-  ],
+  IMPLEMENTING: ["VERIFYING", "BLOCKED", "FAILED", "CANCELLED"],
   CODE_REVIEW: [],
-  VERIFYING: ["INTEGRATING", "BLOCKED", "NEEDS_HUMAN", "FAILED", "CANCELLED"],
-  INTEGRATING: ["DONE", "BLOCKED", "NEEDS_HUMAN", "FAILED", "CANCELLED"],
+  VERIFYING: ["INTEGRATING", "BLOCKED", "FAILED", "CANCELLED"],
+  INTEGRATING: ["DONE", "BLOCKED", "FAILED", "CANCELLED"],
   DONE: [],
   BLOCKED: ["READY"],
   NEEDS_HUMAN: [],
-  FAILED: ["DONE"],
+  FAILED: [],
   CANCELLED: [],
+};
+
+export const RECOVERY_STATUS_TRANSITIONS: Readonly<
+  Partial<Record<TaskStatus, readonly TaskStatus[]>>
+> = {
+  IMPLEMENTING: ["NEEDS_HUMAN"],
+  VERIFYING: ["NEEDS_HUMAN"],
+  INTEGRATING: ["NEEDS_HUMAN"],
+  FAILED: ["DONE"],
 };
 
 export function getTaskStatusTransitions(
@@ -30,11 +33,27 @@ export function getTaskStatusTransitions(
   return TASK_STATUS_TRANSITIONS[from];
 }
 
+export function getTaskRecoveryStatusTransitions(
+  from: TaskStatus,
+): readonly TaskStatus[] {
+  return RECOVERY_STATUS_TRANSITIONS[from] ?? [];
+}
+
 export function canTransitionTaskStatus(
   from: TaskStatus,
   to: TaskStatus,
 ): boolean {
   return getTaskStatusTransitions(from).includes(to);
+}
+
+export function canReconcileTaskStatus(
+  from: TaskStatus,
+  to: TaskStatus,
+): boolean {
+  return (
+    canTransitionTaskStatus(from, to) ||
+    getTaskRecoveryStatusTransitions(from).includes(to)
+  );
 }
 
 export type TaskTransitionResult =
@@ -64,6 +83,15 @@ export class TaskTransitionError extends Error {
 
 export function assertTaskTransition(from: TaskStatus, to: TaskStatus): void {
   if (!canTransitionTaskStatus(from, to)) {
+    throw new TaskTransitionError(from, to);
+  }
+}
+
+export function assertReconcileTaskStatus(
+  from: TaskStatus,
+  to: TaskStatus,
+): void {
+  if (!canReconcileTaskStatus(from, to)) {
     throw new TaskTransitionError(from, to);
   }
 }

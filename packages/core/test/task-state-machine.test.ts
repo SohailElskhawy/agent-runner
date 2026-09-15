@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   TASK_STATUSES,
+  assertReconcileTaskStatus,
   assertTaskTransition,
+  canReconcileTaskStatus,
   canTransitionTaskStatus,
   checkTaskTransition,
+  getTaskRecoveryStatusTransitions,
   getTaskStatusTransitions,
   TaskTransitionError,
 } from "@agentic-dev-runner/core";
@@ -17,7 +20,7 @@ const VERTICAL_SLICE_ACTIVE_STATES = [
 
 const EXECUTION_STATES = ["IMPLEMENTING", "VERIFYING", "INTEGRATING"] as const;
 
-const TERMINAL_STATES = ["DONE", "CANCELLED", "NEEDS_HUMAN"] as const;
+const TERMINAL_STATES = ["DONE", "FAILED", "CANCELLED", "NEEDS_HUMAN"] as const;
 
 const UNSUPPORTED_STATES = [
   "BACKLOG",
@@ -27,13 +30,6 @@ const UNSUPPORTED_STATES = [
 ] as const;
 
 const ESCALATION_STATES = ["BLOCKED", "FAILED", "CANCELLED"] as const;
-
-const RECOVERY_ESCALATION_STATES = [
-  "BLOCKED",
-  "NEEDS_HUMAN",
-  "FAILED",
-  "CANCELLED",
-] as const;
 
 describe("explicit transition table", () => {
   it("covers every task status explicitly", () => {
@@ -49,31 +45,21 @@ describe("explicit transition table", () => {
     ]);
     expect([...getTaskStatusTransitions("IMPLEMENTING")]).toEqual([
       "VERIFYING",
-      ...RECOVERY_ESCALATION_STATES,
+      ...ESCALATION_STATES,
     ]);
     expect([...getTaskStatusTransitions("VERIFYING")]).toEqual([
       "INTEGRATING",
-      ...RECOVERY_ESCALATION_STATES,
+      ...ESCALATION_STATES,
     ]);
     expect([...getTaskStatusTransitions("INTEGRATING")]).toEqual([
       "DONE",
-      ...RECOVERY_ESCALATION_STATES,
+      ...ESCALATION_STATES,
     ]);
     expect([...getTaskStatusTransitions("NEEDS_HUMAN")]).toEqual([]);
     expect([...getTaskStatusTransitions("BLOCKED")]).toEqual(["READY"]);
     expect([...getTaskStatusTransitions("DONE")]).toEqual([]);
-    expect([...getTaskStatusTransitions("FAILED")]).toEqual(["DONE"]);
+    expect([...getTaskStatusTransitions("FAILED")]).toEqual([]);
     expect([...getTaskStatusTransitions("CANCELLED")]).toEqual([]);
-  });
-
-  it("allows crash recovery to converge an integrated task persisted as FAILED to DONE only", () => {
-    expect(canTransitionTaskStatus("FAILED", "DONE")).toBe(true);
-    for (const to of TASK_STATUSES) {
-      if (to === "DONE") {
-        continue;
-      }
-      expect(canTransitionTaskStatus("FAILED", to)).toBe(false);
-    }
   });
 });
 
@@ -91,13 +77,6 @@ describe("valid transitions", () => {
         expect(canTransitionTaskStatus(from, to)).toBe(true);
       }
     }
-  });
-
-  it("allows execution states to escalate to NEEDS_HUMAN for crash recovery", () => {
-    for (const from of EXECUTION_STATES) {
-      expect(canTransitionTaskStatus(from, "NEEDS_HUMAN")).toBe(true);
-    }
-    expect(canTransitionTaskStatus("READY", "NEEDS_HUMAN")).toBe(false);
   });
 
   it("allows an unblocked task to return to READY", () => {
@@ -149,18 +128,19 @@ describe("invalid transitions", () => {
     }
   });
 
-  it("allows FAILED only to converge to DONE through crash recovery", () => {
-    for (const to of TASK_STATUSES) {
-      expect(canTransitionTaskStatus("FAILED", to)).toBe(to === "DONE");
-    }
-  });
-
   it("rejects every transition out of states unsupported by VS003", () => {
     for (const from of UNSUPPORTED_STATES) {
       for (const to of TASK_STATUSES) {
         expect(canTransitionTaskStatus(from, to)).toBe(false);
       }
     }
+  });
+
+  it("keeps recovery-only transitions out of the normal execution table", () => {
+    for (const from of EXECUTION_STATES) {
+      expect(canTransitionTaskStatus(from, "NEEDS_HUMAN")).toBe(false);
+    }
+    expect(canTransitionTaskStatus("FAILED", "DONE")).toBe(false);
   });
 
   it("returns failing results carrying the rejected transition", () => {
@@ -170,6 +150,52 @@ describe("invalid transitions", () => {
       expect(result.from).toBe("DONE");
       expect(result.to).toBe("READY");
     }
+  });
+});
+
+describe("recovery transition table", () => {
+  it("extends only the reconciliation-specific transitions", () => {
+    expect([...getTaskRecoveryStatusTransitions("FAILED")]).toEqual(["DONE"]);
+    for (const from of EXECUTION_STATES) {
+      expect([...getTaskRecoveryStatusTransitions(from)]).toEqual([
+        "NEEDS_HUMAN",
+      ]);
+    }
+    for (const status of TASK_STATUSES) {
+      if (
+        !(EXECUTION_STATES as readonly string[]).includes(status) &&
+        status !== "FAILED"
+      ) {
+        expect(getTaskRecoveryStatusTransitions(status)).toEqual([]);
+      }
+    }
+  });
+
+  it("allows crash recovery to escalate execution states to NEEDS_HUMAN", () => {
+    for (const from of EXECUTION_STATES) {
+      expect(canReconcileTaskStatus(from, "NEEDS_HUMAN")).toBe(true);
+    }
+    expect(canReconcileTaskStatus("READY", "NEEDS_HUMAN")).toBe(false);
+  });
+
+  it("allows crash recovery to converge an integrated task persisted as FAILED to DONE only", () => {
+    expect(canReconcileTaskStatus("FAILED", "DONE")).toBe(true);
+    for (const to of TASK_STATUSES) {
+      if (to === "DONE") {
+        continue;
+      }
+      expect(canReconcileTaskStatus("FAILED", to)).toBe(false);
+    }
+  });
+
+  it("allows every normal transition during reconciliation", () => {
+    for (const from of VERTICAL_SLICE_ACTIVE_STATES) {
+      for (const to of ESCALATION_STATES) {
+        expect(canReconcileTaskStatus(from, to)).toBe(true);
+      }
+    }
+    expect(canReconcileTaskStatus("BLOCKED", "READY")).toBe(true);
+    expect(canReconcileTaskStatus("INTEGRATING", "DONE")).toBe(true);
   });
 });
 
@@ -202,6 +228,54 @@ describe("assertTaskTransition", () => {
       TaskTransitionError,
     );
     expect(() => assertTaskTransition("BACKLOG", "READY")).toThrow(
+      TaskTransitionError,
+    );
+  });
+
+  it("blocks recovery-only transitions outside recovery", () => {
+    expect(() => assertTaskTransition("FAILED", "DONE")).toThrow(
+      TaskTransitionError,
+    );
+    expect(() => assertTaskTransition("INTEGRATING", "NEEDS_HUMAN")).toThrow(
+      TaskTransitionError,
+    );
+  });
+});
+
+describe("assertReconcileTaskStatus", () => {
+  it("allows the recovery convergence of an integrated FAILED task to DONE", () => {
+    expect(() => assertReconcileTaskStatus("FAILED", "DONE")).not.toThrow();
+  });
+
+  it("allows recovery escalation of execution states to NEEDS_HUMAN", () => {
+    for (const from of EXECUTION_STATES) {
+      expect(() => assertReconcileTaskStatus(from, "NEEDS_HUMAN")).not.toThrow();
+    }
+  });
+
+  it("allows normal transitions during recovery", () => {
+    expect(() =>
+      assertReconcileTaskStatus("INTEGRATING", "DONE"),
+    ).not.toThrow();
+    expect(() =>
+      assertReconcileTaskStatus("IMPLEMENTING", "BLOCKED"),
+    ).not.toThrow();
+    expect(() =>
+      assertReconcileTaskStatus("BLOCKED", "READY"),
+    ).not.toThrow();
+  });
+
+  it("throws for transitions outside both tables", () => {
+    expect(() => assertReconcileTaskStatus("DONE", "READY")).toThrow(
+      TaskTransitionError,
+    );
+    expect(() => assertReconcileTaskStatus("FAILED", "READY")).toThrow(
+      TaskTransitionError,
+    );
+    expect(() => assertReconcileTaskStatus("NEEDS_HUMAN", "READY")).toThrow(
+      TaskTransitionError,
+    );
+    expect(() => assertReconcileTaskStatus("READY", "NEEDS_HUMAN")).toThrow(
       TaskTransitionError,
     );
   });

@@ -7,7 +7,7 @@ import type {
   TaskId,
   TaskStatus,
 } from "@agentic-dev-runner/core";
-import { assertTaskTransition } from "@agentic-dev-runner/core";
+import { assertReconcileTaskStatus } from "@agentic-dev-runner/core";
 import type { GitIntegrationResult, GitManager } from "@agentic-dev-runner/git";
 import type { NewEvent, RunnerStore } from "@agentic-dev-runner/persistence";
 import type {
@@ -593,8 +593,8 @@ class SequentialCrashRecovery implements CrashRecovery {
       { kind: "error", message: `runner was interrupted during "${task.status}"; attempt did not complete (${detail})` },
       occurredAt,
     );
-    assertTaskTransition(task.status, "BLOCKED");
-    assertTaskTransition("BLOCKED", "READY");
+    assertReconcileTaskStatus(task.status, "BLOCKED");
+    assertReconcileTaskStatus("BLOCKED", "READY");
     await this.store.transaction(async () => {
       await this.store.putAttempt(interruptedAttempt);
       await this.store.setTaskStatus(task.id, "BLOCKED", occurredAt);
@@ -642,7 +642,7 @@ class SequentialCrashRecovery implements CrashRecovery {
       },
       occurredAt,
     );
-    assertTaskTransition(task.status, "BLOCKED");
+    assertReconcileTaskStatus(task.status, "BLOCKED");
     await this.store.transaction(async () => {
       await this.store.putAttempt(interruptedAttempt);
       await this.store.setTaskStatus(task.id, "BLOCKED", occurredAt);
@@ -674,7 +674,7 @@ class SequentialCrashRecovery implements CrashRecovery {
     detail: string,
   ): Promise<RecoveryOutcome> {
     const occurredAt = this.clock();
-    assertTaskTransition(task.status, "NEEDS_HUMAN");
+    assertReconcileTaskStatus(task.status, "NEEDS_HUMAN");
     await this.store.transaction(async () => {
       if (attempt !== undefined) {
         await this.store.putAttempt(
@@ -728,7 +728,7 @@ class SequentialCrashRecovery implements CrashRecovery {
   ): Promise<RecoveryOutcome> {
     const occurredAt = this.clock();
     const succeededAttempt = succeededAttemptOf(attempt, occurredAt);
-    assertTaskTransition(fromStatus, "DONE");
+    assertReconcileTaskStatus(fromStatus, "DONE");
     await this.store.transaction(async () => {
       await this.store.putAttempt(succeededAttempt);
       await this.store.setTaskStatus(task.id, "DONE", occurredAt);
@@ -792,7 +792,7 @@ class SequentialCrashRecovery implements CrashRecovery {
       { kind: failureKind, message: reason },
       occurredAt,
     );
-    assertTaskTransition(task.status, targetStatus);
+    assertReconcileTaskStatus(task.status, targetStatus);
     await this.store.transaction(async () => {
       await this.store.putAttempt(finishedAttempt);
       await this.store.setTaskStatus(task.id, targetStatus, occurredAt);
@@ -834,7 +834,7 @@ class SequentialCrashRecovery implements CrashRecovery {
     attemptId: string,
     evidenceEvents: readonly NewEvent[],
   ): Promise<void> {
-    assertTaskTransition(from, to);
+    assertReconcileTaskStatus(from, to);
     const occurredAt = this.clock();
     await this.store.transaction(async () => {
       await this.store.setTaskStatus(taskId, to, occurredAt);
