@@ -220,5 +220,5 @@ describe("VS014 vertical slice through the CLI entry point", () => {
       cwd: repositoryPath,
     });
     expect(gitStatus.stdout.trim()).toBe("");
-  });
+  }, 60_000);
 });

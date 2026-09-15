@@ -48,7 +48,9 @@ const COMMIT_MESSAGE = `task ${TASK_ID}: Add a small validated utility function 
 
 const JOURNAL_TIMEOUT_MS = 15_000;
 const JOURNAL_POLL_MS = 10;
-const AGENT_HOLD_MS = 2_000;
+const E2E_TIMEOUT_MS = 60_000;
+const LIVE_E2E_TIMEOUT_MS = 20 * 60 * 1000;
+const RELEASE_TIMEOUT_MS = 30_000;
 
 const AGENTS_MARKDOWN = [
   "# Fixture rules",
@@ -91,6 +93,7 @@ let worktreesDir: string;
 let worktreePath: string;
 let dbPath: string;
 let journalPath: string;
+let releasePath: string;
 let baseRevision: string;
 let runner: ProcessRunner;
 let store: RunnerStore;
@@ -243,6 +246,7 @@ describe("VS014 real vertical slice end-to-end", () => {
     worktreePath = join(worktreesDir, TASK_ID, "attempt-1");
     dbPath = join(directory, "state.db");
     journalPath = join(directory, "agent-journal.jsonl");
+    releasePath = join(directory, "agent-release.marker");
     runner = createNodeProcessRunner();
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
@@ -280,13 +284,15 @@ describe("VS014 real vertical slice end-to-end", () => {
       worktreesDir,
     });
     process.env.AGENTIC_FAKE_AGENT_JOURNAL = journalPath;
-    process.env.AGENTIC_FAKE_AGENT_HOLD_MS = String(AGENT_HOLD_MS);
+    process.env.AGENTIC_FAKE_AGENT_RELEASE_FILE = releasePath;
+    process.env.AGENTIC_FAKE_AGENT_RELEASE_TIMEOUT_MS = String(RELEASE_TIMEOUT_MS);
   });
 
   afterEach(async () => {
     await store.close();
     delete process.env.AGENTIC_FAKE_AGENT_JOURNAL;
-    delete process.env.AGENTIC_FAKE_AGENT_HOLD_MS;
+    delete process.env.AGENTIC_FAKE_AGENT_RELEASE_FILE;
+    delete process.env.AGENTIC_FAKE_AGENT_RELEASE_TIMEOUT_MS;
     rmSync(directory, { recursive: true, force: true });
   });
 
@@ -295,15 +301,19 @@ describe("VS014 real vertical slice end-to-end", () => {
     expect(seededTask?.status).toBe("READY");
 
     const pending = orchestrator.run(TASK_ID);
-    await waitForJournalPhase("started", pending);
+    try {
+      await waitForJournalPhase("started", pending);
 
-    expect(await store.getTaskStatus(TASK_ID)).toBe("IMPLEMENTING");
-    expect(await git.branchExists(repoPath, BRANCH)).toBe(true);
-    expect(await git.worktreeExists(repoPath, worktreePath)).toBe(true);
-    expect((await git.status(worktreePath)).clean).toBe(true);
-    expect(await git.resolveHeadRevision(worktreePath)).toBe(baseRevision);
-    expect(await git.resolveHeadRevision(repoPath)).toBe(baseRevision);
-    expect((await git.status(repoPath)).clean).toBe(true);
+      expect(await store.getTaskStatus(TASK_ID)).toBe("IMPLEMENTING");
+      expect(await git.branchExists(repoPath, BRANCH)).toBe(true);
+      expect(await git.worktreeExists(repoPath, worktreePath)).toBe(true);
+      expect((await git.status(worktreePath)).clean).toBe(true);
+      expect(await git.resolveHeadRevision(worktreePath)).toBe(baseRevision);
+      expect(await git.resolveHeadRevision(repoPath)).toBe(baseRevision);
+      expect((await git.status(repoPath)).clean).toBe(true);
+    } finally {
+      writeFileSync(releasePath, "release\n");
+    }
 
     await waitForJournalPhase("changed", pending);
     const outcome = await pending;
@@ -497,7 +507,7 @@ describe("VS014 real vertical slice end-to-end", () => {
     });
     expect(reopenedVerification).toHaveLength(1);
     await reopened.close();
-  });
+  }, E2E_TIMEOUT_MS);
 
   describe.skipIf(!LIVE_ENABLED)(
     "live OpenCode vertical slice (AGENTIC_OPENCODE_LIVE_E2E)",
@@ -538,7 +548,7 @@ describe("VS014 real vertical slice end-to-end", () => {
           "clamp",
         );
         expect((await git.status(repoPath)).clean).toBe(true);
-      });
+      }, LIVE_E2E_TIMEOUT_MS);
     },
   );
 });

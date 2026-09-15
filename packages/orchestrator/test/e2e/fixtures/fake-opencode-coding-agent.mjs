@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const journalPath = process.env.AGENTIC_FAKE_AGENT_JOURNAL ?? null;
@@ -39,11 +39,38 @@ await journal({
   taskId: contextPack.task?.id ?? null,
 });
 
-const holdMs = Number(process.env.AGENTIC_FAKE_AGENT_HOLD_MS ?? "0");
-if (holdMs > 0) {
-  await new Promise((resolve) => {
-    setTimeout(resolve, holdMs);
+const releaseFile = process.env.AGENTIC_FAKE_AGENT_RELEASE_FILE ?? null;
+const releaseTimeoutMs = Number(
+  process.env.AGENTIC_FAKE_AGENT_RELEASE_TIMEOUT_MS ?? "30000",
+);
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
+}
+
+async function waitForRelease() {
+  if (releaseFile === null) {
+    return true;
+  }
+  const deadline = Date.now() + releaseTimeoutMs;
+  for (;;) {
+    if (existsSync(releaseFile)) {
+      return true;
+    }
+    if (Date.now() > deadline) {
+      return false;
+    }
+    await delay(20);
+  }
+}
+
+const released = await waitForRelease();
+if (!released) {
+  await journal({ phase: "release-timeout", cwd });
+  console.error(`agent was not released within ${String(releaseTimeoutMs)} ms`);
+  process.exit(4);
 }
 
 const fixtureFiles = {
