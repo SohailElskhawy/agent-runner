@@ -71,8 +71,29 @@ const SCHEMA_V1_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
 ];
 
+const SCHEMA_V2_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS stage_runs (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  failure_json TEXT,
+  FOREIGN KEY (attempt_id) REFERENCES attempts(id)
+) STRICT`,
+
+  `CREATE INDEX IF NOT EXISTS idx_stage_runs_attempt_id ON stage_runs(attempt_id)`,
+];
+
 export function applySchema(db: SchemaMigrationDatabase): void {
   for (const statement of SCHEMA_V1_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
+export function applyStageRunsSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V2_STATEMENTS) {
     db.exec(statement);
   }
 }
@@ -82,6 +103,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 1,
     name: "initial-schema",
     up: applySchema,
+  },
+  {
+    version: 2,
+    name: "add-stage-runs",
+    up: applyStageRunsSchema,
   },
 ];
 

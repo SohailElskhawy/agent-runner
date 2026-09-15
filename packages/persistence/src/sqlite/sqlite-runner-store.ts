@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   ATTEMPT_STATUSES,
+  STAGE_KINDS,
+  STAGE_RUN_STATUSES,
   TASK_RISKS,
   TASK_TYPES,
   isTaskStatus,
@@ -14,6 +16,8 @@ import {
   type ContextManifest,
   type Project,
   type ProjectId,
+  type StageRun,
+  type StageRunFailure,
   type Task,
   type TaskId,
   type TaskPriority,
@@ -266,6 +270,54 @@ export class SqliteRunnerStore implements RunnerStore {
     );
   }
 
+  async putStageRun(stageRun: StageRun): Promise<void> {
+    const db = this.requireDb("putStageRun");
+    try {
+      db.prepare(
+        `INSERT INTO stage_runs (
+           id, attempt_id, stage, status, started_at, finished_at, failure_json
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           attempt_id = excluded.attempt_id,
+           stage = excluded.stage,
+           status = excluded.status,
+           started_at = excluded.started_at,
+           finished_at = excluded.finished_at,
+           failure_json = excluded.failure_json`,
+      ).run(
+        stageRun.id,
+        stageRun.attemptId,
+        stageRun.stage,
+        stageRun.status,
+        stageRun.startedAt ?? null,
+        stageRun.finishedAt ?? null,
+        stageRun.failure === undefined
+          ? null
+          : JSON.stringify(stageRun.failure),
+      );
+    } catch (error) {
+      if (isForeignKeyViolation(error)) {
+        throw new PersistenceError(
+          `Cannot persist stage run "${stageRun.id}": attempt "${stageRun.attemptId}" does not exist`,
+          error,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async listStageRuns(attemptId: AttemptId): Promise<StageRun[]> {
+    const db = this.requireDb("listStageRuns");
+    const rows = getRows(
+      db.prepare(
+        "SELECT * FROM stage_runs WHERE attempt_id = ? ORDER BY started_at, id",
+      ),
+      [attemptId],
+    );
+    return rows.map(stageRunFromRow);
+  }
+
   async getTaskStatus(id: TaskId): Promise<TaskStatus | null> {
     const db = this.requireDb("getTaskStatus");
     const row = getRow(
@@ -466,6 +518,35 @@ function storedEventFromRow(row: Record<string, unknown>): StoredEvent {
     occurredAt: textColumn(row, "occurred_at"),
     sequence: numberColumn(row, "sequence"),
   };
+}
+
+function stageRunFromRow(row: Record<string, unknown>): StageRun {
+  const startedAt = optionalTextColumn(row, "started_at");
+  const finishedAt = optionalTextColumn(row, "finished_at");
+  const failure = optionalJsonColumn<StageRunFailure>(row, "failure_json");
+
+  return {
+    id: textColumn(row, "id"),
+    attemptId: textColumn(row, "attempt_id"),
+    stage: parseEnumerated(textColumn(row, "stage"), STAGE_KINDS, "stage kind"),
+    status: parseEnumerated(
+      textColumn(row, "status"),
+      STAGE_RUN_STATUSES,
+      "stage run status",
+    ),
+    ...(startedAt === null ? {} : { startedAt }),
+    ...(finishedAt === null ? {} : { finishedAt }),
+    ...(failure === null ? {} : { failure }),
+  };
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ERR_SQLITE_ERROR" &&
+    /FOREIGN KEY constraint failed/i.test(error.message)
+  );
 }
 
 function textColumn(row: Record<string, unknown>, column: string): string {

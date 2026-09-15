@@ -12,7 +12,7 @@ import {
   type SchemaMigration,
 } from "@agentic-dev-runner/persistence";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
-import { createProject, createTask } from "./fixtures.js";
+import { createAttempt, createProject, createTask } from "./fixtures.js";
 
 function initialSchemaMigration(): SchemaMigration {
   const migration = SCHEMA_MIGRATIONS[0];
@@ -142,17 +142,61 @@ describe("SQLite schema migrations", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("initializes a fresh database at schema version 1", async () => {
+  it("initializes a fresh database at schema version 2", async () => {
     await store.initialize();
     await store.putProject(createProject());
     await store.close();
 
     expect(readMigrationRows(dbPath)).toEqual([
       { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
+      { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
     ]);
   });
 
-  it("performs no migration when reopening a version 1 database", async () => {
+  it("upgrades an existing v1 database to v2 with existing data intact", async () => {
+    const legacyProject = createProject({ name: "legacy-project" });
+    const legacyTask = createTask();
+    const legacyAttempt = createAttempt();
+    const v1Store = createSqliteRunnerStore({
+      path: dbPath,
+      migrations: [initialSchemaMigration()],
+    });
+    try {
+      await v1Store.initialize();
+      await v1Store.putProject(legacyProject);
+      await v1Store.putTask(legacyTask);
+      await v1Store.putAttempt(legacyAttempt);
+      await v1Store.appendEvents([
+        {
+          type: "task.created",
+          taskId: legacyTask.id,
+          payload: { title: legacyTask.title },
+          occurredAt: "2026-01-01T00:00:01.000Z",
+        },
+      ]);
+    } finally {
+      await v1Store.close();
+    }
+    expect(readMigrationRows(dbPath)).toEqual([
+      { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
+    ]);
+
+    const upgraded = createSqliteRunnerStore({ path: dbPath });
+    await withStore(upgraded, async (opened) => {
+      await opened.initialize();
+
+      expect(readMigrationRows(dbPath)).toEqual([
+        { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
+        { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
+      ]);
+      expect(await opened.getProject(legacyProject.id)).toEqual(legacyProject);
+      expect(await opened.getTask(legacyTask.id)).toEqual(legacyTask);
+      expect(await opened.getAttempt(legacyAttempt.id)).toEqual(legacyAttempt);
+      expect(await opened.listEvents()).toHaveLength(1);
+    });
+  });
+
+  it("performs no migration when reopening an already migrated database", async () => {
     await store.initialize();
     await store.close();
     const before = readMigrationRows(dbPath);
@@ -178,6 +222,11 @@ describe("SQLite schema migrations", () => {
           {
             version: 1,
             name: "initial-schema",
+            appliedAt: expect.any(String),
+          },
+          {
+            version: 2,
+            name: "add-stage-runs",
             appliedAt: expect.any(String),
           },
         ]);
@@ -263,7 +312,7 @@ describe("SQLite schema migrations", () => {
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
     expect((rejection as Error).message).toContain("schema version 3");
     expect((rejection as Error).message).toContain(
-      "supported schema version 1",
+      "supported schema version 2",
     );
   });
 
@@ -368,6 +417,7 @@ describe("SQLite schema migrations", () => {
       await opened.initialize();
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
+        { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
       ]);
     });
   });
@@ -434,6 +484,7 @@ describe("SQLite schema migrations", () => {
       await opened.initialize();
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
+        { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject("proj-1")).toEqual({
         id: "proj-1",

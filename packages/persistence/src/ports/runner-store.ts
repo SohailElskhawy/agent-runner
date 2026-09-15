@@ -3,6 +3,7 @@ import type {
   AttemptId,
   Project,
   ProjectId,
+  StageRun,
   Task,
   TaskId,
 } from "@agentic-dev-runner/core";
@@ -42,6 +43,9 @@ export interface RunnerStore {
     status: Task["status"],
     updatedAt: string,
   ): Promise<void>;
+
+  putStageRun(stageRun: StageRun): Promise<void>;
+  listStageRuns(attemptId: AttemptId): Promise<StageRun[]>;
 
   appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]>;
   listEvents(filter?: EventFilter): Promise<StoredEvent[]>;

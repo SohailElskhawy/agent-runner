@@ -2,10 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Attempt } from "@agentic-dev-runner/core";
+import type { Attempt, StageRun } from "@agentic-dev-runner/core";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
-import { createAttempt, createProject, createTask } from "./fixtures.js";
+import {
+  createAttempt,
+  createProject,
+  createStageRun,
+  createTask,
+} from "./fixtures.js";
 
 describe("SqliteRunnerStore", () => {
   let directory: string;
@@ -229,6 +234,100 @@ describe("SqliteRunnerStore", () => {
     ).rejects.toThrow("second write failed");
 
     expect(await store.listEvents()).toHaveLength(0);
+  });
+
+  it("round-trips a stage run with all fields", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    await store.putTask(createTask());
+    await store.putAttempt(createAttempt());
+
+    const stageRun = createStageRun({
+      failure: { kind: "timeout", message: "stage exceeded 30s" },
+    });
+    await store.putStageRun(stageRun);
+
+    expect(await store.listStageRuns(stageRun.attemptId)).toEqual([stageRun]);
+  });
+
+  it("round-trips a stage run without optional fields", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    await store.putTask(createTask());
+    await store.putAttempt(createAttempt());
+
+    const minimal: StageRun = {
+      id: "stage-run-min",
+      attemptId: "attempt-1",
+      stage: "VERIFY",
+      status: "PENDING",
+    };
+    await store.putStageRun(minimal);
+
+    expect(await store.listStageRuns("attempt-1")).toEqual([minimal]);
+  });
+
+  it("returns stage runs for an attempt in deterministic execution order", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    await store.putTask(createTask());
+    await store.putAttempt(createAttempt());
+
+    const later = createStageRun({
+      id: "stage-run-later",
+      stage: "VERIFY",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      finishedAt: "2026-01-01T00:01:10.000Z",
+      failure: { kind: "error", message: "tests failed" },
+    });
+    const earlier = createStageRun({
+      id: "stage-run-earlier",
+      stage: "IMPLEMENT",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:00:40.000Z",
+    });
+    // Insert out of execution order on purpose.
+    await store.putStageRun(later);
+    await store.putStageRun(earlier);
+
+    const runs = await store.listStageRuns("attempt-1");
+    expect(runs.map((run) => run.id)).toEqual([
+      "stage-run-earlier",
+      "stage-run-later",
+    ]);
+    expect(runs).toEqual([earlier, later]);
+  });
+
+  it("rejects a stage run referencing an unknown attempt", async () => {
+    await store.initialize();
+    const orphan = createStageRun({ attemptId: "unknown-attempt" });
+
+    await expect(store.putStageRun(orphan)).rejects.toThrow(
+      /attempt "unknown-attempt" does not exist/,
+    );
+    expect(await store.listStageRuns("unknown-attempt")).toEqual([]);
+  });
+
+  it("preserves stage runs across reopen", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    await store.putTask(createTask());
+    await store.putAttempt(createAttempt());
+    const stageRun = createStageRun({
+      failure: { kind: "review_rejected", message: "review feedback" },
+    });
+    await store.putStageRun(stageRun);
+    await store.close();
+
+    const reopened = createSqliteRunnerStore({ path: dbPath });
+    try {
+      await reopened.initialize();
+      expect(await reopened.listStageRuns(stageRun.attemptId)).toEqual([
+        stageRun,
+      ]);
+    } finally {
+      await reopened.close();
+    }
   });
 
   it("rejects nested transactions", async () => {
