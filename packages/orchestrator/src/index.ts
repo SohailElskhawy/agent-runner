@@ -48,3 +48,10 @@ export {
   type PlanStageOptions,
   type PlanStageOutcome,
 } from "./plan-stage.js";
+export {
+  PLAN_REVIEW_STAGE_INSTRUCTION,
+  executePlanReviewStage,
+  planReviewStageRunId,
+  type PlanReviewStageOptions,
+  type PlanReviewStageOutcome,
+} from "./plan-review-stage.js";
