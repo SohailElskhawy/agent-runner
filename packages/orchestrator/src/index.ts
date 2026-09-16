@@ -62,3 +62,11 @@ export {
   type PlanReviewStageOptions,
   type PlanReviewStageOutcome,
 } from "./plan-review-stage.js";
+export {
+  IMPLEMENT_STAGE_INSTRUCTION,
+  executeImplementStage,
+  implementStageRunId,
+  type ImplementStageGuidance,
+  type ImplementStageOptions,
+  type ImplementStageOutcome,
+} from "./implement-stage.js";
