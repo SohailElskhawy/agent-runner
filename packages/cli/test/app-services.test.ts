@@ -7,6 +7,7 @@ import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { createAppServices } from "../src/application/app-services.js";
+import { createAgentAdapterRegistry } from "../src/application/agents/agent-adapter-registry.js";
 import {
   defaultStateDir,
   normalizeProjectRootForIdentity,
@@ -164,5 +165,23 @@ describe("createAppServices wiring", () => {
     store = appServices.store;
 
     expect(appServices.agents).toBe(registry);
+  });
+
+  it("wires a default adapter registry covering the built-in coding adapters", async () => {
+    const appServices = await createAppServices(options);
+    store = appServices.store;
+
+    expect(appServices.adapters.adapterIds).toEqual(["opencode", "codex"]);
+    expect(appServices.adapters.resolveAdapter("opencode")).not.toBeNull();
+    expect(appServices.adapters.resolveAdapter("codex")).not.toBeNull();
+    expect(appServices.adapters.resolveAdapter("claude")).toBeNull();
+  });
+
+  it("accepts an adapter registry override for testing", async () => {
+    const adapters = createAgentAdapterRegistry([]);
+    const appServices = await createAppServices(options, { agentAdapters: adapters });
+    store = appServices.store;
+
+    expect(appServices.adapters).toBe(adapters);
   });
 });

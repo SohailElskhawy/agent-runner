@@ -1,9 +1,8 @@
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import { createGitManager } from "@agentic-dev-runner/git";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
-import { createVerificationEngine } from "@agentic-dev-runner/verification";
+import { createVerificationEngine, toVerificationCheckSpecs } from "@agentic-dev-runner/verification";
 import type {
-  VerificationCheckSpec,
   VerificationEngine,
 } from "@agentic-dev-runner/verification";
 import {
@@ -21,7 +20,14 @@ import type {
   SingleTaskOrchestrator,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
-import { loadProjectVerificationChecks } from "./project-verification.js";
+import { createAgentAdapterRegistry } from "./agents/agent-adapter-registry.js";
+import type { AgentAdapterRegistry } from "./agents/agent-adapter-registry.js";
+import { createRoutedTaskOrchestrator } from "./agents/routed-task-orchestrator.js";
+import type { ProjectConfiguration } from "@agentic-dev-runner/core";
+import {
+  loadStrictProjectConfiguration,
+  ProjectConfigurationUnavailableError,
+} from "./project-configuration.js";
 import {
   resolveAgentTimeoutMs,
   resolveStorePath,
@@ -34,6 +40,7 @@ export type AppServices = {
   readonly orchestrator: SingleTaskOrchestrator;
   readonly recovery: CrashRecovery;
   readonly agents: AgentRegistry;
+  readonly adapters: AgentAdapterRegistry;
 };
 
 export type AppServicesOverrides = {
@@ -42,6 +49,7 @@ export type AppServicesOverrides = {
   readonly recovery?: CrashRecovery | undefined;
   readonly agent?: AgentRuntime | undefined;
   readonly agentRegistry?: AgentRegistry | undefined;
+  readonly agentAdapters?: AgentAdapterRegistry | undefined;
   readonly verification?: VerificationEngine | undefined;
 };
 
@@ -49,27 +57,63 @@ export async function createAppServices(
   options: AppServicesOptions,
   overrides: AppServicesOverrides = {},
 ): Promise<AppServices> {
-  const verificationChecks = await resolveConfiguredVerificationChecks(options);
+  // Explicit orchestrator/agent overrides keep lower-level injection paths
+  // working; production runs always route through configured agent profiles.
+  const routed = overrides.orchestrator === undefined && overrides.agent === undefined;
+  const configuration =
+    routed || options.verificationChecks === undefined
+      ? await loadStrictProjectConfiguration(options.projectRoot)
+      : null;
+  const verificationChecks =
+    options.verificationChecks !== undefined
+      ? [...options.verificationChecks]
+      : toVerificationCheckSpecs(
+          requireConfiguration(configuration).verificationChecks,
+        );
+  const agentProfiles = routed
+    ? requireConfiguration(configuration).agentProfiles
+    : [];
   const store = overrides.store ?? createSqliteRunnerStore({
     path: resolveStorePath(options),
   });
   const runner = createNodeProcessRunner();
   const git = createGitManager({ runner });
   const verification = overrides.verification ?? createVerificationEngine({ runner });
+  const openCodeAdapter = new OpenCodeAdapter(runner);
+  const codexAdapter = new CodexAdapter(runner);
   const agents = overrides.agentRegistry ?? createAgentRegistry([
-    new OpenCodeAdapter(runner),
-    new CodexAdapter(runner),
+    openCodeAdapter,
+    codexAdapter,
   ]);
-  const orchestrator = overrides.orchestrator ?? createSingleTaskOrchestrator({
+  const adapters = overrides.agentAdapters ?? createAgentAdapterRegistry([
+    openCodeAdapter,
+    codexAdapter,
+  ]);
+  const orchestratorBaseOptions = {
     store,
     git,
-    agent: overrides.agent ?? new OpenCodeAdapter(runner),
     verification,
     verificationChecks,
     projectRoot: options.projectRoot,
     worktreesDir: resolveWorktreesDir(options),
     agentTimeoutMs: resolveAgentTimeoutMs(options),
-  });
+  };
+  const orchestrator = overrides.orchestrator ?? (overrides.agent !== undefined
+    ? createSingleTaskOrchestrator({
+        ...orchestratorBaseOptions,
+        agent: overrides.agent,
+      })
+    : createRoutedTaskOrchestrator({
+        store,
+        agentProfiles,
+        agents,
+        adapters,
+        createAgentBackedOrchestrator: (agent) =>
+          createSingleTaskOrchestrator({
+            ...orchestratorBaseOptions,
+            agent,
+          }),
+      }));
   const recovery = overrides.recovery ?? createCrashRecovery({
     store,
     git,
@@ -78,14 +122,16 @@ export async function createAppServices(
     projectRoot: options.projectRoot,
     worktreesDir: resolveWorktreesDir(options),
   });
-  return { store, orchestrator, recovery, agents };
+  return { store, orchestrator, recovery, agents, adapters };
 }
 
-async function resolveConfiguredVerificationChecks(
-  options: AppServicesOptions,
-): Promise<VerificationCheckSpec[]> {
-  if (options.verificationChecks !== undefined) {
-    return [...options.verificationChecks];
+function requireConfiguration(
+  configuration: ProjectConfiguration | null,
+): ProjectConfiguration {
+  if (configuration === null) {
+    throw new ProjectConfigurationUnavailableError(
+      "project configuration is required for this run but was not loaded",
+    );
   }
-  return await loadProjectVerificationChecks(options.projectRoot);
+  return configuration;
 }

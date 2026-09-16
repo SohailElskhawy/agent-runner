@@ -32,6 +32,14 @@ const FORBIDDEN_SPECIFIERS = [
   "node:child_process",
 ];
 
+const ROUTING_SPECIFIERS = [
+  "selectAgentProfile",
+  "resolveRoutedAgent",
+  "discoverAgents",
+  "createAgentAdapterRegistry",
+  "agentProfiles",
+];
+
 describe("CLI presentation boundary", () => {
   it("command modules contain no orchestration, git, sqlite, process, or provider logic", () => {
     for (const file of COMMAND_FILES) {
@@ -50,6 +58,36 @@ describe("CLI presentation boundary", () => {
         `${file} must not contain orchestration/SQLite/process logic`,
       ).toBe(false);
     }
+  });
+
+  it("command modules contain no agent routing logic", () => {
+    for (const file of COMMAND_FILES) {
+      const source = readFileSync(join(COMMAND_MODULE_DIR, file), "utf8");
+      for (const marker of ROUTING_SPECIFIERS) {
+        expect(
+          source.includes(marker),
+          `${file} must not reference "${marker}"`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("routing lives in application wiring rather than command modules", () => {
+    const routingSource = readFileSync(
+      join(COMMAND_MODULE_DIR, "application", "agents", "agent-routing.ts"),
+      "utf8",
+    );
+    expect(routingSource).toContain("selectAgentProfile");
+    const routedOrchestratorSource = readFileSync(
+      join(COMMAND_MODULE_DIR, "application", "agents", "routed-task-orchestrator.ts"),
+      "utf8",
+    );
+    expect(routedOrchestratorSource).toContain("resolveRoutedAgent");
+    const appServicesSource = readFileSync(
+      join(COMMAND_MODULE_DIR, "application", "app-services.ts"),
+      "utf8",
+    );
+    expect(appServicesSource).toContain("createRoutedTaskOrchestrator");
   });
 
   it("wiring keeps infrastructure composition outside command modules", () => {
