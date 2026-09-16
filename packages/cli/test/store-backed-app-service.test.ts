@@ -10,6 +10,7 @@ import {
 import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
+import type { AgentAvailability, AgentRegistry } from "@agentic-dev-runner/agents";
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
 import { outcomeToRunResult } from "../src/application/runner-app-service.js";
 import { runCli } from "../src/run-cli.js";
@@ -67,6 +68,22 @@ class StubRecovery implements CrashRecovery {
   }
 }
 
+class RecordingAgentRegistry implements AgentRegistry {
+  readonly discoverCalls: { count: number } = { count: 0 };
+  constructor(private readonly agents: readonly AgentAvailability[] = []) {}
+
+  get agentIds(): readonly string[] {
+    return this.agents.map((agent) => agent.id);
+  }
+
+  async discoverAgents(): Promise<readonly AgentAvailability[]> {
+    this.discoverCalls.count += 1;
+    return this.agents;
+  }
+}
+
+const stubAgents: AgentRegistry = new RecordingAgentRegistry();
+
 const completedOutcome: SingleTaskRunOutcome = {
   kind: "completed",
   taskId: "M001",
@@ -102,6 +119,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(outcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
   }
 
@@ -113,6 +131,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator,
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
 
     const result = await service.run("M001");
@@ -129,6 +148,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome, log),
       recovery: new RecordingRecovery(log),
+      agents: stubAgents,
     });
 
     await service.status();
@@ -153,6 +173,7 @@ describe("StoreBackedAppService", () => {
         log,
         new OrchestrationError("startup reconciliation failed"),
       ),
+      agents: stubAgents,
     });
 
     await expect(service.status()).rejects.toThrow("startup reconciliation failed");
@@ -179,6 +200,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
 
     const status = await service.status();
@@ -213,6 +235,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
 
     const inspection = await service.inspect("M001");
@@ -232,6 +255,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
 
     expect(await service.inspect("M999")).toBeNull();
@@ -305,6 +329,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
     const { io, lines } = captureIo();
 
@@ -322,6 +347,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
     const { io, errors } = captureIo();
 
@@ -338,6 +364,7 @@ describe("StoreBackedAppService", () => {
       store,
       orchestrator: new StubOrchestrator(completedOutcome),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
     const { io, lines } = captureIo();
 
@@ -345,6 +372,29 @@ describe("StoreBackedAppService", () => {
 
     expect(exitCode).toBe(0);
     expect(lines.join("\n")).toContain(":memory:");
+  });
+
+  it("listAgents delegates to the agent registry and maps availability entries without touching runner state", async () => {
+    const registry = new RecordingAgentRegistry([
+      { id: "opencode", available: true, version: "opencode 1.0.0", reason: null },
+      { id: "codex", available: false, version: null, reason: "codex missing" },
+    ]);
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store,
+      orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
+      agents: registry,
+    });
+
+    const agents = await service.listAgents();
+
+    expect(registry.discoverCalls.count).toBe(1);
+    expect(agents).toEqual([
+      { id: "opencode", available: true, version: "opencode 1.0.0", reason: null },
+      { id: "codex", available: false, version: null, reason: "codex missing" },
+    ]);
   });
 });
 

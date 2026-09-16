@@ -22,6 +22,7 @@ export async function createServices(
     store: appServices.store,
     orchestrator: appServices.orchestrator,
     recovery: appServices.recovery,
+    agents: appServices.agents,
   });
   return Promise.resolve(service);
 }

@@ -6,8 +6,12 @@ import type {
   VerificationCheckSpec,
   VerificationEngine,
 } from "@agentic-dev-runner/verification";
-import { OpenCodeAdapter } from "@agentic-dev-runner/agents";
-import type { AgentRuntime } from "@agentic-dev-runner/agents";
+import {
+  CodexAdapter,
+  OpenCodeAdapter,
+  createAgentRegistry,
+} from "@agentic-dev-runner/agents";
+import type { AgentRegistry, AgentRuntime } from "@agentic-dev-runner/agents";
 import {
   createCrashRecovery,
   createSingleTaskOrchestrator,
@@ -29,6 +33,7 @@ export type AppServices = {
   readonly store: RunnerStore;
   readonly orchestrator: SingleTaskOrchestrator;
   readonly recovery: CrashRecovery;
+  readonly agents: AgentRegistry;
 };
 
 export type AppServicesOverrides = {
@@ -36,6 +41,7 @@ export type AppServicesOverrides = {
   readonly orchestrator?: SingleTaskOrchestrator | undefined;
   readonly recovery?: CrashRecovery | undefined;
   readonly agent?: AgentRuntime | undefined;
+  readonly agentRegistry?: AgentRegistry | undefined;
   readonly verification?: VerificationEngine | undefined;
 };
 
@@ -50,6 +56,10 @@ export async function createAppServices(
   const runner = createNodeProcessRunner();
   const git = createGitManager({ runner });
   const verification = overrides.verification ?? createVerificationEngine({ runner });
+  const agents = overrides.agentRegistry ?? createAgentRegistry([
+    new OpenCodeAdapter(runner),
+    new CodexAdapter(runner),
+  ]);
   const orchestrator = overrides.orchestrator ?? createSingleTaskOrchestrator({
     store,
     git,
@@ -68,7 +78,7 @@ export async function createAppServices(
     projectRoot: options.projectRoot,
     worktreesDir: resolveWorktreesDir(options),
   });
-  return { store, orchestrator, recovery };
+  return { store, orchestrator, recovery, agents };
 }
 
 async function resolveConfiguredVerificationChecks(

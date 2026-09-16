@@ -11,6 +11,7 @@ import type {
   SingleTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
+import type { AgentRegistry } from "@agentic-dev-runner/agents";
 import { CliError } from "../errors.js";
 import {
   outcomeToRunResult,
@@ -19,6 +20,7 @@ import {
 import type { RunnerAppService } from "./runner-app-service.js";
 import type {
   AddTaskResult,
+  AgentStatusEntry,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -35,6 +37,7 @@ export type StoreBackedAppServiceOptions = {
   readonly store: RunnerStore;
   readonly orchestrator: SingleTaskOrchestrator;
   readonly recovery: CrashRecovery;
+  readonly agents: AgentRegistry;
 };
 
 export function createStoreBackedAppService(
@@ -49,6 +52,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly store: RunnerStore;
   private readonly orchestrator: SingleTaskOrchestrator;
   private readonly recovery: CrashRecovery;
+  private readonly agents: AgentRegistry;
   private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
@@ -57,6 +61,7 @@ class StoreBackedAppService implements RunnerAppService {
     this.store = options.store;
     this.orchestrator = options.orchestrator;
     this.recovery = options.recovery;
+    this.agents = options.agents;
   }
 
   async init(): Promise<InitResult> {
@@ -155,6 +160,16 @@ class StoreBackedAppService implements RunnerAppService {
     const attempts = await this.store.listAttempts({ taskId });
     const events = await this.store.listEvents({ taskId });
     return buildTaskInspection({ task, attempts, events });
+  }
+
+  async listAgents(): Promise<readonly AgentStatusEntry[]> {
+    const agents = await this.agents.discoverAgents();
+    return agents.map((agent) => ({
+      id: agent.id,
+      available: agent.available,
+      version: agent.version,
+      reason: agent.reason,
+    }));
   }
 
   async close(): Promise<void> {

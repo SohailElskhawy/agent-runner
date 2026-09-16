@@ -5,6 +5,7 @@ import type {
 } from "@agentic-dev-runner/orchestrator";
 import type {
   AddTaskResult,
+  AgentStatusEntry,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -17,6 +18,7 @@ export interface RunnerAppService {
   run(taskId: TaskId): Promise<RunResult>;
   status(): Promise<ProjectStatus>;
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
+  listAgents(): Promise<readonly AgentStatusEntry[]>;
   close(): Promise<void>;
 }
 

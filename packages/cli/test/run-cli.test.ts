@@ -4,6 +4,7 @@ import type { RunnerAppService } from "../src/application/runner-app-service.js"
 import { runCli } from "../src/run-cli.js";
 import type {
   AddTaskResult,
+  AgentStatusEntry,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -20,16 +21,19 @@ function recordingService(result: {
   run?: RunResult;
   status?: ProjectStatus;
   inspection?: TaskInspection | null;
+  agents?: readonly AgentStatusEntry[];
   failure?: Error;
 }): {
   service: RunnerAppService;
   runCalls: RunSpy;
   initCalls: { count: number };
   addCalls: { calls: string[] };
+  listAgentsCalls: { count: number };
 } {
   const runCalls: string[] = [];
   const addCalls: string[] = [];
   let initCount = 0;
+  let listAgentsCount = 0;
   const service: RunnerAppService = {
     async init() {
       initCount += 1;
@@ -81,6 +85,17 @@ function recordingService(result: {
     async inspect() {
       return result.inspection ?? null;
     },
+    async listAgents() {
+      listAgentsCount += 1;
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return (
+        result.agents ?? [
+          { id: "opencode", available: true, version: "1.0.0", reason: null },
+        ]
+      );
+    },
     async close() {
       return;
     },
@@ -92,6 +107,11 @@ function recordingService(result: {
     initCalls: {
       get count() {
         return initCount;
+      },
+    },
+    listAgentsCalls: {
+      get count() {
+        return listAgentsCount;
       },
     },
   };
@@ -295,5 +315,49 @@ describe("runCli command dispatch", () => {
     expect(exitCode).toBe(0);
     expect(recording.initCalls.count).toBe(1);
     expect(lines.join("\n")).toContain("fixture/state.db");
+  });
+
+  it("agents command delegates to the application service and renders the availability table", async () => {
+    const recording = recordingService({
+      agents: [
+        { id: "opencode", available: true, version: "opencode 1.0.0", reason: null },
+        { id: "codex", available: false, version: null, reason: "codex could not be started" },
+      ],
+    });
+    const { io, lines } = captureIo();
+
+    const exitCode = await runCli(["agents"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(recording.listAgentsCalls.count).toBe(1);
+    const output = lines.join("\n");
+    expect(output).toContain("ID");
+    expect(output).toContain("AVAILABLE");
+    expect(output).toContain("opencode");
+    expect(output).toContain("codex");
+    expect(output).toContain("codex could not be started");
+    const openCodeIndex = output.indexOf("opencode");
+    const codexIndex = output.indexOf("codex");
+    expect(openCodeIndex).toBeLessThan(codexIndex);
+    expect(output).toContain("yes");
+    expect(output).toContain("no");
+  });
+
+  it("agents command exits non-zero when discovery fails at the application layer", async () => {
+    const recording = recordingService({
+      failure: new Error("discovery exploded"),
+    });
+    const { io, errors } = captureIo();
+
+    const exitCode = await runCli(["agents"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("error: discovery exploded");
   });
 });

@@ -63,6 +63,7 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
       store: appServices.store,
       orchestrator: appServices.orchestrator,
       recovery: appServices.recovery,
+      agents: appServices.agents,
     });
   }
 
@@ -89,6 +90,7 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
       store: appServices.store,
       orchestrator: appServices.orchestrator,
       recovery: appServices.recovery,
+      agents: appServices.agents,
     });
   }
 

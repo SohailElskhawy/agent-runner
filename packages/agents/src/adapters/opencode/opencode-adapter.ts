@@ -12,10 +12,16 @@ import type {
   AgentExecutionResult,
   AgentOutput,
 } from "../../runtime/agent-result.js";
+import {
+  AGENT_PROBE_TIMEOUT_MS,
+  normalizeProbeResult,
+} from "../../discovery/agent-probe.js";
+import type { AgentProbeOutcome } from "../../discovery/agent-availability.js";
 
 export const OPENCODE_AGENT_ID = "opencode";
 
 const DEFAULT_EXECUTABLE = "opencode";
+const PROBE_ARGS = ["--version"];
 const CONTEXT_DIR_PREFIX = "agentic-opencode-context-";
 const CONTEXT_FILE_NAME = "context-pack.json";
 
@@ -86,6 +92,15 @@ export class OpenCodeAdapter implements AgentRuntime {
     } finally {
       await runCleanup(this.removeDirectory, contextDir);
     }
+  }
+
+  async probeAvailability(): Promise<AgentProbeOutcome> {
+    const spec: ProcessSpec = {
+      executable: this.options.executable ?? DEFAULT_EXECUTABLE,
+      args: [...(this.options.launcherArgs ?? []), ...PROBE_ARGS],
+      timeoutMs: AGENT_PROBE_TIMEOUT_MS,
+    };
+    return normalizeProbeResult(await this.runner.run(spec), OPENCODE_AGENT_ID);
   }
 }
 

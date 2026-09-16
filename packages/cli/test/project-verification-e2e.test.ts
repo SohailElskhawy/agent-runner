@@ -225,6 +225,7 @@ describe("M057a project-configured verification checks", () => {
         store: appServices.store,
         orchestrator: appServices.orchestrator,
         recovery: appServices.recovery,
+        agents: appServices.agents,
       });
     };
   }

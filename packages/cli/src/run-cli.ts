@@ -4,6 +4,7 @@ import { parseArgs, USAGE } from "./parse-args.js";
 import type { ParsedCommand } from "./parse-args.js";
 import {
   executeAddTaskCommand,
+  executeAgentsCommand,
   executeInitCommand,
   executeInspectCommand,
   executeRunCommand,
@@ -49,6 +50,7 @@ export async function runCli(
       case "status":
       case "inspect":
       case "tasks":
+      case "agents":
         return await withServices(options.servicesFactory, async (services) => {
           try {
             switch (command.name) {
@@ -66,6 +68,8 @@ export async function runCli(
                   services,
                   io,
                 );
+              case "agents":
+                return await executeAgentsCommand(services, io);
             }
           } finally {
             await closeServices(services, io);

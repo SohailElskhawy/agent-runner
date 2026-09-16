@@ -19,6 +19,13 @@ export type RunResult =
   | { readonly kind: "cancelled"; readonly message: string }
   | { readonly kind: "rejected"; readonly message: string };
 
+export type AgentStatusEntry = {
+  readonly id: string;
+  readonly available: boolean;
+  readonly version: string | null;
+  readonly reason: string | null;
+};
+
 export type ProjectStatus = {
   readonly project: Project | null;
   readonly tasks: readonly TaskStatusEntry[];

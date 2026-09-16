@@ -145,4 +145,24 @@ describe("createAppServices wiring", () => {
     expect(resolveAgentTimeoutMs({ projectRoot: "x" })).toBe(15 * 60 * 1000);
     expect(resolveAgentTimeoutMs({ projectRoot: "x", agentTimeoutMs: 42 })).toBe(42);
   });
+
+  it("wires a default agent registry containing the built-in coding agents", async () => {
+    const appServices = await createAppServices(options);
+    store = appServices.store;
+
+    expect(appServices.agents.agentIds).toEqual(["opencode", "codex"]);
+  });
+
+  it("accepts an agent registry override for testing", async () => {
+    const registry = {
+      agentIds: ["fake"],
+      async discoverAgents() {
+        return [];
+      },
+    };
+    const appServices = await createAppServices(options, { agentRegistry: registry });
+    store = appServices.store;
+
+    expect(appServices.agents).toBe(registry);
+  });
 });

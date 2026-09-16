@@ -171,6 +171,7 @@ describe("VS014 vertical slice through the CLI entry point", () => {
       store: appServices.store,
       orchestrator: appServices.orchestrator,
       recovery: appServices.recovery,
+      agents: appServices.agents,
     });
   }
 

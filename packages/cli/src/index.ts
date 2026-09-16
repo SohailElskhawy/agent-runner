@@ -2,7 +2,15 @@ export { CliError } from "./errors.js";
 export { consoleIo, describeError, type CliIo } from "./io.js";
 export { parseArgs, KNOWN_COMMANDS, type ParsedCommand } from "./parse-args.js";
 export { runCli, EXIT_USAGE, type RunCliOptions, type CliServicesFactory } from "./run-cli.js";
-export { executeInitCommand, executeRunCommand, executeStatusCommand, executeInspectCommand, EXIT_SUCCESS, EXIT_FAILURE } from "./commands/execute-commands.js";
+export {
+  executeInitCommand,
+  executeRunCommand,
+  executeStatusCommand,
+  executeInspectCommand,
+  executeAgentsCommand,
+  EXIT_SUCCESS,
+  EXIT_FAILURE,
+} from "./commands/execute-commands.js";
 export { createAppServices, type AppServices, type AppServicesOverrides } from "./application/app-services.js";
 export { createServices } from "./wiring.js";
 export {
@@ -16,6 +24,7 @@ export {
 export type {
   InitResult,
   RunResult,
+  AgentStatusEntry,
   ProjectStatus,
   TaskStatusEntry,
   LatestAttemptSummary,

@@ -6,6 +6,7 @@ export type ParsedCommand =
   | { readonly name: "status" }
   | { readonly name: "inspect"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
+  | { readonly name: "agents" }
   | { readonly name: "help" }
   | { readonly name: "version" };
 
@@ -15,6 +16,7 @@ export const KNOWN_COMMANDS = [
   "status",
   "inspect",
   "tasks",
+  "agents",
   "help",
   "version",
 ] as const;
@@ -37,6 +39,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return { name: "inspect", taskId: requireTaskId(command, rest) };
     case "tasks":
       return parseTasksCommand(rest);
+    case "agents":
+      requireNoExtraArguments(command, rest);
+      return { name: "agents" };
     case "--help":
     case "-h":
     case "help":
@@ -110,9 +115,11 @@ export const USAGE = `Usage:
   agentic status
   agentic inspect <task-id>
   agentic tasks add <task-file>
+  agentic agents
   agentic help
   agentic version
 
+"agents" reports which built-in coding-agent CLIs are locally available.
 "tasks add" parses one JSON task file written in the documented task schema
 format (docs/TASK_SCHEMA.md), normalizes it to the runner task contract,
 validates it, and persists it into local runner state. Manual task ingestion

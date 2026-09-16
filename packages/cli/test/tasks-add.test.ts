@@ -10,6 +10,7 @@ import type {
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
+import type { AgentRegistry } from "@agentic-dev-runner/agents";
 import { runCli } from "../src/run-cli.js";
 import type { RunnerAppService } from "../src/application/runner-app-service.js";
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
@@ -30,6 +31,13 @@ class StubRecovery implements CrashRecovery {
     return [];
   }
 }
+
+const stubAgents: AgentRegistry = {
+  agentIds: [],
+  async discoverAgents() {
+    return [];
+  },
+};
 
 function validTaskFileContent(): Record<string, unknown> {
   return {
@@ -88,6 +96,7 @@ describe("agentic tasks add", () => {
       store: createSqliteRunnerStore({ path: storePath }),
       orchestrator: new StubOrchestrator(),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
   }
 
@@ -576,6 +585,7 @@ describe("agentic tasks add", () => {
       store: storeWithFailingPutTask(),
       orchestrator: new StubOrchestrator(),
       recovery: new StubRecovery(),
+      agents: stubAgents,
     });
     const { io, errors } = captureIo();
     const exitCode = await runCli(["tasks", "add", taskFile], {
@@ -622,6 +632,9 @@ describe("agentic tasks add", () => {
       },
       async inspect() {
         throw new Error("inspect must not be called");
+      },
+      async listAgents() {
+        throw new Error("listAgents must not be called");
       },
       async close() {
         return;
