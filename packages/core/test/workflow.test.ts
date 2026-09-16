@@ -239,11 +239,73 @@ describe("validateWorkflowDefinition", () => {
       issues: [
         {
           reason: "invalid-stage-order",
-          before: "VERIFY",
+          before: "IMPLEMENT",
           after: "INTEGRATE",
         },
       ],
     });
+  });
+
+  it("rejects PLAN after IMPLEMENT", () => {
+    expect(
+      validate({ stages: ["IMPLEMENT", "PLAN", "VERIFY", "INTEGRATE"] }),
+    ).toEqual({
+      valid: false,
+      issues: [
+        {
+          reason: "invalid-stage-order",
+          before: "PLAN",
+          after: "IMPLEMENT",
+        },
+      ],
+    });
+  });
+
+  it("rejects PLAN_REVIEW before PLAN", () => {
+    expect(
+      validate({
+        stages: ["PLAN_REVIEW", "PLAN", "IMPLEMENT", "VERIFY", "INTEGRATE"],
+      }),
+    ).toEqual({
+      valid: false,
+      issues: [
+        {
+          reason: "invalid-stage-order",
+          before: "PLAN",
+          after: "PLAN_REVIEW",
+        },
+      ],
+    });
+  });
+
+  it("rejects CODE_REVIEW after VERIFY", () => {
+    expect(
+      validate({ stages: ["IMPLEMENT", "VERIFY", "CODE_REVIEW", "INTEGRATE"] }),
+    ).toEqual({
+      valid: false,
+      issues: [
+        {
+          reason: "invalid-stage-order",
+          before: "CODE_REVIEW",
+          after: "VERIFY",
+        },
+      ],
+    });
+  });
+
+  it("accepts valid canonical subsequences of the lifecycle", () => {
+    const subsequences: StageKind[][] = [
+      ["PLAN", "IMPLEMENT", "VERIFY", "INTEGRATE"],
+      ["PLAN", "PLAN_REVIEW", "IMPLEMENT", "VERIFY", "INTEGRATE"],
+      ["IMPLEMENT", "CODE_REVIEW", "VERIFY", "INTEGRATE"],
+      ["PLAN", "PLAN_REVIEW", "IMPLEMENT", "CODE_REVIEW", "VERIFY", "INTEGRATE"],
+    ];
+    for (const stages of subsequences) {
+      expect(validate({ stages })).toEqual({
+        valid: true,
+        definition: definition({ stages }),
+      });
+    }
   });
 
   it("rejects each missing required execution stage", () => {

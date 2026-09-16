@@ -11,18 +11,30 @@
  *
  *   IMPLEMENT → VERIFY → INTEGRATE
  *
- * Plan/review stages may precede the backbone. Validation is pure and
- * deterministic: identical input always produces an identical result, and
- * stage ordering is defined exclusively by the definition's stage sequence.
+ * Stage ordering is validated against the canonical V0.1 lifecycle:
+ *
+ *   PLAN → PLAN_REVIEW → IMPLEMENT → CODE_REVIEW → VERIFY → INTEGRATE
+ *
+ * A valid stage sequence is an ordered subsequence of that lifecycle (for
+ * example, `simple` drops the plan/review stages), so no stage may appear
+ * after a stage that canonically follows it — including the optional plan,
+ * plan-review, and code-review stages. No ordering beyond the canonical
+ * lifecycle is enforced. Validation is pure and deterministic: identical
+ * input always produces an identical result, and stage ordering is defined
+ * exclusively by the definition's stage sequence.
  */
 
-import type { StageKind } from "./stage-run.js";
+import { STAGE_KINDS, type StageKind } from "./stage-run.js";
 
-export const EXECUTION_BACKBONE_STAGES: readonly [
+const EXECUTION_BACKBONE_STAGES: readonly StageKind[] = [
   "IMPLEMENT",
   "VERIFY",
   "INTEGRATE",
-] = ["IMPLEMENT", "VERIFY", "INTEGRATE"];
+];
+
+const CANONICAL_STAGE_RANK: ReadonlyMap<StageKind, number> = new Map(
+  STAGE_KINDS.map((stage, index) => [stage, index] as const),
+);
 
 export type WorkflowDefinition = {
   readonly id: string;
@@ -87,30 +99,29 @@ export function validateWorkflowDefinition(
     }
   }
 
-  for (let i = 0; i < EXECUTION_BACKBONE_STAGES.length; i += 1) {
-    const stage = EXECUTION_BACKBONE_STAGES[i];
-    if (stage === undefined) {
+  for (let index = 1; index < definition.stages.length; index += 1) {
+    const previous = definition.stages[index - 1];
+    const current = definition.stages[index];
+    if (previous === undefined || current === undefined) {
       continue;
     }
+    const previousRank = CANONICAL_STAGE_RANK.get(previous);
+    const currentRank = CANONICAL_STAGE_RANK.get(current);
+    if (previousRank === undefined || currentRank === undefined) {
+      continue;
+    }
+    if (previousRank > currentRank) {
+      issues.push({
+        reason: "invalid-stage-order",
+        before: current,
+        after: previous,
+      });
+    }
+  }
+
+  for (const stage of EXECUTION_BACKBONE_STAGES) {
     if (!firstIndexByStage.has(stage)) {
       issues.push({ reason: "missing-required-stage", stage });
-      continue;
-    }
-    const nextStage = EXECUTION_BACKBONE_STAGES[i + 1];
-    if (nextStage !== undefined && firstIndexByStage.has(nextStage)) {
-      const stageIndex = firstIndexByStage.get(stage);
-      const nextStageIndex = firstIndexByStage.get(nextStage);
-      if (
-        stageIndex !== undefined &&
-        nextStageIndex !== undefined &&
-        stageIndex > nextStageIndex
-      ) {
-        issues.push({
-          reason: "invalid-stage-order",
-          before: stage,
-          after: nextStage,
-        });
-      }
     }
   }
 
