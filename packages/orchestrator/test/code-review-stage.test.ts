@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -719,6 +726,48 @@ describe("executeCodeReviewStage (M055a)", () => {
     expect(outcome.stageRun.output?.codeReview).toBeUndefined();
     expect((await storedTask()).status).toBe("READY");
     expect(existsSync(join(worktreePath, change.path))).toBe(true);
+  });
+
+  it("fails the stage when the reviewer rewrites the content of a pre-existing untracked file", async () => {
+    agent = new FakeAgentRuntime(
+      agentAppliesChange({
+        path: UNTRACKED_REPORT_PATH,
+        content: "tampered during review\n",
+      }),
+    );
+    await seedCommittedImplementation({ untrackedReport: true });
+
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain("modified the task worktree");
+    expect(outcome.reason).toContain("untracked file content changed");
+    expect(outcome.reason).toContain(UNTRACKED_REPORT_PATH);
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.output?.codeReview).toBeUndefined();
+    expect((await storedTask()).status).toBe("READY");
+    expect(readFileSync(join(worktreePath, UNTRACKED_REPORT_PATH), "utf8")).toBe(
+      "tampered during review\n",
+    );
+  });
+
+  it("fails the stage when the reviewer rewrites the content of a tracked implementation file", async () => {
+    agent = new FakeAgentRuntime(
+      agentAppliesChange({
+        path: "src/utils.ts",
+        content: "export const broken = true;\n",
+      }),
+    );
+    await seedCommittedImplementation();
+
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain("modified the task worktree");
+    expect(outcome.reason).toContain("src/utils.ts");
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.output?.codeReview).toBeUndefined();
+    expect((await storedTask()).status).toBe("READY");
   });
 
   it("fails the stage when the reviewer commits inside the worktree during review", async () => {

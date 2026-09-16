@@ -26,6 +26,7 @@
  * the workflow engine can consume. It is a stage execution primitive only.
  */
 
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -374,12 +375,25 @@ async function persistFinalStageRun(
  * is later compared against: unlike the plan stages, a CODE_REVIEW worktree
  * legitimately contains the attempt's implementation changes and may have
  * commits on top of the base revision, so mutation detection cannot assume a
- * clean worktree at the base revision.
+ * clean worktree at the base revision. Untracked files are recorded with a
+ * content digest because a modified untracked file keeps the same `??`
+ * porcelain entry and would otherwise escape mutation detection.
  */
 type WorktreeBaseline = {
   readonly status: GitStatus;
   readonly headRevision: string;
+  readonly untrackedFiles: readonly UntrackedFileIdentity[];
   readonly plan: string | undefined;
+};
+
+/**
+ * Content identity of one untracked worktree file. The digest is computed
+ * over the raw bytes (no line-ending or encoding normalization); `undefined`
+ * means the content could not be read when the baseline was captured.
+ */
+type UntrackedFileIdentity = {
+  readonly path: string;
+  readonly digest: string | undefined;
 };
 
 async function captureWorktreeBaseline(
@@ -406,8 +420,38 @@ async function captureWorktreeBaseline(
   return {
     status,
     headRevision,
+    untrackedFiles: await captureUntrackedIdentities(options, status.entries),
     plan: await loadPersistedPlan(options),
   };
+}
+
+async function captureUntrackedIdentities(
+  options: CodeReviewStageOptions,
+  entries: readonly GitStatusEntry[],
+): Promise<UntrackedFileIdentity[]> {
+  const identities: UntrackedFileIdentity[] = [];
+  for (const entry of entries) {
+    if (!isUntracked(entry)) {
+      continue;
+    }
+    identities.push({
+      path: entry.path,
+      digest: await digestUntrackedFile(options, entry.path),
+    });
+  }
+  return identities;
+}
+
+async function digestUntrackedFile(
+  options: CodeReviewStageOptions,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    const content = await readFile(join(options.worktreePath, path));
+    return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -536,7 +580,8 @@ async function buildCodeReviewContextPack(
  * A CODE_REVIEW invocation must not change repository contents. Detected by
  * comparing the worktree state after the invocation with the pre-invocation
  * baseline: any newly uncommitted change (including staged and untracked
- * files) or any commit created during the review fails the stage.
+ * files), any commit created during the review, or any change to the
+ * pre-existing untracked files' content digests fails the stage.
  */
 async function detectWorktreeMutation(
   options: CodeReviewStageOptions,
@@ -561,7 +606,53 @@ async function detectWorktreeMutation(
   if (headRevision !== baseline.headRevision) {
     return `the CODE_REVIEW invocation modified the task worktree (worktree revision ${headRevision} no longer matches pre-review revision ${baseline.headRevision}); a review stage must not modify repository files`;
   }
+  const untrackedMutation = untrackedIdentityMutationMessage(
+    baseline.untrackedFiles,
+    await captureUntrackedIdentities(options, status.entries),
+  );
+  if (untrackedMutation !== undefined) {
+    return untrackedMutation;
+  }
   return undefined;
+}
+
+/**
+ * Compares the untracked file identities after the review against the
+ * pre-invocation baseline. Path-set changes and digest changes both count as
+ * reviewer mutation; byte-identical files (including files that were
+ * unreadable both times) are unchanged.
+ */
+function untrackedIdentityMutationMessage(
+  baseline: readonly UntrackedFileIdentity[],
+  current: readonly UntrackedFileIdentity[],
+): string | undefined {
+  const baselineByPath = new Map(
+    baseline.map((entry) => [entry.path, entry] as const),
+  );
+  const currentByPath = new Map(
+    current.map((entry) => [entry.path, entry] as const),
+  );
+  for (const entry of current) {
+    const before = baselineByPath.get(entry.path);
+    if (before === undefined) {
+      return untrackedMutationMessage(`new untracked file appeared: ${entry.path}`);
+    }
+    if (before.digest !== entry.digest) {
+      return untrackedMutationMessage(
+        `untracked file content changed: ${entry.path}`,
+      );
+    }
+  }
+  for (const entry of baseline) {
+    if (!currentByPath.has(entry.path)) {
+      return untrackedMutationMessage(`untracked file removed: ${entry.path}`);
+    }
+  }
+  return undefined;
+}
+
+function untrackedMutationMessage(detail: string): string {
+  return `the CODE_REVIEW invocation modified the task worktree (${detail}); a review stage must not modify repository files`;
 }
 
 function statusesEqual(before: GitStatus, after: GitStatus): boolean {
