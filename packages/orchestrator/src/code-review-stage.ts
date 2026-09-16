@@ -85,6 +85,13 @@ export type CodeReviewStageOptions = {
   readonly worktreePath: string;
   readonly baseRevision: string;
   readonly timeoutMs: number;
+  /**
+   * 1-based review-cycle index of this invocation within a bounded
+   * review/fix loop. Each cycle persists its own StageRun identity so the
+   * complete stage execution history of the attempt is preserved; the
+   * default of 1 keeps the original per-attempt identity.
+   */
+  readonly cycle?: number | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly now?: (() => IsoTimestamp) | undefined;
 };
@@ -111,8 +118,18 @@ export const CODE_REVIEW_STAGE_INSTRUCTION = [
   "changes are required.",
 ].join(" ");
 
-export function codeReviewStageRunId(attemptId: AttemptId): StageRunId {
-  return `stage_${attemptId}_CODE_REVIEW`;
+/**
+ * Deterministic CODE_REVIEW StageRun identity for the attempt. Cycle 1 keeps
+ * the original identity; later fix cycles append their cycle number so
+ * repeated CODE_REVIEW invocations never overwrite previous cycle history.
+ */
+export function codeReviewStageRunId(
+  attemptId: AttemptId,
+  cycle = 1,
+): StageRunId {
+  return cycle <= 1
+    ? `stage_${attemptId}_CODE_REVIEW`
+    : `stage_${attemptId}_CODE_REVIEW_c${String(cycle)}`;
 }
 
 export async function executeCodeReviewStage(
@@ -120,7 +137,7 @@ export async function executeCodeReviewStage(
 ): Promise<CodeReviewStageOutcome> {
   validateOptions(options);
   const now = options.now ?? defaultClock;
-  const stageRunId = codeReviewStageRunId(options.attemptId);
+  const stageRunId = codeReviewStageRunId(options.attemptId, options.cycle);
   const startedAt = now();
   const running: StageRun = {
     id: stageRunId,
@@ -455,9 +472,10 @@ async function digestUntrackedFile(
 }
 
 /**
- * The PLAN output is the durable one persisted by the PLAN stage of the same
- * attempt. A CODE_REVIEW stage may run without a plan (workflows where the
- * review follows implementation directly), so a missing plan is not an
+ * The PLAN output is the durable one persisted by the most recent SUCCEEDED
+ * PLAN stage of the same attempt (the latest fix-cycle plan when earlier
+ * cycles exist). A CODE_REVIEW stage may run without a plan (workflows where
+ * the review follows implementation directly), so a missing plan is not an
  * error: the review then evaluates the implementation evidence only.
  */
 async function loadPersistedPlan(
@@ -472,16 +490,17 @@ async function loadPersistedPlan(
       error,
     );
   }
+  let latest: string | undefined;
   for (const stageRun of stageRuns) {
     if (stageRun.stage !== PLAN_STAGE || stageRun.status !== "SUCCEEDED") {
       continue;
     }
     const plan = stageRun.output?.plan;
     if (typeof plan === "string" && plan.trim().length > 0) {
-      return plan;
+      latest = plan;
     }
   }
-  return undefined;
+  return latest;
 }
 
 /**
@@ -710,5 +729,11 @@ function validateOptions(options: CodeReviewStageOptions): void {
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new OrchestrationError("timeoutMs must be a positive finite number");
+  }
+  if (
+    options.cycle !== undefined &&
+    (!Number.isInteger(options.cycle) || options.cycle < 1)
+  ) {
+    throw new OrchestrationError("cycle must be a positive integer");
   }
 }

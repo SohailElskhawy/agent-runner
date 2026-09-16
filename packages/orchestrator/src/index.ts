@@ -52,6 +52,7 @@ export {
   PLAN_STAGE_INSTRUCTION,
   executePlanStage,
   planStageRunId,
+  type PlanStageGuidance,
   type PlanStageOptions,
   type PlanStageOutcome,
 } from "./plan-stage.js";
@@ -70,3 +71,11 @@ export {
   type ImplementStageOptions,
   type ImplementStageOutcome,
 } from "./implement-stage.js";
+export {
+  executePlanReviewFixLoop,
+  executeCodeReviewFixLoop,
+  type PlanReviewFixLoopOptions,
+  type PlanReviewFixLoopOutcome,
+  type CodeReviewFixLoopOptions,
+  type CodeReviewFixLoopOutcome,
+} from "./review-fix-loop.js";

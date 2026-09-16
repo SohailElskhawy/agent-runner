@@ -80,6 +80,13 @@ export type ImplementStageOptions = {
   readonly worktreePath: string;
   readonly baseRevision: string;
   readonly timeoutMs: number;
+  /**
+   * 1-based review-cycle index of this invocation within a bounded
+   * review/fix loop. Each cycle persists its own StageRun identity so the
+   * complete stage execution history of the attempt is preserved; the
+   * default of 1 keeps the original per-attempt identity.
+   */
+  readonly cycle?: number | undefined;
   readonly guidance?: ImplementStageGuidance | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly now?: (() => IsoTimestamp) | undefined;
@@ -102,8 +109,18 @@ export const IMPLEMENT_STAGE_INSTRUCTION = [
   "approve your own changes; the runner performs those stages.",
 ].join(" ");
 
-export function implementStageRunId(attemptId: AttemptId): StageRunId {
-  return `stage_${attemptId}_IMPLEMENT`;
+/**
+ * Deterministic IMPLEMENT StageRun identity for the attempt. Cycle 1 keeps
+ * the original identity; later fix cycles append their cycle number so
+ * repeated IMPLEMENT invocations never overwrite previous cycle history.
+ */
+export function implementStageRunId(
+  attemptId: AttemptId,
+  cycle = 1,
+): StageRunId {
+  return cycle <= 1
+    ? `stage_${attemptId}_IMPLEMENT`
+    : `stage_${attemptId}_IMPLEMENT_c${String(cycle)}`;
 }
 
 export async function executeImplementStage(
@@ -111,7 +128,7 @@ export async function executeImplementStage(
 ): Promise<ImplementStageOutcome> {
   validateOptions(options);
   const now = options.now ?? defaultClock;
-  const stageRunId = implementStageRunId(options.attemptId);
+  const stageRunId = implementStageRunId(options.attemptId, options.cycle);
   const startedAt = now();
   const running: StageRun = {
     id: stageRunId,
@@ -409,5 +426,11 @@ function validateOptions(options: ImplementStageOptions): void {
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new OrchestrationError("timeoutMs must be a positive finite number");
+  }
+  if (
+    options.cycle !== undefined &&
+    (!Number.isInteger(options.cycle) || options.cycle < 1)
+  ) {
+    throw new OrchestrationError("cycle must be a positive integer");
   }
 }

@@ -40,6 +40,7 @@ import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "./orchestration-error.js";
 
 const PLAN_STAGE: StageKind = "PLAN";
+const REVIEW_FEEDBACK_CONTEXT_DOCUMENT_PATH = "REVIEW_FEEDBACK";
 
 export type PlanStageOutcome =
   | {
@@ -57,6 +58,14 @@ export type PlanStageOutcome =
       readonly durationMs: number;
     };
 
+/**
+ * Optional prior-stage information handed to a fix-cycle PLAN invocation:
+ * the actionable feedback of the review that requested this cycle.
+ */
+export type PlanStageGuidance = {
+  readonly reviewFeedback?: string | undefined;
+};
+
 export type PlanStageOptions = {
   readonly store: RunnerStore;
   readonly git: GitManager;
@@ -66,6 +75,14 @@ export type PlanStageOptions = {
   readonly worktreePath: string;
   readonly baseRevision: string;
   readonly timeoutMs: number;
+  /**
+   * 1-based review-cycle index of this invocation within a bounded
+   * review/fix loop. Each cycle persists its own StageRun identity so the
+   * complete stage execution history of the attempt is preserved; the
+   * default of 1 keeps the original per-attempt identity.
+   */
+  readonly cycle?: number | undefined;
+  readonly guidance?: PlanStageGuidance | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly now?: (() => IsoTimestamp) | undefined;
 };
@@ -82,8 +99,18 @@ export const PLAN_STAGE_INSTRUCTION = [
   "Do NOT implement source code. Reply with the complete plan as plain text.",
 ].join(" ");
 
-export function planStageRunId(attemptId: AttemptId): StageRunId {
-  return `stage_${attemptId}_PLAN`;
+/**
+ * Deterministic PLAN StageRun identity for the attempt. Cycle 1 keeps the
+ * original identity; later fix cycles append their cycle number so repeated
+ * PLAN invocations never overwrite previous cycle history.
+ */
+export function planStageRunId(
+  attemptId: AttemptId,
+  cycle = 1,
+): StageRunId {
+  return cycle <= 1
+    ? `stage_${attemptId}_PLAN`
+    : `stage_${attemptId}_PLAN_c${String(cycle)}`;
 }
 
 export async function executePlanStage(
@@ -91,7 +118,7 @@ export async function executePlanStage(
 ): Promise<PlanStageOutcome> {
   validateOptions(options);
   const now = options.now ?? defaultClock;
-  const stageRunId = planStageRunId(options.attemptId);
+  const stageRunId = planStageRunId(options.attemptId, options.cycle);
   const startedAt = now();
   const running: StageRun = {
     id: stageRunId,
@@ -312,9 +339,29 @@ async function buildPlanContextPack(
     task: options.task,
     agentsMarkdown,
     agentsMarkdownPath: "AGENTS.md",
+    documents: planStageGuidanceDocuments(options.guidance),
     baseRevision: options.baseRevision,
     createdAt: now(),
   });
+}
+
+/**
+ * A fix-cycle PLAN invocation receives the requesting review's actionable
+ * feedback as an extra context document; the first cycle has none.
+ */
+function planStageGuidanceDocuments(
+  guidance: PlanStageGuidance | undefined,
+): readonly { readonly path: string; readonly content: string }[] {
+  const feedback = guidance?.reviewFeedback;
+  if (typeof feedback !== "string" || feedback.trim().length === 0) {
+    return [];
+  }
+  return [
+    {
+      path: REVIEW_FEEDBACK_CONTEXT_DOCUMENT_PATH,
+      content: feedback,
+    },
+  ];
 }
 
 /**
@@ -387,5 +434,11 @@ function validateOptions(options: PlanStageOptions): void {
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new OrchestrationError("timeoutMs must be a positive finite number");
+  }
+  if (
+    options.cycle !== undefined &&
+    (!Number.isInteger(options.cycle) || options.cycle < 1)
+  ) {
+    throw new OrchestrationError("cycle must be a positive integer");
   }
 }

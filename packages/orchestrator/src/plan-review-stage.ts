@@ -75,6 +75,13 @@ export type PlanReviewStageOptions = {
   readonly worktreePath: string;
   readonly baseRevision: string;
   readonly timeoutMs: number;
+  /**
+   * 1-based review-cycle index of this invocation within a bounded
+   * review/fix loop. Each cycle persists its own StageRun identity so the
+   * complete stage execution history of the attempt is preserved; the
+   * default of 1 keeps the original per-attempt identity.
+   */
+  readonly cycle?: number | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly now?: (() => IsoTimestamp) | undefined;
 };
@@ -98,8 +105,18 @@ export const PLAN_REVIEW_STAGE_INSTRUCTION = [
   "the plan must be revised.",
 ].join(" ");
 
-export function planReviewStageRunId(attemptId: AttemptId): StageRunId {
-  return `stage_${attemptId}_PLAN_REVIEW`;
+/**
+ * Deterministic PLAN_REVIEW StageRun identity for the attempt. Cycle 1 keeps
+ * the original identity; later fix cycles append their cycle number so
+ * repeated PLAN_REVIEW invocations never overwrite previous cycle history.
+ */
+export function planReviewStageRunId(
+  attemptId: AttemptId,
+  cycle = 1,
+): StageRunId {
+  return cycle <= 1
+    ? `stage_${attemptId}_PLAN_REVIEW`
+    : `stage_${attemptId}_PLAN_REVIEW_c${String(cycle)}`;
 }
 
 export async function executePlanReviewStage(
@@ -107,7 +124,7 @@ export async function executePlanReviewStage(
 ): Promise<PlanReviewStageOutcome> {
   validateOptions(options);
   const now = options.now ?? defaultClock;
-  const stageRunId = planReviewStageRunId(options.attemptId);
+  const stageRunId = planReviewStageRunId(options.attemptId, options.cycle);
   const startedAt = now();
   const running: StageRun = {
     id: stageRunId,
@@ -352,7 +369,10 @@ async function persistFinalStageRun(
 
 /**
  * The PLAN output under review is always the durable one persisted by the
- * PLAN stage of the same attempt: the reviewer never re-creates a plan.
+ * most recent SUCCEEDED PLAN stage of the same attempt (the latest fix-cycle
+ * plan when earlier cycles exist): the reviewer never re-creates a plan.
+ * `listStageRuns` is ordered chronologically, so the last match is the
+ * latest produced plan.
  */
 async function loadReviewedPlan(
   options: PlanReviewStageOptions,
@@ -366,16 +386,17 @@ async function loadReviewedPlan(
       error,
     );
   }
+  let latest: string | undefined;
   for (const stageRun of stageRuns) {
     if (stageRun.stage !== PLAN_STAGE || stageRun.status !== "SUCCEEDED") {
       continue;
     }
     const plan = stageRun.output?.plan;
     if (typeof plan === "string" && plan.trim().length > 0) {
-      return plan;
+      latest = plan;
     }
   }
-  return undefined;
+  return latest;
 }
 
 async function buildPlanReviewContextPack(
@@ -480,5 +501,11 @@ function validateOptions(options: PlanReviewStageOptions): void {
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new OrchestrationError("timeoutMs must be a positive finite number");
+  }
+  if (
+    options.cycle !== undefined &&
+    (!Number.isInteger(options.cycle) || options.cycle < 1)
+  ) {
+    throw new OrchestrationError("cycle must be a positive integer");
   }
 }
