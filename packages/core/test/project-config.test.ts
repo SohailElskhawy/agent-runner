@@ -55,6 +55,7 @@ describe("validateProjectConfiguration", () => {
     const input = canonicalConfig();
     const value = validate(input);
     expect(value).toEqual({
+      agentProfiles: [],
       verificationChecks: [
         { name: "typecheck", command: "pnpm", args: ["typecheck"] },
         { name: "unit", command: "pnpm", args: ["test"] },
@@ -90,10 +91,10 @@ describe("validateProjectConfiguration", () => {
     const issues = expectIssues(
       validateProjectConfiguration({
         verification: canonicalVerification(),
-        agents: { default: "opencode" },
+        workflows: { default: "manual" },
       }),
     );
-    expect(issues.join(" ")).toContain('unknown field "agents"');
+    expect(issues.join(" ")).toContain('unknown field "workflows"');
   });
 
   it("rejects unknown fields inside verification", () => {
@@ -197,5 +198,266 @@ describe("validateProjectConfiguration", () => {
     checks[""] = { command: "pnpm", args: [] };
     const issues = expectIssues(validateProjectConfiguration(input));
     expect(issues.join(" ")).toContain("must be a non-empty string name");
+  });
+});
+
+describe("validateProjectConfiguration agent profiles", () => {
+  function canonicalAgents(): Record<string, unknown> {
+    return {
+      agents: {
+        profiles: {
+          "codex-default": {
+            adapter: "codex",
+            model: "gpt-5-codex",
+            capabilities: ["TypeScript", "Debugging"],
+          },
+          "opencode-default": {
+            adapter: "opencode",
+            capabilities: ["typescript"],
+          },
+        },
+      },
+    };
+  }
+
+  function validate(input: unknown) {
+    const result = validateProjectConfiguration(input);
+    if (!result.ok) {
+      throw new Error(`unexpected validation issues: ${result.issues.join("; ")}`);
+    }
+    return result.value;
+  }
+
+  function expectIssues(
+    result: ProjectConfigurationValidationResult,
+  ): readonly string[] {
+    if (result.ok) {
+      throw new Error("expected validation to fail");
+    }
+    expect(result.issues.length).toBeGreaterThan(0);
+    return result.issues;
+  }
+
+  it("accepts verification plus agent profiles and normalizes into AgentProfile values", () => {
+    const value = validate({ verification: canonicalVerification(), ...canonicalAgents() });
+    expect(value.agentProfiles).toEqual([
+      {
+        id: "codex-default",
+        adapterId: "codex",
+        model: "gpt-5-codex",
+        capabilities: ["typescript", "debugging"],
+      },
+      {
+        id: "opencode-default",
+        adapterId: "opencode",
+        capabilities: ["typescript"],
+      },
+    ]);
+  });
+
+  it("preserves profile declaration order", () => {
+    const profiles = (canonicalAgents().agents as {
+      profiles: Record<string, unknown>;
+    }).profiles;
+    const value = validate({
+      verification: canonicalVerification(),
+      agents: {
+        profiles: {
+          "zeta-agent": profiles["opencode-default"],
+          "alpha-agent": profiles["codex-default"],
+        },
+      },
+    });
+    expect(value.agentProfiles.map((candidate) => candidate.id)).toEqual([
+      "zeta-agent",
+      "alpha-agent",
+    ]);
+  });
+
+  it("omits the optional model when not declared", () => {
+    const value = validate({ verification: canonicalVerification(), ...canonicalAgents() });
+    const second = value.agentProfiles[1];
+    expect(second).toBeDefined();
+    if (second === undefined) {
+      throw new Error("expected second profile");
+    }
+    expect("model" in second).toBe(false);
+  });
+
+  it("accepts empty capabilities", () => {
+    const value = validate({
+      verification: canonicalVerification(),
+      agents: {
+        profiles: {
+          "no-capabilities": { adapter: "opencode", capabilities: [] },
+        },
+      },
+    });
+    expect(value.agentProfiles).toEqual([
+      { id: "no-capabilities", adapterId: "opencode", capabilities: [] },
+    ]);
+  });
+
+  it("treats agents as optional", () => {
+    const value = validate(canonicalConfig());
+    expect(value.agentProfiles).toEqual([]);
+  });
+
+  it("rejects blank profile ids", () => {
+    for (const id of ["", "   "]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents: {
+            profiles: { [id]: { adapter: "opencode", capabilities: [] } },
+          },
+        }),
+      );
+      expect(issues.join(" ")).toContain("must be a non-empty string profile id");
+    }
+  });
+
+  it("rejects blank adapter ids", () => {
+    for (const adapter of ["", "   ", null, 7, undefined]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents: {
+            profiles: { "agent-1": { adapter, capabilities: ["typescript"] } },
+          },
+        }),
+      );
+      expect(issues.join(" ")).toContain(
+        "adapterId: must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects invalid optional model values", () => {
+    for (const model of ["", "   ", null, 7, true]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents: {
+            profiles: {
+              "agent-1": {
+                adapter: "opencode",
+                model,
+                capabilities: ["typescript"],
+              },
+            },
+          },
+        }),
+      );
+      expect(issues.join(" ")).toContain("model: must be a non-empty string");
+    }
+  });
+
+  it("rejects non-string and blank capabilities", () => {
+    for (const capability of [7, null, true, "   ", { label: "typescript" }]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents: {
+            profiles: {
+              "agent-1": { adapter: "opencode", capabilities: [capability] },
+            },
+          },
+        }),
+      );
+      expect(issues.join(" ")).toContain(
+        "capabilities[0]: must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects capabilities that are duplicates after normalization", () => {
+    const issues = expectIssues(
+      validateProjectConfiguration({
+        verification: canonicalVerification(),
+        agents: {
+          profiles: {
+            "agent-1": {
+              adapter: "opencode",
+              capabilities: ["TypeScript", "typescript"],
+            },
+          },
+        },
+      }),
+    );
+    expect(issues.join(" ")).toContain(
+      'duplicate capability "typescript"',
+    );
+  });
+
+  it("rejects missing capabilities", () => {
+    const issues = expectIssues(
+      validateProjectConfiguration({
+        verification: canonicalVerification(),
+        agents: {
+          profiles: { "agent-1": { adapter: "opencode" } },
+        },
+      }),
+    );
+    expect(issues.join(" ")).toContain(
+      "capabilities: must be an array of capability labels",
+    );
+  });
+
+  it("rejects unknown fields under agents and under a profile declaration", () => {
+    const issues = expectIssues(
+      validateProjectConfiguration({
+        verification: canonicalVerification(),
+        agents: {
+          default: "opencode",
+          profiles: {
+            "agent-1": {
+              adapter: "opencode",
+              capabilities: ["typescript"],
+              timeoutMs: 30000,
+            },
+          },
+        },
+      }),
+    );
+    const joined = issues.join(" ");
+    expect(joined).toContain('unknown field "default"');
+    expect(joined).toContain('unknown field "timeoutMs"');
+  });
+
+  it("rejects malformed agents and profiles structures", () => {
+    for (const agents of ["opencode", 7, [], true, null]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents,
+        }),
+      );
+      expect(issues.join(" ")).toContain("project configuration.agents: must be an object");
+    }
+
+    for (const profiles of ["opencode", 7, [], true, null]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents: { profiles },
+        }),
+      );
+      expect(issues.join(" ")).toContain(
+        "project configuration.agents.profiles: must be an object mapping profile ids to profiles",
+      );
+    }
+
+    for (const declaration of ["opencode", 7, [], true, null]) {
+      const issues = expectIssues(
+        validateProjectConfiguration({
+          verification: canonicalVerification(),
+          agents: { profiles: { "agent-1": declaration } },
+        }),
+      );
+      expect(issues.join(" ")).toContain(
+        "project configuration.agents.profiles.agent-1: must be an object",
+      );
+    }
   });
 });

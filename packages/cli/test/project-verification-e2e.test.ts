@@ -419,7 +419,9 @@ describe("M057a project-configured verification checks", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("agentic.yaml is invalid");
-    expect(result.stderr).toContain('unknown field "agents"');
+    expect(result.stderr).toContain(
+      'project configuration.agents: unknown field "default"',
+    );
   });
 
   it("verification evidence remains persisted and inspectable", async () => {

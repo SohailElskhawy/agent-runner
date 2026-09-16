@@ -1,3 +1,6 @@
+import type { AgentProfile } from "./agent-profile.js";
+import { validateAgentProfile } from "./agent-profile.js";
+
 export type VerificationCheckDefinition = {
   readonly name: string;
   readonly command: string;
@@ -6,6 +9,7 @@ export type VerificationCheckDefinition = {
 
 export type ProjectConfiguration = {
   readonly verificationChecks: readonly VerificationCheckDefinition[];
+  readonly agentProfiles: readonly AgentProfile[];
 };
 
 export type ProjectConfigurationValidationResult =
@@ -14,11 +18,16 @@ export type ProjectConfigurationValidationResult =
 
 const PROJECT_CONFIG_ROOT = "project configuration";
 
-const PROJECT_CONFIG_KEYS: ReadonlySet<string> = new Set(["verification"]);
+const PROJECT_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "verification",
+  "agents",
+]);
 
 const VERIFICATION_SECTION_KEYS: ReadonlySet<string> = new Set(["checks"]);
 
 const CHECK_KEYS: ReadonlySet<string> = new Set(["command", "args"]);
+
+const AGENTS_SECTION_KEYS: ReadonlySet<string> = new Set(["profiles"]);
 
 export function validateProjectConfiguration(
   input: unknown,
@@ -32,12 +41,20 @@ export function validateProjectConfiguration(
   const issues: string[] = [];
   rejectUnknownFields(input, PROJECT_CONFIG_KEYS, PROJECT_CONFIG_ROOT, issues);
   const verification = requireVerificationSection(input, issues);
-  if (verification === undefined || issues.length > 0) {
+  const agentProfiles = requireAgentProfiles(input, issues);
+  if (
+    verification === undefined ||
+    agentProfiles === undefined ||
+    issues.length > 0
+  ) {
     return { ok: false, issues };
   }
   return {
     ok: true,
-    value: { verificationChecks: defined(verification) },
+    value: {
+      verificationChecks: defined(verification),
+      agentProfiles: defined(agentProfiles),
+    },
   };
 }
 
@@ -53,6 +70,72 @@ function requireVerificationSection(
   }
   rejectUnknownFields(value, VERIFICATION_SECTION_KEYS, parentPath, issues);
   return requireChecks(value, issues);
+}
+
+function requireAgentProfiles(
+  source: Record<string, unknown>,
+  issues: string[],
+): readonly AgentProfile[] | undefined {
+  const parentPath = fieldPath("agents");
+  const agents = source["agents"];
+  if (agents === undefined) {
+    return [];
+  }
+  if (!isRecord(agents)) {
+    issues.push(`${parentPath}: must be an object with named agent profiles`);
+    return undefined;
+  }
+  rejectUnknownFields(agents, AGENTS_SECTION_KEYS, parentPath, issues);
+  const profilesPath = `${parentPath}.profiles`;
+  const profiles = agents["profiles"];
+  if (!isRecord(profiles)) {
+    issues.push(
+      `${profilesPath}: must be an object mapping profile ids to profiles`,
+    );
+    return undefined;
+  }
+  const agentProfiles: AgentProfile[] = [];
+  let valid = true;
+  for (const profileId of Object.keys(profiles)) {
+    if (!isNonEmptyString(profileId)) {
+      issues.push(
+        `${profilesPath}."${String(profileId)}": must be a non-empty string profile id`,
+      );
+      valid = false;
+      continue;
+    }
+    const profilePath = `${profilesPath}.${profileId}`;
+    const declaration = profiles[profileId];
+    if (!isRecord(declaration)) {
+      issues.push(
+        `${profilePath}: must be an object with adapter and capabilities`,
+      );
+      valid = false;
+      continue;
+    }
+    const candidate = toAgentProfileCandidate(profileId, declaration);
+    const validated = validateAgentProfile(candidate);
+    if (!validated.ok) {
+      for (const issue of validated.issues) {
+        issues.push(`${profilePath}: ${issue}`);
+      }
+      valid = false;
+      continue;
+    }
+    agentProfiles.push(validated.value);
+  }
+  return valid ? agentProfiles : undefined;
+}
+
+function toAgentProfileCandidate(
+  profileId: string,
+  declaration: Record<string, unknown>,
+): Record<string, unknown> {
+  const candidate: Record<string, unknown> = { ...declaration };
+  delete candidate["adapter"];
+  candidate["id"] = profileId;
+  candidate["adapterId"] = declaration["adapter"];
+  return candidate;
 }
 
 function requireChecks(
