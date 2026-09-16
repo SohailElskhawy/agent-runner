@@ -43,6 +43,7 @@ import type { AgentOutput, AgentRuntime } from "@agentic-dev-runner/agents";
 import type { GitManager, GitStatus } from "@agentic-dev-runner/git";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "./orchestration-error.js";
+import { planStageRunId } from "./plan-stage.js";
 import { parseStructuredReview } from "./review-output.js";
 
 const PLAN_REVIEW_STAGE: StageKind = "PLAN_REVIEW";
@@ -171,18 +172,22 @@ async function runPlanReviewStage(
   startedAt: IsoTimestamp,
   now: () => IsoTimestamp,
 ): Promise<PlanReviewStageOutcome> {
-  const plan = await loadReviewedPlan(options);
-  if (plan === undefined) {
+  const planResolution = await loadReviewedPlan(options);
+  if (planResolution.kind === "missing") {
     return finalize(options, stageRunId, startedAt, {
       status: "FAILED",
       failure: {
         kind: "error",
-        message: `attempt "${options.attemptId}" has no persisted PLAN output to review; run the PLAN stage first`,
+        message: planResolution.reason,
       },
     });
   }
 
-  const contextPack = await buildPlanReviewContextPack(options, plan, now);
+  const contextPack = await buildPlanReviewContextPack(
+    options,
+    planResolution.plan,
+    now,
+  );
   const agentResult = await options.agent.invoke({
     agent: agentDescriptorOf(options.agent),
     contextPack,
@@ -368,15 +373,25 @@ async function persistFinalStageRun(
 }
 
 /**
- * The PLAN output under review is always the durable one persisted by the
- * most recent SUCCEEDED PLAN stage of the same attempt (the latest fix-cycle
- * plan when earlier cycles exist): the reviewer never re-creates a plan.
- * `listStageRuns` is ordered chronologically, so the last match is the
- * latest produced plan.
+ * Resolution of the PLAN output a PLAN_REVIEW invocation reviews.
+ */
+type ReviewedPlanResolution =
+  | { readonly kind: "resolved"; readonly plan: string }
+  | { readonly kind: "missing"; readonly reason: string };
+
+/**
+ * The PLAN output under review is determined by workflow cycle identity, not
+ * by persistence row ordering. An invocation with an explicit review cycle
+ * (bounded review/fix loops) pairs with the exact deterministic PLAN StageRun
+ * of its own cycle (`planStageRunId(attemptId, cycle)`); a missing,
+ * unsuccessful, or output-less partner run fails the stage explicitly. A
+ * standalone invocation without a cycle keeps the previous behavior: it
+ * reviews the last successful PLAN of the attempt in `listStageRuns` order,
+ * so non-loop callers are unaffected. The reviewer never re-creates a plan.
  */
 async function loadReviewedPlan(
   options: PlanReviewStageOptions,
-): Promise<string | undefined> {
+): Promise<ReviewedPlanResolution> {
   let stageRuns: StageRun[];
   try {
     stageRuns = await options.store.listStageRuns(options.attemptId);
@@ -386,17 +401,44 @@ async function loadReviewedPlan(
       error,
     );
   }
+  if (options.cycle !== undefined) {
+    const partnerId = planStageRunId(options.attemptId, options.cycle);
+    const partner = stageRuns.find((stageRun) => stageRun.id === partnerId);
+    const plan = partner === undefined ? undefined : succeededPlanOutputOf(partner);
+    if (plan === undefined) {
+      return {
+        kind: "missing",
+        reason: `attempt "${options.attemptId}" has no succeeded PLAN stage run "${partnerId}" with usable plan output for review cycle ${String(options.cycle)}; run the PLAN stage of this review cycle first`,
+      };
+    }
+    return { kind: "resolved", plan };
+  }
   let latest: string | undefined;
   for (const stageRun of stageRuns) {
-    if (stageRun.stage !== PLAN_STAGE || stageRun.status !== "SUCCEEDED") {
-      continue;
-    }
-    const plan = stageRun.output?.plan;
-    if (typeof plan === "string" && plan.trim().length > 0) {
+    const plan = succeededPlanOutputOf(stageRun);
+    if (plan !== undefined) {
       latest = plan;
     }
   }
-  return latest;
+  if (latest === undefined) {
+    return {
+      kind: "missing",
+      reason: `attempt "${options.attemptId}" has no persisted PLAN output to review; run the PLAN stage first`,
+    };
+  }
+  return { kind: "resolved", plan: latest };
+}
+
+/**
+ * The durable PLAN output of a StageRun, defined only for SUCCEEDED PLAN
+ * stage runs with non-empty persisted plan text.
+ */
+function succeededPlanOutputOf(stageRun: StageRun): string | undefined {
+  if (stageRun.stage !== PLAN_STAGE || stageRun.status !== "SUCCEEDED") {
+    return undefined;
+  }
+  const plan = stageRun.output?.plan;
+  return typeof plan === "string" && plan.trim().length > 0 ? plan : undefined;
 }
 
 async function buildPlanReviewContextPack(

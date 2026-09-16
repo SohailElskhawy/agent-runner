@@ -52,10 +52,13 @@ import type {
 } from "@agentic-dev-runner/git";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "./orchestration-error.js";
+import { planStageRunId } from "./plan-stage.js";
+import { planReviewStageRunId } from "./plan-review-stage.js";
 import { parseStructuredReview } from "./review-output.js";
 
 const CODE_REVIEW_STAGE: StageKind = "CODE_REVIEW";
 const PLAN_STAGE: StageKind = "PLAN";
+const PLAN_REVIEW_STAGE: StageKind = "PLAN_REVIEW";
 const PLAN_CONTEXT_DOCUMENT_PATH = "PLAN";
 const IMPLEMENTATION_DIFF_DOCUMENT_PATH = "IMPLEMENTATION_DIFF";
 
@@ -472,11 +475,17 @@ async function digestUntrackedFile(
 }
 
 /**
- * The PLAN output is the durable one persisted by the most recent SUCCEEDED
- * PLAN stage of the same attempt (the latest fix-cycle plan when earlier
- * cycles exist). A CODE_REVIEW stage may run without a plan (workflows where
- * the review follows implementation directly), so a missing plan is not an
- * error: the review then evaluates the implementation evidence only.
+ * The PLAN context is the latest approved plan of the attempt, determined by
+ * workflow cycle identity rather than persistence row ordering: the PLAN
+ * StageRun paired (same cycle identity) with the highest-cycle SUCCEEDED
+ * PLAN_REVIEW whose decision is APPROVED. When no plan review has approved
+ * (single-cycle workflows without a plan review, or plans not yet approved),
+ * the fallback is the SUCCEEDED PLAN StageRun with the highest cycle number.
+ * Both selections are computed from explicit StageRun identities, never from
+ * `listStageRuns` row order. A CODE_REVIEW stage may run without a plan
+ * (workflows where the review follows implementation directly), so a missing
+ * plan is not an error: the review then evaluates the implementation
+ * evidence only.
  */
 async function loadPersistedPlan(
   options: CodeReviewStageOptions,
@@ -490,17 +499,84 @@ async function loadPersistedPlan(
       error,
     );
   }
+
+  let approvedCycle: number | undefined;
+  for (const stageRun of stageRuns) {
+    const cycle = approvedPlanReviewCycleOf(options.attemptId, stageRun);
+    if (cycle !== undefined && (approvedCycle === undefined || cycle > approvedCycle)) {
+      approvedCycle = cycle;
+    }
+  }
+  if (approvedCycle !== undefined) {
+    const partnerId = planStageRunId(options.attemptId, approvedCycle);
+    const partner = stageRuns.find((stageRun) => stageRun.id === partnerId);
+    const plan = partner === undefined ? undefined : succeededPlanOutputOf(partner);
+    if (plan !== undefined) {
+      return plan;
+    }
+  }
+
+  let latestCycle = -1;
   let latest: string | undefined;
   for (const stageRun of stageRuns) {
-    if (stageRun.stage !== PLAN_STAGE || stageRun.status !== "SUCCEEDED") {
+    const plan = succeededPlanOutputOf(stageRun);
+    if (plan === undefined) {
       continue;
     }
-    const plan = stageRun.output?.plan;
-    if (typeof plan === "string" && plan.trim().length > 0) {
+    const cycle = stageRunCycleOf(planStageRunId(options.attemptId), stageRun.id) ?? 0;
+    if (cycle >= latestCycle) {
+      latestCycle = cycle;
       latest = plan;
     }
   }
   return latest;
+}
+
+/**
+ * The review cycle of a SUCCEEDED PLAN_REVIEW StageRun whose structured
+ * decision is APPROVED, parsed from its deterministic StageRun identity
+ * (cycle 1 keeps the base identity; later cycles carry `_cN`).
+ */
+function approvedPlanReviewCycleOf(
+  attemptId: AttemptId,
+  stageRun: StageRun,
+): number | undefined {
+  if (
+    stageRun.stage !== PLAN_REVIEW_STAGE ||
+    stageRun.status !== "SUCCEEDED" ||
+    stageRun.output?.planReview?.decision !== "APPROVED"
+  ) {
+    return undefined;
+  }
+  return stageRunCycleOf(planReviewStageRunId(attemptId), stageRun.id);
+}
+
+/**
+ * Cycle number encoded in a stage-run identity produced by the stage run-id
+ * builders: the base identity is cycle 1, `_cN` suffixes are cycle N.
+ */
+function stageRunCycleOf(baseId: StageRunId, stageRunId: StageRunId): number | undefined {
+  if (stageRunId === baseId) {
+    return 1;
+  }
+  const cyclePrefix = `${baseId}_c`;
+  if (!stageRunId.startsWith(cyclePrefix)) {
+    return undefined;
+  }
+  const suffix = stageRunId.slice(cyclePrefix.length);
+  return /^\d+$/.test(suffix) ? Number.parseInt(suffix, 10) : undefined;
+}
+
+/**
+ * The durable PLAN output of a StageRun, defined only for SUCCEEDED PLAN
+ * stage runs with non-empty persisted plan text.
+ */
+function succeededPlanOutputOf(stageRun: StageRun): string | undefined {
+  if (stageRun.stage !== PLAN_STAGE || stageRun.status !== "SUCCEEDED") {
+    return undefined;
+  }
+  const plan = stageRun.output?.plan;
+  return typeof plan === "string" && plan.trim().length > 0 ? plan : undefined;
 }
 
 /**
