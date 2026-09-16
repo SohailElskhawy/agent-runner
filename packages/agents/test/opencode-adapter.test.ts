@@ -261,6 +261,20 @@ describe("OpenCodeAdapter", () => {
     expect(report.argv).not.toContain("--model");
   });
 
+  it("renders the stage instruction into the provider prompt", async () => {
+    const adapter = makeAdapter();
+    const instruction = "STAGE PLAN — planning only. Produce a plan, not code.";
+    const result = await adapter.invoke(makeInvocation({ instruction }));
+
+    expect(result.kind).toBe("success");
+    const report = JSON.parse(
+      result.kind === "success" ? (result.output.stdout ?? "") : "",
+    ) as FakeAgentReport;
+    expect(report.argv.at(-1)).toContain(instruction);
+    expect(report.argv.at(-1)).toContain('Read the task context pack at "');
+    expect(report.contextContent).toBe(stableStringify(contextPack));
+  });
+
   it("removes temp context artifacts after a successful invocation", async () => {
     const before = countContextDirs();
     const adapter = makeAdapter();

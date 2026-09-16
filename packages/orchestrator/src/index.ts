@@ -41,3 +41,10 @@ export {
   type CrashRecoveryOptions,
   type RecoveryActiveStatus,
 } from "./crash-recovery.js";
+export {
+  PLAN_STAGE_INSTRUCTION,
+  executePlanStage,
+  planStageRunId,
+  type PlanStageOptions,
+  type PlanStageOutcome,
+} from "./plan-stage.js";

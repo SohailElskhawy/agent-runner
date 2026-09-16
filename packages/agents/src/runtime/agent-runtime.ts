@@ -13,6 +13,12 @@ export type AgentInvocation = {
   readonly worktreePath: string;
   readonly timeoutMs: number;
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Provider-independent stage directive (for example, the PLAN stage asks
+   * for an implementation plan instead of source implementation). Adapters
+   * decide how to render this instruction inside their provider prompt.
+   */
+  readonly instruction?: string | undefined;
 };
 
 export interface AgentRuntime {

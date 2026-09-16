@@ -18,6 +18,7 @@ import {
   type ProjectId,
   type StageRun,
   type StageRunFailure,
+  type StageRunOutput,
   type Task,
   type TaskId,
   type TaskPriority,
@@ -275,16 +276,17 @@ export class SqliteRunnerStore implements RunnerStore {
     try {
       db.prepare(
         `INSERT INTO stage_runs (
-           id, attempt_id, stage, status, started_at, finished_at, failure_json
+           id, attempt_id, stage, status, started_at, finished_at, failure_json, output_json
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            attempt_id = excluded.attempt_id,
            stage = excluded.stage,
            status = excluded.status,
            started_at = excluded.started_at,
            finished_at = excluded.finished_at,
-           failure_json = excluded.failure_json`,
+           failure_json = excluded.failure_json,
+           output_json = excluded.output_json`,
       ).run(
         stageRun.id,
         stageRun.attemptId,
@@ -295,6 +297,9 @@ export class SqliteRunnerStore implements RunnerStore {
         stageRun.failure === undefined
           ? null
           : JSON.stringify(stageRun.failure),
+        stageRun.output === undefined
+          ? null
+          : JSON.stringify(stageRun.output),
       );
     } catch (error) {
       if (isForeignKeyViolation(error)) {
@@ -524,6 +529,7 @@ function stageRunFromRow(row: Record<string, unknown>): StageRun {
   const startedAt = optionalTextColumn(row, "started_at");
   const finishedAt = optionalTextColumn(row, "finished_at");
   const failure = optionalJsonColumn<StageRunFailure>(row, "failure_json");
+  const output = optionalJsonColumn<StageRunOutput>(row, "output_json");
 
   return {
     id: textColumn(row, "id"),
@@ -537,6 +543,7 @@ function stageRunFromRow(row: Record<string, unknown>): StageRun {
     ...(startedAt === null ? {} : { startedAt }),
     ...(finishedAt === null ? {} : { finishedAt }),
     ...(failure === null ? {} : { failure }),
+    ...(output === null ? {} : { output }),
   };
 }
 

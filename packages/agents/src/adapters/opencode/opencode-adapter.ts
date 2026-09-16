@@ -80,7 +80,7 @@ export class OpenCodeAdapter implements AgentRuntime {
           ...(this.options.launcherArgs ?? []),
           ...buildRunArgs({
             model: invocation.agent.model ?? this.options.model,
-            prompt: buildPrompt(contextPackPath),
+            prompt: buildPrompt(contextPackPath, invocation.instruction),
           }),
         ],
         cwd: invocation.worktreePath,
@@ -131,8 +131,12 @@ function buildRunArgs(input: {
   return args;
 }
 
-function buildPrompt(contextPackPath: string): string {
-  return `Read the task context pack at "${contextPackPath}" and complete the task it describes.`;
+function buildPrompt(
+  contextPackPath: string,
+  instruction?: string | undefined,
+): string {
+  const base = `Read the task context pack at "${contextPackPath}" and complete the task it describes.`;
+  return instruction === undefined ? base : `${base} ${instruction}`;
 }
 
 function normalizeResult(result: ProcessResult): AgentExecutionResult {

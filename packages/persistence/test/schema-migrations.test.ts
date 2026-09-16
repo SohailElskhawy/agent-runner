@@ -51,6 +51,15 @@ function probeChain(): readonly SchemaMigration[] {
         );
       },
     },
+    {
+      version: 4,
+      name: "test-only-far-future-migration-probe",
+      up: (db) => {
+        db.exec(
+          "INSERT INTO migration_probe (marker) VALUES ('v4-applied')",
+        );
+      },
+    },
   ];
 }
 
@@ -58,7 +67,7 @@ function failingProbeChain(): readonly SchemaMigration[] {
   return [
     ...probeChain(),
     {
-      version: 4,
+      version: 5,
       name: "test-only-invalid-sql",
       up: (db) => {
         db.exec("CREATE TABLE definitely_broken (");
@@ -142,7 +151,7 @@ describe("SQLite schema migrations", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("initializes a fresh database at schema version 2", async () => {
+  it("initializes a fresh database at the latest schema version", async () => {
     await store.initialize();
     await store.putProject(createProject());
     await store.close();
@@ -150,10 +159,15 @@ describe("SQLite schema migrations", () => {
     expect(readMigrationRows(dbPath)).toEqual([
       { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
       { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
+      {
+        version: 3,
+        name: "add-stage-run-output",
+        appliedAt: expect.any(String),
+      },
     ]);
   });
 
-  it("upgrades an existing v1 database to v2 with existing data intact", async () => {
+  it("upgrades an existing v1 database to the latest version with existing data intact", async () => {
     const legacyProject = createProject({ name: "legacy-project" });
     const legacyTask = createTask();
     const legacyAttempt = createAttempt();
@@ -188,6 +202,11 @@ describe("SQLite schema migrations", () => {
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
         { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
+        {
+          version: 3,
+          name: "add-stage-run-output",
+          appliedAt: expect.any(String),
+        },
       ]);
       expect(await opened.getProject(legacyProject.id)).toEqual(legacyProject);
       expect(await opened.getTask(legacyTask.id)).toEqual(legacyTask);
@@ -227,6 +246,11 @@ describe("SQLite schema migrations", () => {
           {
             version: 2,
             name: "add-stage-runs",
+            appliedAt: expect.any(String),
+          },
+          {
+            version: 3,
+            name: "add-stage-run-output",
             appliedAt: expect.any(String),
           },
         ]);
@@ -271,8 +295,13 @@ describe("SQLite schema migrations", () => {
           name: "test-only-seed-migration-probe",
           appliedAt: expect.any(String),
         },
+        {
+          version: 4,
+          name: "test-only-far-future-migration-probe",
+          appliedAt: expect.any(String),
+        },
       ]);
-      expect(readProbeMarkers(dbPath)).toEqual(["v3-applied"]);
+      expect(readProbeMarkers(dbPath)).toEqual(["v3-applied", "v4-applied"]);
       expect(await upgraded.getProject(legacy.id)).toEqual(legacy);
       expect(await upgraded.getTask("M001")).toEqual(createTask());
     });
@@ -310,9 +339,9 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(SchemaVersionTooNewError);
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
-    expect((rejection as Error).message).toContain("schema version 3");
+    expect((rejection as Error).message).toContain("schema version 4");
     expect((rejection as Error).message).toContain(
-      "supported schema version 2",
+      "supported schema version 3",
     );
   });
 
@@ -324,7 +353,7 @@ describe("SQLite schema migrations", () => {
           migrations: probeChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(3);
+      ).toBe(4);
 
       expect(() =>
         migrateSchema(db, { migrations: [initialSchemaMigration()] }),
@@ -362,7 +391,7 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(PersistenceError);
     expect((rejection as Error).message).toBe(
-      'Schema migration "test-only-invalid-sql" (version 4) failed',
+      'Schema migration "test-only-invalid-sql" (version 5) failed',
     );
     expect(readMigrationRows(dbPath)).toEqual([
       { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
@@ -418,6 +447,11 @@ describe("SQLite schema migrations", () => {
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
         { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
+        {
+          version: 3,
+          name: "add-stage-run-output",
+          appliedAt: expect.any(String),
+        },
       ]);
     });
   });
@@ -430,13 +464,13 @@ describe("SQLite schema migrations", () => {
           migrations: probeChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(3);
+      ).toBe(4);
       expect(
         migrateSchema(db, {
           migrations: probeChain(),
           now: () => "2026-01-02T00:00:00.000Z",
         }),
-      ).toBe(3);
+      ).toBe(4);
     } finally {
       db.close();
     }
@@ -457,8 +491,13 @@ describe("SQLite schema migrations", () => {
         name: "test-only-seed-migration-probe",
         appliedAt: FIXED_CLOCK,
       },
+      {
+        version: 4,
+        name: "test-only-far-future-migration-probe",
+        appliedAt: FIXED_CLOCK,
+      },
     ]);
-    expect(readProbeMarkers(dbPath)).toEqual(["v3-applied"]);
+    expect(readProbeMarkers(dbPath)).toEqual(["v3-applied", "v4-applied"]);
   });
 
   it("bootstraps a pre-migration database and preserves its data", async () => {
@@ -485,6 +524,11 @@ describe("SQLite schema migrations", () => {
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
         { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
+        {
+          version: 3,
+          name: "add-stage-run-output",
+          appliedAt: expect.any(String),
+        },
       ]);
       expect(await opened.getProject("proj-1")).toEqual({
         id: "proj-1",

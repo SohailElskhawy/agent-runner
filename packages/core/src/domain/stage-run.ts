@@ -28,6 +28,18 @@ export type StageRunFailure = {
   message?: string;
 };
 
+/**
+ * Durable stage output. A stage that produced a usable result persists that
+ * result here (for `PLAN`, the plan as plain text); a stage that terminated
+ * unsuccessfully preserves the agent's normalized stdout/stderr so failure
+ * information survives process termination.
+ */
+export type StageRunOutput = {
+  readonly plan?: string | undefined;
+  readonly stdout?: string | undefined;
+  readonly stderr?: string | undefined;
+};
+
 export type StageRun = {
   id: StageRunId;
   attemptId: AttemptId;
@@ -36,4 +48,5 @@ export type StageRun = {
   startedAt?: IsoTimestamp;
   finishedAt?: IsoTimestamp;
   failure?: StageRunFailure;
+  output?: StageRunOutput;
 };

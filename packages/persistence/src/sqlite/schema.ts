@@ -98,6 +98,16 @@ export function applyStageRunsSchema(db: SchemaMigrationDatabase): void {
   }
 }
 
+const SCHEMA_V3_STATEMENTS = [
+  `ALTER TABLE stage_runs ADD COLUMN output_json TEXT`,
+];
+
+export function applyStageRunOutputSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V3_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -108,6 +118,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 2,
     name: "add-stage-runs",
     up: applyStageRunsSchema,
+  },
+  {
+    version: 3,
+    name: "add-stage-run-output",
+    up: applyStageRunOutputSchema,
   },
 ];
 

@@ -93,6 +93,7 @@ export function createStageRun(overrides?: {
   startedAt?: string;
   finishedAt?: string;
   failure?: StageRun["failure"];
+  output?: StageRun["output"];
 }): StageRun {
   const startedAt = overrides?.startedAt ?? "2026-01-01T00:00:05.000Z";
   const finishedAt = overrides?.finishedAt ?? "2026-01-01T00:00:35.000Z";
@@ -106,5 +107,6 @@ export function createStageRun(overrides?: {
     ...(overrides?.failure === undefined
       ? {}
       : { failure: overrides.failure }),
+    ...(overrides?.output === undefined ? {} : { output: overrides.output }),
   };
 }

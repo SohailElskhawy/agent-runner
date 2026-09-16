@@ -244,6 +244,23 @@ describe("SqliteRunnerStore", () => {
 
     const stageRun = createStageRun({
       failure: { kind: "timeout", message: "stage exceeded 30s" },
+      output: { plan: "Step 1. Do the thing.\nStep 2. Verify the thing." },
+    });
+    await store.putStageRun(stageRun);
+
+    expect(await store.listStageRuns(stageRun.attemptId)).toEqual([stageRun]);
+  });
+
+  it("round-trips a failed stage run that preserves agent output", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    await store.putTask(createTask());
+    await store.putAttempt(createAttempt());
+
+    const stageRun = createStageRun({
+      status: "FAILED",
+      failure: { kind: "error", message: "agent failed: crashed" },
+      output: { stdout: "partial plan", stderr: "boom" },
     });
     await store.putStageRun(stageRun);
 
