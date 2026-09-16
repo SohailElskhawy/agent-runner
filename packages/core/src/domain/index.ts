@@ -1,3 +1,4 @@
+export * from "./agent-profile.js";
 export * from "./ids.js";
 export * from "./timestamp.js";
 export * from "./project.js";
