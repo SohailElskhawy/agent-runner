@@ -42,6 +42,13 @@ export {
   type RecoveryActiveStatus,
 } from "./crash-recovery.js";
 export {
+  CODE_REVIEW_STAGE_INSTRUCTION,
+  codeReviewStageRunId,
+  executeCodeReviewStage,
+  type CodeReviewStageOptions,
+  type CodeReviewStageOutcome,
+} from "./code-review-stage.js";
+export {
   PLAN_STAGE_INSTRUCTION,
   executePlanStage,
   planStageRunId,

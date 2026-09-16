@@ -183,6 +183,16 @@ export class NodeGitManager implements GitManager {
     return result.stdout;
   }
 
+  async getDiffAgainstRevision(
+    cwd: string,
+    revision: string,
+  ): Promise<string> {
+    const args = ["diff", revision];
+    this.requireNonEmpty(revision, "getDiffAgainstRevision", "revision", args);
+    const result = await this.runGit(cwd, args, "getDiffAgainstRevision");
+    return result.stdout;
+  }
+
   async commitStaged(cwd: string, message: string): Promise<string> {
     const args = ["commit", "-m", message];
     this.requireNonEmpty(message, "commitStaged", "commit message", args);

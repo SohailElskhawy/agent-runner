@@ -218,6 +218,39 @@ describe("NodeGitManager", () => {
     expect(diff).toContain("new file with spaces.txt");
   });
 
+  it("returns the worktree delta against a revision, including committed changes", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    const baseRevision = await git.resolveHeadRevision(worktreePath);
+
+    expect(await git.getDiffAgainstRevision(worktreePath, baseRevision)).toBe(
+      "",
+    );
+
+    writeFileSync(join(worktreePath, "README.md"), "staged change\n");
+    await git.stageAll(worktreePath);
+    const stagedDiff = await git.getDiffAgainstRevision(
+      worktreePath,
+      baseRevision,
+    );
+    expect(stagedDiff).toContain("README.md");
+    expect(stagedDiff).toContain("staged change");
+
+    await git.commitStaged(worktreePath, "task M001: apply change");
+    const committedDiff = await git.getDiffAgainstRevision(
+      worktreePath,
+      baseRevision,
+    );
+    expect(committedDiff).toContain("README.md");
+    expect(committedDiff).toContain("staged change");
+
+    await expect(
+      git.getDiffAgainstRevision(worktreePath, ""),
+    ).rejects.toThrow(GitError);
+  });
+
   it("parses staged rename records with the previous path", async () => {
     const repo = await createRepository("repo");
     await runFixtureGit(repo, ["mv", "README.md", "renamed file.md"]);

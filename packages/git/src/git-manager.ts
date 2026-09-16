@@ -41,6 +41,7 @@ export interface GitManager {
   status(cwd: string): Promise<GitStatus>;
   stageAll(cwd: string): Promise<void>;
   getStagedDiff(cwd: string): Promise<string>;
+  getDiffAgainstRevision(cwd: string, revision: string): Promise<string>;
   commitStaged(cwd: string, message: string): Promise<string>;
   integrateBranch(cwd: string, branchName: string): Promise<GitIntegrationResult>;
   removeWorktree(

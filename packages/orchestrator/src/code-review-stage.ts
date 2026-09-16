@@ -1,25 +1,29 @@
 /**
- * PLAN_REVIEW stage execution.
+ * CODE_REVIEW stage execution.
  *
- * Executes the `PLAN_REVIEW` stage of a workflow attempt by reviewing the
- * durable PLAN output persisted by the PLAN stage of the same attempt. The
- * reviewer agent is handed the persisted plan inside a fresh ContextPack and
- * an explicit review-only instruction; it is never asked to create a plan or
- * implement anything.
+ * Executes the `CODE_REVIEW` stage of a workflow attempt by having the
+ * selected provider-independent AgentRuntime evaluate the actual
+ * implementation delta of that attempt. The reviewer is handed the real
+ * Git change evidence (the unified diff of the task worktree against the
+ * attempt's base revision, plus the contents of untracked new files) and,
+ * when one was persisted by the PLAN stage of the same attempt, the durable
+ * plan. The reviewer is an untrusted worker: it receives an explicit
+ * review-only instruction and must never fix, implement, commit, or
+ * integrate anything.
  *
  * The stage is provider-independent: the selected AgentRuntime is invoked
  * through the existing runtime contract, and there is no OpenCode/Codex
  * branching and no CLI involvement. The agent must answer with a structured
  * review result (decision `APPROVED` or `CHANGES_REQUIRED`, plus actionable
  * feedback when changes are required). Malformed review output, agent
- * failures, timeouts, cancellations, and worktree mutations all produce a
- * failed PLAN_REVIEW-stage outcome.
+ * failures, timeouts, cancellations, and worktree mutations caused during
+ * the review all produce a failed CODE_REVIEW-stage outcome.
  *
  * This executor never transitions task state, never decides the next
- * workflow stage, and never verifies, commits, or integrates: the runner
- * owns authoritative workflow state, so a completed review is persisted as a
- * terminal StageRun whose structured result later stages and the workflow
- * engine can consume. It is a stage execution primitive only.
+ * workflow stage, never runs verification, and never fixes or integrates:
+ * the runner owns authoritative workflow state, so a completed review is
+ * persisted as a terminal StageRun whose structured result later stages and
+ * the workflow engine can consume. It is a stage execution primitive only.
  */
 
 import { readFile } from "node:fs/promises";
@@ -28,8 +32,8 @@ import type {
   AttemptId,
   ContextPack,
   IsoTimestamp,
-  PlanReviewDecision,
-  PlanReviewResult,
+  ReviewDecision,
+  ReviewResult,
   StageKind,
   StageRun,
   StageRunFailure,
@@ -40,21 +44,26 @@ import type {
 } from "@agentic-dev-runner/core";
 import { buildContextPack } from "@agentic-dev-runner/context";
 import type { AgentOutput, AgentRuntime } from "@agentic-dev-runner/agents";
-import type { GitManager, GitStatus } from "@agentic-dev-runner/git";
+import type {
+  GitManager,
+  GitStatus,
+  GitStatusEntry,
+} from "@agentic-dev-runner/git";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "./orchestration-error.js";
 import { parseStructuredReview } from "./review-output.js";
 
-const PLAN_REVIEW_STAGE: StageKind = "PLAN_REVIEW";
+const CODE_REVIEW_STAGE: StageKind = "CODE_REVIEW";
 const PLAN_STAGE: StageKind = "PLAN";
 const PLAN_CONTEXT_DOCUMENT_PATH = "PLAN";
+const IMPLEMENTATION_DIFF_DOCUMENT_PATH = "IMPLEMENTATION_DIFF";
 
-export type PlanReviewStageOutcome =
+export type CodeReviewStageOutcome =
   | {
       readonly kind: "completed";
       readonly attemptId: AttemptId;
       readonly stageRun: StageRun;
-      readonly decision: PlanReviewDecision;
+      readonly decision: ReviewDecision;
       readonly feedback: string | undefined;
       readonly durationMs: number;
     }
@@ -66,7 +75,7 @@ export type PlanReviewStageOutcome =
       readonly durationMs: number;
     };
 
-export type PlanReviewStageOptions = {
+export type CodeReviewStageOptions = {
   readonly store: RunnerStore;
   readonly git: GitManager;
   readonly agent: AgentRuntime;
@@ -81,38 +90,41 @@ export type PlanReviewStageOptions = {
 
 /**
  * The review-only stage instruction handed to the agent. It explicitly
- * restricts the agent to evaluating the persisted plan provided in the
- * context pack and forbids any repository work; adapters render it inside
- * their provider-specific prompt.
+ * restricts the agent to evaluating the implementation evidence provided in
+ * the context pack and forbids any repository or Git work; adapters render
+ * it inside their provider-specific prompt.
  */
-export const PLAN_REVIEW_STAGE_INSTRUCTION = [
-  "STAGE PLAN_REVIEW — review only, no implementation.",
-  "Evaluate the implementation plan provided in the context pack against the",
-  "task objective, acceptance criteria, scope, project rules (AGENTS.md), and",
-  "architecture guidance.",
-  "Do NOT implement source code. Do NOT create, modify, or delete any files.",
-  "Do NOT run builds, tests, or Git commands.",
+export const CODE_REVIEW_STAGE_INSTRUCTION = [
+  "STAGE CODE_REVIEW — review only, no implementation.",
+  "Evaluate the implementation changes provided in the context pack against",
+  "the task objective, acceptance criteria, scope, project rules (AGENTS.md),",
+  "and architecture guidance, and against the plan when one is provided.",
+  "Identify correctness, scope, architecture, safety, and verification",
+  "concerns in the implementation.",
+  "Do NOT fix issues. Do NOT implement source code. Do NOT create, modify,",
+  "or delete any files. Do NOT run builds, tests, or Git commands. Do NOT",
+  "create commits or perform Git integration.",
   'Reply with a single JSON object and nothing else: {"decision":"APPROVED"}',
-  'when the plan is acceptable, or {"decision":"CHANGES_REQUIRED",',
+  'when the implementation is acceptable, or {"decision":"CHANGES_REQUIRED",',
   '"feedback":"<actionable feedback describing the required changes>"} when',
-  "the plan must be revised.",
+  "changes are required.",
 ].join(" ");
 
-export function planReviewStageRunId(attemptId: AttemptId): StageRunId {
-  return `stage_${attemptId}_PLAN_REVIEW`;
+export function codeReviewStageRunId(attemptId: AttemptId): StageRunId {
+  return `stage_${attemptId}_CODE_REVIEW`;
 }
 
-export async function executePlanReviewStage(
-  options: PlanReviewStageOptions,
-): Promise<PlanReviewStageOutcome> {
+export async function executeCodeReviewStage(
+  options: CodeReviewStageOptions,
+): Promise<CodeReviewStageOutcome> {
   validateOptions(options);
   const now = options.now ?? defaultClock;
-  const stageRunId = planReviewStageRunId(options.attemptId);
+  const stageRunId = codeReviewStageRunId(options.attemptId);
   const startedAt = now();
   const running: StageRun = {
     id: stageRunId,
     attemptId: options.attemptId,
-    stage: PLAN_REVIEW_STAGE,
+    stage: CODE_REVIEW_STAGE,
     status: "RUNNING",
     startedAt,
   };
@@ -120,7 +132,7 @@ export async function executePlanReviewStage(
     await options.store.putStageRun(running);
   } catch (error) {
     throw new OrchestrationError(
-      `failed to persist the RUNNING PLAN_REVIEW stage run "${stageRunId}" for attempt "${options.attemptId}": ${describeError(error)}`,
+      `failed to persist the RUNNING CODE_REVIEW stage run "${stageRunId}" for attempt "${options.attemptId}": ${describeError(error)}`,
       error,
     );
   }
@@ -130,48 +142,54 @@ export async function executePlanReviewStage(
       status: "CANCELLED",
       failure: {
         kind: "cancelled",
-        message: "the PLAN_REVIEW stage was cancelled",
+        message: "the CODE_REVIEW stage was cancelled",
       },
     });
   }
 
   try {
-    return await runPlanReviewStage(options, stageRunId, startedAt, now);
+    return await runCodeReviewStage(options, stageRunId, startedAt, now);
   } catch (error) {
     return finalize(options, stageRunId, startedAt, {
       status: "FAILED",
       failure: {
         kind: "error",
-        message: `PLAN_REVIEW stage failed: ${describeError(error)}`,
+        message: `CODE_REVIEW stage failed: ${describeError(error)}`,
       },
     });
   }
 }
 
-async function runPlanReviewStage(
-  options: PlanReviewStageOptions,
+async function runCodeReviewStage(
+  options: CodeReviewStageOptions,
   stageRunId: StageRunId,
   startedAt: IsoTimestamp,
   now: () => IsoTimestamp,
-): Promise<PlanReviewStageOutcome> {
-  const plan = await loadReviewedPlan(options);
-  if (plan === undefined) {
+): Promise<CodeReviewStageOutcome> {
+  const baseline = await captureWorktreeBaseline(options);
+  const evidence = await loadImplementationEvidence(options, baseline.status);
+  if (evidence.length === 0) {
     return finalize(options, stageRunId, startedAt, {
       status: "FAILED",
       failure: {
         kind: "error",
-        message: `attempt "${options.attemptId}" has no persisted PLAN output to review; run the PLAN stage first`,
+        message: `attempt "${options.attemptId}" has no implementation changes to review against base revision ${options.baseRevision}; run the IMPLEMENT stage first`,
       },
     });
   }
 
-  const contextPack = await buildPlanReviewContextPack(options, plan, now);
+  const contextPack = await buildCodeReviewContextPack(
+    options,
+    evidence,
+    baseline.plan,
+    now,
+  );
   const agentResult = await options.agent.invoke({
     agent: agentDescriptorOf(options.agent),
     contextPack,
     worktreePath: options.worktreePath,
     timeoutMs: options.timeoutMs,
-    instruction: PLAN_REVIEW_STAGE_INSTRUCTION,
+    instruction: CODE_REVIEW_STAGE_INSTRUCTION,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 
@@ -206,7 +224,7 @@ async function runPlanReviewStage(
     });
   }
 
-  const review = parseStructuredReview(agentResult.output, PLAN_REVIEW_STAGE);
+  const review = parseStructuredReview(agentResult.output, CODE_REVIEW_STAGE);
   if (typeof review === "string") {
     return finalizeWithAgentOutput(options, stageRunId, startedAt, {
       status: "FAILED",
@@ -215,7 +233,7 @@ async function runPlanReviewStage(
     });
   }
 
-  const mutation = await detectWorktreeMutation(options);
+  const mutation = await detectWorktreeMutation(options, baseline);
   if (mutation !== undefined) {
     return finalize(options, stageRunId, startedAt, {
       status: "FAILED",
@@ -239,16 +257,16 @@ type Finalization = {
 };
 
 async function finalize(
-  options: PlanReviewStageOptions,
+  options: CodeReviewStageOptions,
   stageRunId: StageRunId,
   startedAt: IsoTimestamp,
   finalization: Finalization,
-): Promise<PlanReviewStageOutcome> {
+): Promise<CodeReviewStageOutcome> {
   const finishedAt = (options.now ?? defaultClock)();
   const stageRun: StageRun = {
     id: stageRunId,
     attemptId: options.attemptId,
-    stage: PLAN_REVIEW_STAGE,
+    stage: CODE_REVIEW_STAGE,
     status: finalization.status,
     startedAt,
     finishedAt,
@@ -264,7 +282,7 @@ async function finalize(
     kind: "failed",
     attemptId: options.attemptId,
     stageRun,
-    reason: finalization.failure?.message ?? "PLAN_REVIEW stage failed",
+    reason: finalization.failure?.message ?? "CODE_REVIEW stage failed",
     durationMs: durationBetween(startedAt, finishedAt),
   };
 }
@@ -275,22 +293,22 @@ async function finalize(
  * for later workflow-engine decisions.
  */
 async function finalizeCompleted(
-  options: PlanReviewStageOptions,
+  options: CodeReviewStageOptions,
   stageRunId: StageRunId,
   startedAt: IsoTimestamp,
-  review: PlanReviewResult,
+  review: ReviewResult,
   rawOutput: string | undefined,
-): Promise<PlanReviewStageOutcome> {
+): Promise<CodeReviewStageOutcome> {
   const finishedAt = (options.now ?? defaultClock)();
   const stageRun: StageRun = {
     id: stageRunId,
     attemptId: options.attemptId,
-    stage: PLAN_REVIEW_STAGE,
+    stage: CODE_REVIEW_STAGE,
     status: "SUCCEEDED",
     startedAt,
     finishedAt,
     output: {
-      planReview: review,
+      codeReview: review,
       ...(rawOutput === undefined ? {} : { stdout: rawOutput }),
     },
   };
@@ -310,7 +328,7 @@ async function finalizeCompleted(
  * in the StageRun output so failure information stays durable.
  */
 async function finalizeWithAgentOutput(
-  options: PlanReviewStageOptions,
+  options: CodeReviewStageOptions,
   stageRunId: StageRunId,
   startedAt: IsoTimestamp,
   input: {
@@ -318,7 +336,7 @@ async function finalizeWithAgentOutput(
     readonly failure: StageRunFailure;
     readonly output: AgentOutput;
   },
-): Promise<PlanReviewStageOutcome> {
+): Promise<CodeReviewStageOutcome> {
   const stdout = input.output.stdout;
   const stderr = input.output.stderr;
   const hasAgentOutput = stdout !== undefined || stderr !== undefined;
@@ -337,25 +355,69 @@ async function finalizeWithAgentOutput(
 }
 
 async function persistFinalStageRun(
-  options: PlanReviewStageOptions,
+  options: CodeReviewStageOptions,
   stageRun: StageRun,
 ): Promise<void> {
   try {
     await options.store.putStageRun(stageRun);
   } catch (error) {
     throw new OrchestrationError(
-      `failed to persist the ${stageRun.status} PLAN_REVIEW stage run "${stageRun.id}" for attempt "${stageRun.attemptId}": ${describeError(error)}`,
+      `failed to persist the ${stageRun.status} CODE_REVIEW stage run "${stageRun.id}" for attempt "${stageRun.attemptId}": ${describeError(error)}`,
       error,
     );
   }
 }
 
 /**
- * The PLAN output under review is always the durable one persisted by the
- * PLAN stage of the same attempt: the reviewer never re-creates a plan.
+ * Pre-invocation worktree snapshot. It supplies the implementation evidence
+ * (tracked delta plus untracked files) and the mutation baseline the review
+ * is later compared against: unlike the plan stages, a CODE_REVIEW worktree
+ * legitimately contains the attempt's implementation changes and may have
+ * commits on top of the base revision, so mutation detection cannot assume a
+ * clean worktree at the base revision.
  */
-async function loadReviewedPlan(
-  options: PlanReviewStageOptions,
+type WorktreeBaseline = {
+  readonly status: GitStatus;
+  readonly headRevision: string;
+  readonly plan: string | undefined;
+};
+
+async function captureWorktreeBaseline(
+  options: CodeReviewStageOptions,
+): Promise<WorktreeBaseline> {
+  let status: GitStatus;
+  try {
+    status = await options.git.status(options.worktreePath);
+  } catch (error) {
+    throw new OrchestrationError(
+      `failed to inspect the task worktree before the CODE_REVIEW stage for attempt "${options.attemptId}": ${describeError(error)}`,
+      error,
+    );
+  }
+  let headRevision: string;
+  try {
+    headRevision = await options.git.resolveHeadRevision(options.worktreePath);
+  } catch (error) {
+    throw new OrchestrationError(
+      `failed to resolve the task worktree revision before the CODE_REVIEW stage for attempt "${options.attemptId}": ${describeError(error)}`,
+      error,
+    );
+  }
+  return {
+    status,
+    headRevision,
+    plan: await loadPersistedPlan(options),
+  };
+}
+
+/**
+ * The PLAN output is the durable one persisted by the PLAN stage of the same
+ * attempt. A CODE_REVIEW stage may run without a plan (workflows where the
+ * review follows implementation directly), so a missing plan is not an
+ * error: the review then evaluates the implementation evidence only.
+ */
+async function loadPersistedPlan(
+  options: CodeReviewStageOptions,
 ): Promise<string | undefined> {
   let stageRuns: StageRun[];
   try {
@@ -378,9 +440,61 @@ async function loadReviewedPlan(
   return undefined;
 }
 
-async function buildPlanReviewContextPack(
-  options: PlanReviewStageOptions,
-  plan: string,
+/**
+ * Deterministic implementation evidence for the attempt: the real unified
+ * diff of the task worktree against the attempt's base revision (covering
+ * committed, staged, and unstaged tracked changes) plus the full contents of
+ * untracked new files. The reviewer evaluates this evidence, never an
+ * agent-written change summary.
+ */
+async function loadImplementationEvidence(
+  options: CodeReviewStageOptions,
+  status: GitStatus,
+): Promise<string> {
+  let diff: string;
+  try {
+    diff = await options.git.getDiffAgainstRevision(
+      options.worktreePath,
+      options.baseRevision,
+    );
+  } catch (error) {
+    throw new OrchestrationError(
+      `failed to load the implementation diff for attempt "${options.attemptId}" against base revision ${options.baseRevision}: ${describeError(error)}`,
+      error,
+    );
+  }
+  const untrackedFiles = status.entries.filter((entry) => isUntracked(entry));
+  const sections: string[] = [];
+  if (diff.trim().length > 0) {
+    sections.push(diff.trimEnd());
+  }
+  for (const entry of untrackedFiles) {
+    sections.push(
+      `NEW UNTRACKED FILE: ${entry.path}\n${await readUntrackedFileContent(options, entry.path)}`,
+    );
+  }
+  return sections.join("\n\n");
+}
+
+function isUntracked(entry: GitStatusEntry): boolean {
+  return entry.indexStatus === "?" && entry.worktreeStatus === "?";
+}
+
+async function readUntrackedFileContent(
+  options: CodeReviewStageOptions,
+  path: string,
+): Promise<string> {
+  try {
+    return await readFile(join(options.worktreePath, path), "utf8");
+  } catch (error) {
+    return `(content unavailable: ${describeError(error)})`;
+  }
+}
+
+async function buildCodeReviewContextPack(
+  options: CodeReviewStageOptions,
+  evidence: string,
+  plan: string | undefined,
   now: () => IsoTimestamp,
 ): Promise<ContextPack> {
   let agentsMarkdown: string;
@@ -401,9 +515,17 @@ async function buildPlanReviewContextPack(
     agentsMarkdownPath: "AGENTS.md",
     documents: [
       {
-        path: PLAN_CONTEXT_DOCUMENT_PATH,
-        content: plan,
+        path: IMPLEMENTATION_DIFF_DOCUMENT_PATH,
+        content: evidence,
       },
+      ...(plan === undefined
+        ? []
+        : [
+            {
+              path: PLAN_CONTEXT_DOCUMENT_PATH,
+              content: plan,
+            },
+          ]),
     ],
     baseRevision: options.baseRevision,
     createdAt: now(),
@@ -411,36 +533,53 @@ async function buildPlanReviewContextPack(
 }
 
 /**
- * A PLAN_REVIEW invocation must not change repository contents. Detected
- * through the existing Git change-inspection abstractions: uncommitted
- * changes (including staged and untracked files) and commits created on top
- * of the base revision both fail the stage.
+ * A CODE_REVIEW invocation must not change repository contents. Detected by
+ * comparing the worktree state after the invocation with the pre-invocation
+ * baseline: any newly uncommitted change (including staged and untracked
+ * files) or any commit created during the review fails the stage.
  */
 async function detectWorktreeMutation(
-  options: PlanReviewStageOptions,
+  options: CodeReviewStageOptions,
+  baseline: WorktreeBaseline,
 ): Promise<string | undefined> {
   let status: GitStatus;
   try {
     status = await options.git.status(options.worktreePath);
   } catch (error) {
-    return `failed to inspect the task worktree after the PLAN_REVIEW invocation: ${describeError(error)}`;
+    return `failed to inspect the task worktree after the CODE_REVIEW invocation: ${describeError(error)}`;
   }
-  if (!status.clean) {
-    const changedPaths = status.entries
-      .map((entry) => entry.path)
-      .join(", ");
-    return `the PLAN_REVIEW invocation modified the task worktree (changed paths: ${changedPaths}); a review stage must not modify repository files`;
+  if (!statusesEqual(baseline.status, status)) {
+    const changedPaths = status.entries.map((entry) => entry.path).join(", ");
+    return `the CODE_REVIEW invocation modified the task worktree (changed paths: ${changedPaths}); a review stage must not modify repository files`;
   }
   let headRevision: string;
   try {
     headRevision = await options.git.resolveHeadRevision(options.worktreePath);
   } catch (error) {
-    return `failed to resolve the worktree revision after the PLAN_REVIEW invocation: ${describeError(error)}`;
+    return `failed to resolve the worktree revision after the CODE_REVIEW invocation: ${describeError(error)}`;
   }
-  if (headRevision !== options.baseRevision) {
-    return `the PLAN_REVIEW invocation modified the task worktree (worktree revision ${headRevision} no longer matches base revision ${options.baseRevision}); a review stage must not modify repository files`;
+  if (headRevision !== baseline.headRevision) {
+    return `the CODE_REVIEW invocation modified the task worktree (worktree revision ${headRevision} no longer matches pre-review revision ${baseline.headRevision}); a review stage must not modify repository files`;
   }
   return undefined;
+}
+
+function statusesEqual(before: GitStatus, after: GitStatus): boolean {
+  return serializeStatus(before) === serializeStatus(after);
+}
+
+function serializeStatus(status: GitStatus): string {
+  return [...status.entries]
+    .map((entry) =>
+      [
+        entry.indexStatus,
+        entry.worktreeStatus,
+        entry.path,
+        entry.previousPath ?? "",
+      ].join("\u0000"),
+    )
+    .sort()
+    .join("\u0001");
 }
 
 function agentDescriptorOf(agent: AgentRuntime): {
@@ -468,7 +607,7 @@ function defaultClock(): IsoTimestamp {
   return new Date().toISOString();
 }
 
-function validateOptions(options: PlanReviewStageOptions): void {
+function validateOptions(options: CodeReviewStageOptions): void {
   if (options.attemptId.trim().length === 0) {
     throw new OrchestrationError("attemptId must be a non-empty string");
   }
