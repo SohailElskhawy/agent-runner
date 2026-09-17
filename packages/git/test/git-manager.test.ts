@@ -487,4 +487,63 @@ describe("NodeGitManager", () => {
     await git.removeWorktree(repo, worktreePath);
     expect(await git.worktreeExists(repo, worktreePath)).toBe(false);
   });
+
+  it("rebases a task branch onto an advanced integration HEAD", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    writeFileSync(join(worktreePath, "feature.txt"), "feature\n");
+    await git.stageAll(worktreePath);
+    const commitRevision = await git.commitStaged(
+      worktreePath,
+      "task M001: add feature",
+    );
+    writeFileSync(join(repo, "integration.txt"), "integration\n");
+    await git.stageAll(repo);
+    const advancedHead = await git.commitStaged(repo, "integration change");
+
+    await git.rebaseBranch(worktreePath, advancedHead);
+
+    const rebasedRevision = await git.resolveBranchRevision(repo, "task/M001");
+    expect(rebasedRevision).not.toBe(commitRevision);
+    expect(await git.isAncestor(repo, advancedHead, rebasedRevision)).toBe(true);
+    expect(existsSync(join(worktreePath, "feature.txt"))).toBe(true);
+    expect(existsSync(join(worktreePath, "integration.txt"))).toBe(true);
+  });
+
+  it("lists unmerged paths when a rebase conflicts", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const worktreePath = join(baseDir, "task worktree");
+    await git.createWorktree(repo, worktreePath, "task/M001");
+    writeFileSync(join(worktreePath, "shared.txt"), "conflicting task line\n");
+    await git.stageAll(worktreePath);
+    const commitRevision = await git.commitStaged(
+      worktreePath,
+      "task M001: conflicting change",
+    );
+    writeFileSync(join(repo, "shared.txt"), "integration line\n");
+    await git.stageAll(repo);
+    const advancedHead = await git.commitStaged(repo, "integration change");
+
+    await expect(git.rebaseBranch(worktreePath, advancedHead)).rejects.toThrow(
+      GitError,
+    );
+    expect(await git.listUnmergedPaths(worktreePath)).toEqual(["shared.txt"]);
+
+    await git.abortRebase(worktreePath);
+    expect(await git.resolveBranchRevision(repo, "task/M001")).toBe(
+      commitRevision,
+    );
+    expect((await git.status(worktreePath)).clean).toBe(true);
+  });
+
+  it("rejects an empty onto revision for a rebase", async () => {
+    const repo = await createRepository("repo");
+
+    await expect(git.rebaseBranch(repo, "")).rejects.toThrow(GitError);
+    const error = await gitFailureOf(git.rebaseBranch(repo, ""));
+    expect(error.failure.reason).toContain("invalid onto revision");
+  });
 });

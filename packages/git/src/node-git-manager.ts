@@ -236,6 +236,29 @@ export class NodeGitManager implements GitManager {
     await this.runGit(cwd, args, "removeWorktree");
   }
 
+  async rebaseBranch(cwd: string, ontoRevision: string): Promise<void> {
+    const args = ["rebase", ontoRevision];
+    this.requireNonEmpty(ontoRevision, "rebaseBranch", "onto revision", args);
+    await this.runGit(cwd, args, "rebaseBranch");
+  }
+
+  async abortRebase(cwd: string): Promise<void> {
+    const args = ["rebase", "--abort"];
+    await this.runGit(cwd, args, "abortRebase");
+  }
+
+  async listUnmergedPaths(cwd: string): Promise<string[]> {
+    const result = await this.runGit(
+      cwd,
+      ["diff", "--name-only", "--diff-filter=U"],
+      "listUnmergedPaths",
+    );
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
   private async runGit(
     cwd: string,
     args: readonly string[],

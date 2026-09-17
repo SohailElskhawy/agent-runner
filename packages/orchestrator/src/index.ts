@@ -95,6 +95,14 @@ export {
   type WorkflowTaskExecutorOptions,
 } from "./workflow-executor.js";
 export {
+  createIntegrationDriftService,
+  type IntegrationDriftEvaluationInput,
+  type IntegrationDriftReconciliationInput,
+  type IntegrationDriftService,
+  type IntegrationDriftServiceOptions,
+  type IntegrationReconciliationOutcome,
+} from "./integration-drift.js";
+export {
   resolveWorkflowFailure,
   type WorkflowFailureKind,
   type WorkflowFailureResolution,

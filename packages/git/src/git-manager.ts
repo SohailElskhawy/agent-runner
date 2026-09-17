@@ -44,6 +44,22 @@ export interface GitManager {
   getDiffAgainstRevision(cwd: string, revision: string): Promise<string>;
   commitStaged(cwd: string, message: string): Promise<string>;
   integrateBranch(cwd: string, branchName: string): Promise<GitIntegrationResult>;
+  /**
+   * Rebases the branch checked out in the given working tree onto the given
+   * revision. The rebase may stop on conflicts; the caller detects that by
+   * listing unmerged paths and must abort or resolve the rebase itself.
+   */
+  rebaseBranch(cwd: string, ontoRevision: string): Promise<void>;
+  /**
+   * Aborts an in-progress rebase in the given working tree, restoring the
+   * branch to its pre-rebase state.
+   */
+  abortRebase(cwd: string): Promise<void>;
+  /**
+   * The repository-relative paths with unmerged (conflicted) index entries
+   * in the given working tree.
+   */
+  listUnmergedPaths(cwd: string): Promise<string[]>;
   removeWorktree(
     cwd: string,
     worktreePath: string,
