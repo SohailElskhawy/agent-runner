@@ -54,7 +54,16 @@ export type PlanReviewFixLoopOptions = {
   readonly now?: (() => IsoTimestamp) | undefined;
 };
 
-export type CodeReviewFixLoopOptions = PlanReviewFixLoopOptions;
+export type CodeReviewFixLoopOptions = PlanReviewFixLoopOptions & {
+  /**
+   * Optional guidance handed to every IMPLEMENT invocation of the code
+   * loop, typically the approved PLAN output of the same attempt produced
+   * by the workflow's plan stages. The plan travels through the existing
+   * ContextPack guidance contract; the loop passes the requesting review's
+   * feedback alongside it in each cycle.
+   */
+  readonly initialPlan?: string | undefined;
+};
 
 export type PlanReviewFixLoopOutcome =
   | {
@@ -119,7 +128,13 @@ export async function executeCodeReviewFixLoop(
       executeImplementStage({
         ...options,
         cycle,
-        guidance: { reviewFeedback: feedback },
+        guidance: {
+          ...(typeof options.initialPlan === "string" &&
+          options.initialPlan.trim().length > 0
+            ? { plan: options.initialPlan }
+            : {}),
+          ...(feedback === undefined ? {} : { reviewFeedback: feedback }),
+        },
       }),
     runReviewStage: (options, cycle) =>
       executeCodeReviewStage({ ...options, cycle }),
@@ -149,21 +164,21 @@ type ReviewStageOutcome =
       readonly reason: string;
     };
 
-type ReviewFixLoopStrategy = {
+type ReviewFixLoopStrategy<TOptions extends PlanReviewFixLoopOptions> = {
   runWorkStage: (
-    options: PlanReviewFixLoopOptions,
+    options: TOptions,
     cycle: number,
     feedback: string | undefined,
   ) => Promise<WorkStageOutcome>;
   runReviewStage: (
-    options: PlanReviewFixLoopOptions,
+    options: TOptions,
     cycle: number,
   ) => Promise<ReviewStageOutcome>;
 };
 
-async function runReviewFixLoop(
-  options: PlanReviewFixLoopOptions,
-  strategy: ReviewFixLoopStrategy,
+async function runReviewFixLoop<TOptions extends PlanReviewFixLoopOptions>(
+  options: TOptions,
+  strategy: ReviewFixLoopStrategy<TOptions>,
 ): Promise<ReviewFixLoopOutcome> {
   validateOptions(options);
   const maxReviewCycles = options.task.definition.limits.maxReviewCycles;
