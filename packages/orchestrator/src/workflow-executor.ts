@@ -57,6 +57,7 @@ import {
   type CommitCreatedPayload,
   type ImplementationCompletedPayload,
   type IntegrationCompletedPayload,
+  type IntegrationVerificationCompletedPayload,
   type TaskTransitionedPayload,
   type VerificationCompletedPayload,
   type WorktreeCleanupFailedPayload,
@@ -395,7 +396,11 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
         ],
       );
 
-      const integration = await this.runIntegrationStage({ attemptId, branch });
+      const integration = await this.runIntegrationStage({
+        attemptId,
+        branch,
+        checks: verificationResolution.checks,
+      });
 
       const finishedAt = this.clock();
       const succeededAttempt: Attempt = {
@@ -614,12 +619,18 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
 
   /**
    * The INTEGRATE stage: integrates the attempt branch into the integration
-   * branch and persists the durable INTEGRATE StageRun plus the
-   * integration.completed event evidence.
+   * branch, then runs the project-configured verification against the
+   * integrated result. Integration is not considered successful merely
+   * because the task worktree passed verification; the INTEGRATE StageRun
+   * becomes SUCCEEDED only after the integrated result passed the same
+   * configured checks, and the verification evidence is persisted as a
+   * distinct integration-verification event carrying the integrated
+   * revision.
    */
   private async runIntegrationStage(input: {
     attemptId: AttemptId;
     branch: string;
+    checks: readonly VerificationCheckSpec[];
   }): Promise<GitIntegrationResult> {
     const stageRunId: StageRunId = `stage_${input.attemptId}_INTEGRATE`;
     const startedAt = this.clock();
@@ -656,6 +667,62 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
         occurredAt: this.clock(),
       },
     ]);
+
+    let integrationVerificationRun: VerificationRunResult;
+    try {
+      integrationVerificationRun = await this.verification.run({
+        attemptId: input.attemptId,
+        cwd: this.projectRoot,
+        checks: input.checks,
+        ...(this.signal === undefined ? {} : { signal: this.signal }),
+      });
+    } catch (error) {
+      const message = `integration verification failed to run: ${describeError(error)}`;
+      await this.finalizeStageRun(stageRunId, input.attemptId, INTEGRATE_STAGE, {
+        status: "FAILED",
+        failure: { kind: "error", message },
+        startedAt,
+      });
+      throw new WorkflowExecutionFailure("verification_failed", message);
+    }
+
+    await this.store.appendEvents([
+      {
+        type: ORCHESTRATION_EVENTS.integrationVerificationCompleted,
+        taskId: this.taskId,
+        payload: {
+          attemptId: input.attemptId,
+          revision: integration.revision,
+          status: integrationVerificationRun.status,
+          checks: toVerificationResults(integrationVerificationRun),
+        } satisfies IntegrationVerificationCompletedPayload,
+        occurredAt: this.clock(),
+      },
+    ]);
+
+    if (integrationVerificationRun.cancelled) {
+      await this.finalizeStageRun(stageRunId, input.attemptId, INTEGRATE_STAGE, {
+        status: "CANCELLED",
+        failure: {
+          kind: "cancelled",
+          message: "integration verification was cancelled",
+        },
+        startedAt,
+      });
+      throw new WorkflowExecutionFailure(
+        "cancelled",
+        "integration verification was cancelled",
+      );
+    }
+    if (!integrationVerificationRun.passed) {
+      const message = `integration verification failed: ${describeVerificationFailures(integrationVerificationRun)}`;
+      await this.finalizeStageRun(stageRunId, input.attemptId, INTEGRATE_STAGE, {
+        status: "FAILED",
+        failure: { kind: "error", message },
+        startedAt,
+      });
+      throw new WorkflowExecutionFailure("verification_failed", message);
+    }
 
     await this.finalizeStageRun(stageRunId, input.attemptId, INTEGRATE_STAGE, {
       status: "SUCCEEDED",

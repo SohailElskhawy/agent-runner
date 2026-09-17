@@ -8,6 +8,7 @@ export const ORCHESTRATION_EVENTS = {
   verificationCompleted: "verification.completed",
   commitCreated: "commit.created",
   integrationCompleted: "integration.completed",
+  integrationVerificationCompleted: "integration.verification.completed",
   worktreeCleanupFailed: "worktree.cleanup.failed",
   recoveryReconciled: "recovery.reconciled",
 } as const;
@@ -57,6 +58,19 @@ export type IntegrationCompletedPayload = {
   readonly attemptId: string;
   readonly revision: string;
   readonly kind: "fast-forward" | "already-integrated";
+};
+
+/**
+ * Verification evidence for the integrated result. This is a distinct event
+ * from `verification.completed` (which covers the task-worktree pass):
+ * integration verification is the authoritative gate before a task may be
+ * marked DONE, and it records the integrated revision it verified.
+ */
+export type IntegrationVerificationCompletedPayload = {
+  readonly attemptId: string;
+  readonly revision: string;
+  readonly status: "PASSED" | "FAILED" | "CANCELLED";
+  readonly checks: readonly VerificationResult[];
 };
 
 export type WorktreeCleanupFailedPayload = {

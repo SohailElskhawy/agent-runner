@@ -18,7 +18,7 @@ import type { StageRun, Task } from "@agentic-dev-runner/core";
 import { resolveWorkflow } from "@agentic-dev-runner/core";
 import { createWorkflowTaskExecutor } from "../src/workflow-executor.js";
 import { ORCHESTRATION_EVENTS } from "../src/orchestration-events.js";
-import type { TaskTransitionedPayload } from "../src/orchestration-events.js";
+import type { IntegrationVerificationCompletedPayload, TaskTransitionedPayload } from "../src/orchestration-events.js";
 import type {
   CompletedTaskRun,
   FailedTaskRun,
@@ -66,6 +66,7 @@ type WireOptions = {
   readonly agent?: AgentBehavior | undefined;
   readonly verification?: VerificationResponse | undefined;
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
+  readonly gitOverride?: GitManager | undefined;
   readonly workflowId?: string | undefined;
 };
 
@@ -74,10 +75,11 @@ function wireExecutor(options: WireOptions = {}) {
   verification = new FakeVerificationEngine(
     options.verification ?? ((input) => passedVerificationRun(input)),
   );
-  const effectiveGit =
+  const failureInjectedGit =
     options.gitFailures === undefined
       ? git
       : injectGitFailures(git, options.gitFailures);
+  const effectiveGit = options.gitOverride ?? failureInjectedGit;
   const task = createTask({ id: taskId, status: "READY" });
   const workflowId = options.workflowId ?? task.workflow;
   const resolution = resolveWorkflow(workflowId);
@@ -280,8 +282,24 @@ describe("WorkflowTaskExecutor", () => {
     expect(eventsOfType(events, ORCHESTRATION_EVENTS.commitCreated)).toHaveLength(1);
     expect(eventsOfType(events, ORCHESTRATION_EVENTS.integrationCompleted)).toHaveLength(1);
 
-    expect(verification.runs).toHaveLength(1);
+    expect(verification.runs).toHaveLength(2);
     expect(verification.runs[0]?.cwd).toBe(outcome.worktreePath);
+    expect(verification.runs[1]?.cwd).toBe(repoPath);
+    expect(verification.runs[1]?.checks.map((check) => check.name)).toEqual([
+      "typecheck",
+      "unit",
+    ]);
+
+    const integrationVerificationEvents = eventsOfType(
+      events,
+      ORCHESTRATION_EVENTS.integrationVerificationCompleted,
+    );
+    expect(integrationVerificationEvents).toHaveLength(1);
+    const integrationVerificationPayload = integrationVerificationEvents[0]
+      ?.payload as IntegrationVerificationCompletedPayload;
+    expect(integrationVerificationPayload?.revision).toBe(outcome.integration.revision);
+    expect(integrationVerificationPayload?.status).toBe("PASSED");
+    expect(integrationVerificationPayload?.checks).toHaveLength(2);
 
     const head = (await runFixtureGit(runner, repoPath, ["rev-parse", "HEAD"])).trim();
     expect(outcome.integration.revision).toBe(head);
@@ -433,6 +451,74 @@ describe("WorkflowTaskExecutor", () => {
     expect(integrateRun?.status).toBe("FAILED");
   });
 
+  it("does not mark DONE when integration verification fails even though the worktree verification passed", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      verification: (input) =>
+        input.cwd === repoPath
+          ? failedVerificationRun(input, "typecheck", "integrated typecheck failed")
+          : passedVerificationRun(input),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain("integration verification failed");
+    expect(outcome.reason).toContain("integrated typecheck failed");
+    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.attempt.failure?.kind).toBe("verification_failed");
+
+    const events = await store.listEvents({ taskId });
+    expect(
+      eventsOfType(events, ORCHESTRATION_EVENTS.integrationCompleted),
+    ).toHaveLength(1);
+    const integrationVerificationEvents = eventsOfType(
+      events,
+      ORCHESTRATION_EVENTS.integrationVerificationCompleted,
+    );
+    expect(integrationVerificationEvents).toHaveLength(1);
+    const payload = integrationVerificationEvents[0]
+      ?.payload as IntegrationVerificationCompletedPayload;
+    expect(payload?.status).toBe("FAILED");
+    const transitions = transitionPayloads(events);
+    expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
+
+    const stageRuns = await store.listStageRuns(outcome.attempt.id);
+    const integrateRun = stageRuns.find((run) => run.stage === "INTEGRATE");
+    expect(integrateRun?.status).toBe("FAILED");
+    expect(integrateRun?.failure?.message).toContain(
+      "integration verification failed",
+    );
+    expect(verification.runs).toHaveLength(2);
+  });
+
+  it("integrates the attempt branch exactly once per workflow run", async () => {
+    const integrateBranchCalls: string[] = [];
+    const countingGit: GitManager = new Proxy(git, {
+      get(target, property) {
+        if (property === "integrateBranch") {
+          return (cwd: string, branchName: string) => {
+            integrateBranchCalls.push(branchName);
+            return target.integrateBranch(cwd, branchName);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      gitOverride: countingGit,
+    });
+
+    const outcome = await executor.run();
+
+    expectCompleted(outcome);
+    expect(integrateBranchCalls).toEqual([`task/${taskId}/attempt-1`]);
+    expect(outcome.integration.kind).toBe("fast-forward");
+  });
+
   it("records every authoritative status transition in workflow order", async () => {
     const executor = wireExecutor({ agent: stageDispatchAgent({}) });
 
@@ -470,6 +556,6 @@ describe("WorkflowTaskExecutor", () => {
     expect(planReviewRun?.output?.planReview?.decision).toBe("APPROVED");
     const verifyRun = stageRuns.find((run) => run.stage === "VERIFY");
     expect(verifyRun?.status).toBe("SUCCEEDED");
-    expect(verification.runs).toHaveLength(1);
+    expect(verification.runs).toHaveLength(2);
   });
 });
