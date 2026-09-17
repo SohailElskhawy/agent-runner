@@ -18,18 +18,28 @@ import type { StageRun, Task } from "@agentic-dev-runner/core";
 import { resolveWorkflow } from "@agentic-dev-runner/core";
 import { createWorkflowTaskExecutor } from "../src/workflow-executor.js";
 import { ORCHESTRATION_EVENTS } from "../src/orchestration-events.js";
-import type { IntegrationVerificationCompletedPayload, TaskTransitionedPayload } from "../src/orchestration-events.js";
 import type {
+  IntegrationVerificationCompletedPayload,
+  TaskTransitionedPayload,
+} from "../src/orchestration-events.js";
+import type {
+  CancelledTaskRun,
   CompletedTaskRun,
   FailedTaskRun,
-  SingleTaskRunOutcome,
 } from "../src/orchestration-outcome.js";
+import type {
+  BlockedTaskRun,
+  WorkflowTaskRunOutcome,
+} from "../src/workflow-outcome.js";
 import type {
   AgentBehavior,
   VerificationResponse,
 } from "./fixtures.js";
 import {
   AGENTS_MARKDOWN,
+  agentFails,
+  agentIsCancelled,
+  agentTimesOut,
   createFixtureRepository,
   createProject,
   createTask,
@@ -174,7 +184,7 @@ function stageDispatchAgent(script: {
 }
 
 function expectCompleted(
-  outcome: SingleTaskRunOutcome,
+  outcome: WorkflowTaskRunOutcome,
 ): asserts outcome is CompletedTaskRun {
   if (outcome.kind !== "completed") {
     throw new Error(
@@ -184,11 +194,31 @@ function expectCompleted(
 }
 
 function expectFailed(
-  outcome: SingleTaskRunOutcome,
+  outcome: WorkflowTaskRunOutcome,
 ): asserts outcome is FailedTaskRun {
   if (outcome.kind !== "failed") {
     throw new Error(
       `expected a failed outcome but received "${outcome.kind}": ${JSON.stringify(outcome, null, 2)}`,
+    );
+  }
+}
+
+function expectBlocked(
+  outcome: WorkflowTaskRunOutcome,
+): asserts outcome is BlockedTaskRun {
+  if (outcome.kind !== "blocked") {
+    throw new Error(
+      `expected a blocked outcome but received "${outcome.kind}": ${JSON.stringify(outcome, null, 2)}`,
+    );
+  }
+}
+
+function expectCancelled(
+  outcome: WorkflowTaskRunOutcome,
+): asserts outcome is CancelledTaskRun {
+  if (outcome.kind !== "cancelled") {
+    throw new Error(
+      `expected a cancelled outcome but received "${outcome.kind}": ${JSON.stringify(outcome, null, 2)}`,
     );
   }
 }
@@ -331,7 +361,7 @@ describe("WorkflowTaskExecutor", () => {
     expect(planInvocations).toHaveLength(0);
   });
 
-  it("does not run IMPLEMENT when the plan review-cycle budget is exhausted", async () => {
+  it("blocks the task and does not run IMPLEMENT when the plan review-cycle budget is exhausted", async () => {
     const executor = wireExecutor({
       agent: stageDispatchAgent({
         planReview: agentReplies(
@@ -342,12 +372,15 @@ describe("WorkflowTaskExecutor", () => {
 
     const outcome = await executor.run();
 
-    expectFailed(outcome);
+    expectBlocked(outcome);
     expect(outcome.reason).toContain("plan review-cycle budget exhausted");
     expect(outcome.reason).toContain("tighten the plan");
-    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.task.status).toBe("BLOCKED");
     expect(outcome.attempt.status).toBe("FAILED");
     expect(outcome.attempt.failure?.kind).toBe("error");
+    expect(outcome.attempt.failure?.message).toContain(
+      "plan review-cycle budget exhausted",
+    );
 
     const stageRuns = await store.listStageRuns(outcome.attempt.id);
     expect(stageRuns.map((run) => run.stage)).toEqual([
@@ -356,12 +389,13 @@ describe("WorkflowTaskExecutor", () => {
       "PLAN",
       "PLAN_REVIEW",
     ]);
-    expect(
-      stageRuns.filter((run) => run.stage === "PLAN").map((run) => run.id),
-    ).toEqual([
-      `stage_${outcome.attempt.id}_PLAN`,
-      `stage_${outcome.attempt.id}_PLAN_c2`,
-    ]);
+    const exhaustedReviewRuns = stageRuns.filter(
+      (run) => run.stage === "PLAN_REVIEW",
+    );
+    for (const reviewRun of exhaustedReviewRuns) {
+      expect(reviewRun.status).toBe("SUCCEEDED");
+      expect(reviewRun.output?.planReview?.decision).toBe("CHANGES_REQUIRED");
+    }
 
     const implementInvocations = agent.invocations.filter(
       (invocation) => (invocation.instruction ?? "").startsWith(IMPLEMENT_MARKER),
@@ -371,10 +405,21 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     const transitions = transitionPayloads(events);
+    expect(transitions).toContainEqual(["IMPLEMENTING", "BLOCKED"]);
     expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
+    expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
+    const failedEvent = events.find(
+      (event) =>
+        event.type === ORCHESTRATION_EVENTS.taskTransitioned &&
+        (event.payload as TaskTransitionedPayload).to === "BLOCKED",
+    );
+    const failurePayload = failedEvent?.payload as TaskTransitionedPayload;
+    expect(failurePayload?.failure?.message).toContain(
+      "plan review-cycle budget exhausted",
+    );
   });
 
-  it("does not run VERIFY when the code review-cycle budget is exhausted", async () => {
+  it("blocks the task and does not run VERIFY when the code review-cycle budget is exhausted", async () => {
     const executor = wireExecutor({
       agent: stageDispatchAgent({
         codeReview: agentReplies(
@@ -385,10 +430,10 @@ describe("WorkflowTaskExecutor", () => {
 
     const outcome = await executor.run();
 
-    expectFailed(outcome);
+    expectBlocked(outcome);
     expect(outcome.reason).toContain("code review-cycle budget exhausted");
     expect(outcome.reason).toContain("fix the boundary case");
-    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.task.status).toBe("BLOCKED");
 
     const codeReviewRuns = (
       await store.listStageRuns(outcome.attempt.id)
@@ -398,8 +443,10 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     const transitions = transitionPayloads(events);
+    expect(transitions).toContainEqual(["IMPLEMENTING", "BLOCKED"]);
     expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
     expect(transitions).not.toContainEqual(["VERIFYING", "INTEGRATING"]);
+    expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
   });
 
   it("does not integrate when worktree verification fails", async () => {
@@ -557,5 +604,108 @@ describe("WorkflowTaskExecutor", () => {
     const verifyRun = stageRuns.find((run) => run.stage === "VERIFY");
     expect(verifyRun?.status).toBe("SUCCEEDED");
     expect(verification.runs).toHaveLength(2);
+  });
+
+  it("fails deterministically when the PLAN stage agent fails, preserving the stop reason", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({ plan: agentFails("planner crashed") }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain("agent failed: planner crashed");
+    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.attempt.status).toBe("FAILED");
+    expect(outcome.attempt.failure?.kind).toBe("error");
+    expect(outcome.attempt.failure?.message).toContain("planner crashed");
+
+    const attempts = await store.listAttempts({ taskId });
+    expect(attempts[0]?.failure?.message).toContain("planner crashed");
+    const stageRuns = await store.listStageRuns(outcome.attempt.id);
+    const planRun = stageRuns.find((run) => run.stage === "PLAN");
+    expect(planRun?.status).toBe("FAILED");
+    expect(planRun?.failure?.message).toContain("planner crashed");
+
+    const events = await store.listEvents({ taskId });
+    const transitions = transitionPayloads(events);
+    expect(transitions).toContainEqual(["IMPLEMENTING", "FAILED"]);
+    expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
+    expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
+  });
+
+  it("fails deterministically when the IMPLEMENT stage agent fails", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({ implement: agentFails("implementer crashed") }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain("agent failed: implementer crashed");
+    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.attempt.failure?.kind).toBe("error");
+
+    const stageRuns = await store.listStageRuns(outcome.attempt.id);
+    const planRuns = stageRuns.filter((run) => run.stage === "PLAN");
+    for (const planRun of planRuns) {
+      expect(planRun.status).toBe("SUCCEEDED");
+    }
+    const implementRun = stageRuns.find((run) => run.stage === "IMPLEMENT");
+    expect(implementRun?.status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+
+    const events = await store.listEvents({ taskId });
+    const transitions = transitionPayloads(events);
+    expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
+    expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
+  });
+
+  it("maps a timed-out stage onto a TIMED_OUT attempt and a FAILED task", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({ plan: agentTimesOut() }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain("timed out");
+    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.attempt.status).toBe("TIMED_OUT");
+    expect(outcome.attempt.failure?.kind).toBe("timeout");
+
+    const stageRuns = await store.listStageRuns(outcome.attempt.id);
+    const planRun = stageRuns.find((run) => run.stage === "PLAN");
+    expect(planRun?.status).toBe("TIMED_OUT");
+
+    const events = await store.listEvents({ taskId });
+    expect(transitionPayloads(events)).not.toContainEqual([
+      "INTEGRATING",
+      "DONE",
+    ]);
+  });
+
+  it("maps a cancelled stage onto a cancelled outcome without reaching DONE", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({ plan: agentIsCancelled() }),
+    });
+
+    const outcome = await executor.run();
+
+    expectCancelled(outcome);
+    expect(outcome.reason).toContain("cancelled");
+    expect(outcome.task.status).toBe("CANCELLED");
+    expect(outcome.attempt.status).toBe("CANCELLED");
+    expect(outcome.attempt.failure?.kind).toBe("cancelled");
+
+    const events = await store.listEvents({ taskId });
+    expect(transitionPayloads(events)).toContainEqual([
+      "IMPLEMENTING",
+      "CANCELLED",
+    ]);
+    expect(transitionPayloads(events)).not.toContainEqual([
+      "INTEGRATING",
+      "DONE",
+    ]);
   });
 });

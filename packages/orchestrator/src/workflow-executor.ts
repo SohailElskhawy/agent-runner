@@ -21,7 +21,6 @@
 import { join } from "node:path";
 import type {
   Attempt,
-  AttemptFailure,
   AttemptId,
   IsoTimestamp,
   StageKind,
@@ -68,9 +67,16 @@ import type {
   CompletedTaskRun,
   FailedTaskRun,
   RejectedTaskRun,
-  SingleTaskRunOutcome,
   WorktreeCleanupOutcome,
 } from "./orchestration-outcome.js";
+import {
+  resolveWorkflowFailure,
+  WorkflowExecutionFailure,
+} from "./workflow-failures.js";
+import type {
+  BlockedTaskRun,
+  WorkflowTaskRunOutcome,
+} from "./workflow-outcome.js";
 import {
   executePlanReviewFixLoop,
   executeCodeReviewFixLoop,
@@ -82,7 +88,7 @@ import { executeImplementStage } from "./implement-stage.js";
 import type { ImplementStageGuidance } from "./implement-stage.js";
 
 export interface WorkflowTaskExecutor {
-  run(): Promise<SingleTaskRunOutcome>;
+  run(): Promise<WorkflowTaskRunOutcome>;
 }
 
 export type WorkflowTaskExecutorOptions = {
@@ -106,28 +112,6 @@ export function createWorkflowTaskExecutor(
   options: WorkflowTaskExecutorOptions,
 ): WorkflowTaskExecutor {
   return new SequentialWorkflowTaskExecutor(options);
-}
-
-/**
- * A workflow gate or stage execution that did not produce a usable result.
- * The runner maps each kind deterministically onto attempt and task status.
- */
-class WorkflowExecutionFailure extends Error {
-  readonly kind:
-    | "error"
-    | "timeout"
-    | "cancelled"
-    | "verification_failed"
-    | "review_exhausted";
-
-  constructor(
-    kind: "error" | "timeout" | "cancelled" | "verification_failed" | "review_exhausted",
-    message: string,
-  ) {
-    super(message);
-    this.name = "WorkflowExecutionFailure";
-    this.kind = kind;
-  }
 }
 
 const PLAN_STAGE: StageKind = "PLAN";
@@ -165,7 +149,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     this.clock = options.now ?? defaultClock;
   }
 
-  async run(): Promise<SingleTaskRunOutcome> {
+  async run(): Promise<WorkflowTaskRunOutcome> {
     if (this.running) {
       throw new OrchestrationError(
         "A task is already executing in this executor; workflow execution is strictly sequential",
@@ -179,7 +163,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     }
   }
 
-  private async execute(): Promise<SingleTaskRunOutcome> {
+  private async execute(): Promise<WorkflowTaskRunOutcome> {
     const taskId = this.taskId;
     const task = await this.store.getTask(taskId);
     if (task === null) {
@@ -814,7 +798,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     worktreeCreated: boolean;
     worktreePath: string;
     error: unknown;
-  }): Promise<FailedTaskRun | CancelledTaskRun> {
+  }): Promise<FailedTaskRun | CancelledTaskRun | BlockedTaskRun> {
     if (input.status === "DONE") {
       throw new OrchestrationError(
         `the task already reached DONE; a post-completion operation failed: ${describeError(input.error)}`,
@@ -822,20 +806,17 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       );
     }
     const failure = toExecutionFailure(input.error);
-    const attemptStatus = attemptStatusForFailure(failure.kind);
-    const attemptFailure = attemptFailureFor(failure.kind, failure.message);
-    const taskStatus: TaskStatus =
-      failure.kind === "cancelled" ? "CANCELLED" : "FAILED";
+    const resolution = resolveWorkflowFailure(failure.kind, failure.message);
     const finishedAt = this.clock();
     const finishedAttempt: Attempt = {
       ...input.attempt,
-      status: attemptStatus,
+      status: resolution.attemptStatus,
       finishedAt,
-      failure: attemptFailure,
+      failure: resolution.attemptFailure,
     };
     try {
       await this.store.transaction(async () => {
-        await this.store.setTaskStatus(input.taskId, taskStatus, finishedAt);
+        await this.store.setTaskStatus(input.taskId, resolution.taskStatus, finishedAt);
         await this.store.putAttempt(finishedAttempt);
         await this.store.appendEvents([
           {
@@ -843,9 +824,9 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
             taskId: input.taskId,
             payload: {
               from: input.status,
-              to: taskStatus,
+              to: resolution.taskStatus,
               attemptId: input.attempt.id,
-              failure: attemptFailure,
+              failure: resolution.attemptFailure,
             } satisfies TaskTransitionedPayload,
             occurredAt: finishedAt,
           },
@@ -865,8 +846,8 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       input.taskId,
       input.attempt.id,
     );
-    const outcome: FailedTaskRun | CancelledTaskRun = {
-      kind: taskStatus === "CANCELLED" ? "cancelled" : "failed",
+    const outcome: FailedTaskRun | CancelledTaskRun | BlockedTaskRun = {
+      kind: resolution.outcomeKind,
       taskId: input.taskId,
       task,
       attempt: finishedAttempt,
@@ -1002,38 +983,6 @@ function toExecutionFailure(error: unknown): WorkflowExecutionFailure {
     return error;
   }
   return new WorkflowExecutionFailure("error", describeError(error));
-}
-
-function attemptFailureFor(
-  kind: WorkflowExecutionFailure["kind"],
-  message: string,
-): AttemptFailure {
-  switch (kind) {
-    case "timeout":
-      return { kind: "timeout", message };
-    case "cancelled":
-      return { kind: "cancelled", message };
-    case "verification_failed":
-      return { kind: "verification_failed", message };
-    case "error":
-    case "review_exhausted":
-      return { kind: "error", message };
-  }
-}
-
-function attemptStatusForFailure(
-  kind: WorkflowExecutionFailure["kind"],
-): Attempt["status"] {
-  switch (kind) {
-    case "timeout":
-      return "TIMED_OUT";
-    case "cancelled":
-      return "CANCELLED";
-    case "error":
-    case "verification_failed":
-    case "review_exhausted":
-      return "FAILED";
-  }
 }
 
 function describeVerificationFailures(run: VerificationRunResult): string {
