@@ -83,7 +83,6 @@ import {
   type PlanReviewFixLoopOptions,
 } from "./review-fix-loop.js";
 import { executePlanStage } from "./plan-stage.js";
-import { executePlanReviewStage } from "./plan-review-stage.js";
 import { executeImplementStage } from "./implement-stage.js";
 import type { ImplementStageGuidance } from "./implement-stage.js";
 
@@ -194,6 +193,17 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
         task.status,
       );
     }
+    const stages = this.workflow.stages;
+    const hasPlan = stages.includes("PLAN");
+    const hasPlanReview = stages.includes("PLAN_REVIEW");
+    const hasCodeReview = stages.includes("CODE_REVIEW");
+    if (hasPlanReview && !hasPlan) {
+      return rejected(
+        taskId,
+        `workflow "${this.workflow.id}" requires PLAN_REVIEW without PLAN; PLAN_REVIEW reviews the PLAN output of the same attempt, so the workflow must also require PLAN`,
+        task.status,
+      );
+    }
     if (this.signal?.aborted === true) {
       return rejected(taskId, "execution was aborted before it started", task.status);
     }
@@ -264,8 +274,8 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
 
       let implementGuidance: ImplementStageGuidance | undefined;
 
-      if (this.workflow.stages.includes("PLAN")) {
-        if (this.workflow.stages.includes("PLAN_REVIEW")) {
+      if (hasPlan) {
+        if (hasPlanReview) {
           const planLoop = await executePlanReviewFixLoop(loopOptions);
           if (planLoop.kind === "review-limit-exhausted") {
             throw new WorkflowExecutionFailure(
@@ -284,17 +294,9 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
           }
           implementGuidance = { plan: planOutcome.plan };
         }
-      } else if (this.workflow.stages.includes("PLAN_REVIEW")) {
-        const reviewOutcome = await executePlanReviewStage({
-          ...loopOptions,
-          cycle: 1,
-        });
-        if (reviewOutcome.kind === "failed") {
-          throw terminalStageFailure([reviewOutcome.stageRun], reviewOutcome.reason);
-        }
       }
 
-      if (this.workflow.stages.includes("CODE_REVIEW")) {
+      if (hasCodeReview) {
         const codeLoop = await executeCodeReviewFixLoop({
           ...loopOptions,
           ...(implementGuidance?.plan === undefined

@@ -14,7 +14,7 @@ import { createGitManager, GitError } from "@agentic-dev-runner/git";
 import type { GitManager } from "@agentic-dev-runner/git";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import type { RunnerStore, StoredEvent } from "@agentic-dev-runner/persistence";
-import type { StageRun, Task } from "@agentic-dev-runner/core";
+import type { StageRun, Task, WorkflowDefinition } from "@agentic-dev-runner/core";
 import { resolveWorkflow } from "@agentic-dev-runner/core";
 import { createWorkflowTaskExecutor } from "../src/workflow-executor.js";
 import { ORCHESTRATION_EVENTS } from "../src/orchestration-events.js";
@@ -31,6 +31,7 @@ import type {
   BlockedTaskRun,
   WorkflowTaskRunOutcome,
 } from "../src/workflow-outcome.js";
+import type { RejectedTaskRun } from "../src/orchestration-outcome.js";
 import type {
   AgentBehavior,
   VerificationResponse,
@@ -78,6 +79,7 @@ type WireOptions = {
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
   readonly gitOverride?: GitManager | undefined;
   readonly workflowId?: string | undefined;
+  readonly workflowOverride?: WorkflowDefinition | undefined;
 };
 
 function wireExecutor(options: WireOptions = {}) {
@@ -91,10 +93,9 @@ function wireExecutor(options: WireOptions = {}) {
       : injectGitFailures(git, options.gitFailures);
   const effectiveGit = options.gitOverride ?? failureInjectedGit;
   const task = createTask({ id: taskId, status: "READY" });
-  const workflowId = options.workflowId ?? task.workflow;
-  const resolution = resolveWorkflow(workflowId);
+  const resolution = resolveWorkflow(options.workflowId ?? task.workflow);
   if (!resolution.resolved) {
-    throw new Error(`fixture workflow "${workflowId}" did not resolve`);
+    throw new Error(`fixture workflow "${options.workflowId ?? task.workflow}" did not resolve`);
   }
   return createWorkflowTaskExecutor({
     store,
@@ -106,7 +107,7 @@ function wireExecutor(options: WireOptions = {}) {
       { name: "unit", executable: "node", args: ["--version"] },
     ],
     task,
-    workflow: resolution.workflow,
+    workflow: options.workflowOverride ?? resolution.workflow,
     projectRoot: repoPath,
     worktreesDir,
     agentTimeoutMs: 5_000,
@@ -223,6 +224,16 @@ function expectCancelled(
   }
 }
 
+function expectRejected(
+  outcome: WorkflowTaskRunOutcome,
+): asserts outcome is RejectedTaskRun {
+  if (outcome.kind !== "rejected") {
+    throw new Error(
+      `expected a rejected outcome but received "${outcome.kind}": ${JSON.stringify(outcome, null, 2)}`,
+    );
+  }
+}
+
 async function storedTask(): Promise<Task> {
   const task = await store.getTask(taskId);
   if (task === null) {
@@ -335,8 +346,7 @@ describe("WorkflowTaskExecutor", () => {
     expect(outcome.integration.revision).toBe(head);
   });
 
-  it("executes a workflow without PLAN/PLAN_REVIEW stages when the definition omits them", async () => {
-    const executor = wireExecutor({
+  it("executes a workflow without PLAN/PLAN_REVIEW stages when the definition omits them", async () => {    const executor = wireExecutor({
       agent: stageDispatchAgent({}),
       workflowId: "simple",
     });
@@ -707,5 +717,59 @@ describe("WorkflowTaskExecutor", () => {
       "INTEGRATING",
       "DONE",
     ]);
+  });
+
+  it("rejects a workflow definition whose stage ordering violates the canonical lifecycle", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      workflowOverride: {
+        id: "misordered",
+        stages: ["IMPLEMENT", "VERIFY", "CODE_REVIEW", "INTEGRATE"],
+      },
+    });
+
+    const outcome = await executor.run();
+
+    expectRejected(outcome);
+    expect(outcome.reason).toContain('workflow "misordered" is not executable');
+    expect(agent.invocations).toHaveLength(0);
+    expect(verification.runs).toHaveLength(0);
+    const task = await storedTask();
+    expect(task.status).toBe("READY");
+  });
+
+  it("rejects a workflow definition containing stages that are not lifecycle stages", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      workflowOverride: {
+        id: "unknown-stages",
+        stages: ["IMPLEMENT", "VERIFY", "INTEGRATE", "DEPLOY"] as unknown as WorkflowDefinition["stages"],
+      },
+    });
+
+    const outcome = await executor.run();
+
+    expectRejected(outcome);
+    expect(outcome.reason).toContain("DEPLOY");
+    expect(agent.invocations).toHaveLength(0);
+    expect(verification.runs).toHaveLength(0);
+  });
+
+  it("rejects a workflow that requires PLAN_REVIEW without PLAN instead of executing a review that can never pass", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      workflowOverride: {
+        id: "review-without-plan",
+        stages: ["PLAN_REVIEW", "IMPLEMENT", "VERIFY", "INTEGRATE"],
+      },
+    });
+
+    const outcome = await executor.run();
+
+    expectRejected(outcome);
+    expect(outcome.reason).toContain("PLAN_REVIEW without PLAN");
+    expect(agent.invocations).toHaveLength(0);
+    const events = await store.listEvents({ taskId });
+    expect(eventsOfType(events, ORCHESTRATION_EVENTS.attemptStarted)).toHaveLength(0);
   });
 });

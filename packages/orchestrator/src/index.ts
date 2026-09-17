@@ -79,3 +79,21 @@ export {
   type CodeReviewFixLoopOptions,
   type CodeReviewFixLoopOutcome,
 } from "./review-fix-loop.js";
+
+export {
+  createWorkflowTaskExecutor,
+  type WorkflowTaskExecutor,
+  type WorkflowTaskExecutorOptions,
+} from "./workflow-executor.js";
+export {
+  resolveWorkflowFailure,
+  type WorkflowFailureKind,
+  type WorkflowFailureResolution,
+} from "./workflow-failures.js";
+export type {
+  BlockedTaskRun,
+  WorkflowTaskRunOutcome,
+} from "./workflow-outcome.js";
+export type {
+  IntegrationVerificationCompletedPayload,
+} from "./orchestration-events.js";
