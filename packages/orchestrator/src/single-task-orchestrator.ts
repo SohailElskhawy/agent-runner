@@ -19,6 +19,7 @@ import type {
   AgentRuntime,
 } from "@agentic-dev-runner/agents";
 import type { GitManager } from "@agentic-dev-runner/git";
+import type { GitStatusEntry } from "@agentic-dev-runner/git";
 import type { NewEvent, RunnerStore } from "@agentic-dev-runner/persistence";
 import type {
   VerificationCheckSpec,
@@ -30,6 +31,10 @@ import {
   toVerificationResults,
 } from "@agentic-dev-runner/verification";
 import { OrchestrationError } from "./orchestration-error.js";
+import {
+  describeTaskScopeViolations,
+  validateTaskScope,
+} from "./task-scope.js";
 import {
   ORCHESTRATION_EVENTS,
   type AttemptStartedPayload,
@@ -281,6 +286,7 @@ class SequentialTaskOrchestrator implements SingleTaskOrchestrator {
         throw new ExecutionFailure("cancelled", "agent invocation was cancelled");
       }
 
+      await this.git.stageAll(worktreePath);
       const worktreeStatus = await this.git.status(worktreePath);
       if (worktreeStatus.clean) {
         throw new ExecutionFailure(
@@ -289,7 +295,16 @@ class SequentialTaskOrchestrator implements SingleTaskOrchestrator {
         );
       }
       const changedPaths = worktreeStatus.entries.map((entry) => entry.path);
-      await this.git.stageAll(worktreePath);
+      const scopeValidation = validateTaskScope(
+        scopedPathsOf(worktreeStatus.entries),
+        task.definition.scope,
+      );
+      if (!scopeValidation.ok) {
+        throw new ExecutionFailure(
+          "error",
+          `task scope violation: the following changed paths are outside the task scope: ${describeTaskScopeViolations(scopeValidation.violations)}`,
+        );
+      }
 
       currentStatus = await this.transitionTask(
         taskId,
@@ -652,6 +667,19 @@ function agentDescriptorOf(agent: AgentRuntime): AgentDescriptor {
       ? {}
       : { model: agent.descriptor.model }),
   };
+}
+
+function scopedPathsOf(
+  entries: readonly GitStatusEntry[],
+): readonly string[] {
+  const paths: string[] = [];
+  for (const entry of entries) {
+    paths.push(entry.path);
+    if (entry.previousPath !== undefined) {
+      paths.push(entry.previousPath);
+    }
+  }
+  return paths;
 }
 
 function attemptLogsFrom(output: AgentOutput): AttemptLogs | undefined {

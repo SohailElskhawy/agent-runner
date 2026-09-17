@@ -202,6 +202,7 @@ describe("M057a project-configured verification checks", () => {
       ...task,
       definition: {
         ...task.definition,
+        scope: { allowedPaths: ["**"], forbiddenPaths: [] },
         verification: { required: [...required] },
       },
     });

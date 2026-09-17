@@ -97,6 +97,11 @@ import {
 import { executePlanStage } from "./plan-stage.js";
 import { executeImplementStage } from "./implement-stage.js";
 import type { ImplementStageGuidance } from "./implement-stage.js";
+import {
+  describeTaskScopeViolations,
+  validateTaskScope,
+} from "./task-scope.js";
+import type { GitStatusEntry } from "@agentic-dev-runner/git";
 
 export interface WorkflowTaskExecutor {
   run(): Promise<WorkflowTaskRunOutcome>;
@@ -427,6 +432,16 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
         );
       }
       const changedPaths = worktreeStatus.entries.map((entry) => entry.path);
+      const scopeValidation = validateTaskScope(
+        scopedPathsOf(worktreeStatus.entries),
+        task.definition.scope,
+      );
+      if (!scopeValidation.ok) {
+        throw new WorkflowExecutionFailure(
+          "error",
+          `task scope violation: the following changed paths are outside the task scope: ${describeTaskScopeViolations(scopeValidation.violations)}`,
+        );
+      }
 
       currentStatus = await this.transitionTask(
         taskId,
@@ -1022,11 +1037,26 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
 }
 
 /**
+ * Every Git-reported changed path that scope validation must cover, including
+ * the previous path of renamed/copied entries: a rename that moves a file
+ * out of the allowed scope must be treated as a change to both paths.
+ */
+function scopedPathsOf(entries: readonly GitStatusEntry[]): readonly string[] {
+  const paths: string[] = [];
+  for (const entry of entries) {
+    paths.push(entry.path);
+    if (entry.previousPath !== undefined) {
+      paths.push(entry.previousPath);
+    }
+  }
+  return paths;
+}
+
+/**
  * The approved plan produced by a completed bounded plan review loop, taken
  * from the highest-cycle SUCCEEDED PLAN stage run of the loop. Selection is
  * identity-based, never based on persistence row order.
- */
-function approvedPlanOf(stageRuns: readonly StageRun[]): string | undefined {
+ */function approvedPlanOf(stageRuns: readonly StageRun[]): string | undefined {
   let approvedCycle = -1;
   let approvedPlan: string | undefined;
   for (const stageRun of stageRuns) {

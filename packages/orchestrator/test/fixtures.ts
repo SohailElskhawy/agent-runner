@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import type {
   AgentDescriptor,
@@ -98,12 +98,22 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 }
 
+export function writeChangeAt(
+  worktreePath: string,
+  relativePath: string,
+  content: string,
+): void {
+  const target = join(worktreePath, relativePath);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, content);
+}
+
 export function agentAppliesChange(change: {
   readonly path: string;
   readonly content: string;
 }): AgentBehavior {
   return (invocation) => {
-    writeFileSync(join(invocation.worktreePath, change.path), change.content);
+    writeChangeAt(invocation.worktreePath, change.path, change.content);
     return {
       kind: "success",
       output: { stdout: `wrote ${change.path}`, stderr: "" },

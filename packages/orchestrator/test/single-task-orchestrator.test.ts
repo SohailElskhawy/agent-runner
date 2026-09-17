@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,12 +49,14 @@ import {
   injectGitFailures,
   passedVerificationRun,
   runFixtureGit,
+  writeChangeAt,
 } from "./fixtures.js";
 import type { AgentBehavior, VerificationResponse } from "./fixtures.js";
+import type { GitStatusEntry } from "@agentic-dev-runner/git";
 
 const taskId = "M001";
 const change = {
-  path: "utils.ts",
+  path: "src/utils.ts",
   content: "export const add = (a: number, b: number): number => a + b;\n",
 };
 
@@ -128,6 +131,59 @@ function gitFailure(operation: string): () => Error {
       stdout: "",
       stderr: "injected failure",
     });
+}
+
+function withExtraStatusEntries(
+  inner: GitManager,
+  extra: readonly GitStatusEntry[],
+): GitManager {
+  return new Proxy(inner, {
+    get(target, property) {
+      if (property === "status") {
+        return (cwd: string) =>
+          target.status(cwd).then((status) => ({
+            ...status,
+            entries: [...status.entries, ...extra],
+          }));
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+async function seedScopedTask(
+  id: string,
+  allowedPaths: readonly string[],
+  forbiddenPaths: readonly string[],
+): Promise<void> {
+  const base = createTask({ id, status: "READY" });
+  await store.putTask({
+    ...base,
+    definition: {
+      ...base.definition,
+      scope: { allowedPaths, forbiddenPaths },
+    },
+  });
+}
+
+async function commitFixtureFile(
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  writeChangeAt(repoPath, relativePath, content);
+  await runFixtureGit(runner, repoPath, ["add", relativePath]);
+  await runFixtureGit(runner, repoPath, ["commit", "-m", `fixture: ${relativePath}`]);
+}
+
+function agentRenamesViaGit(from: string, to: string): AgentBehavior {
+  return (invocation) =>
+    runFixtureGit(runner, invocation.worktreePath, ["mv", from, to]).then(() => ({
+      kind: "success",
+      output: { stdout: `moved ${from} to ${to}`, stderr: "" },
+      exitCode: 0,
+      durationMs: 5,
+    }));
 }
 
 function expectCompleted(
@@ -575,6 +631,265 @@ describe("SingleTaskOrchestrator", () => {
     expect(existsSync(join(worktreesDir, taskId, "attempt-1"))).toBe(false);
   });
 
+  it("fails the task without verification, commit, or integration when a changed path is outside the allowed scope", async () => {
+    wireOrchestrator({
+      agent: agentAppliesChange({
+        path: "root.txt",
+        content: "outside scope\n",
+      }),
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      "task scope violation: the following changed paths are outside the task scope",
+    );
+    expect(outcome.reason).toContain(
+      "root.txt (no allowed path pattern matched)",
+    );
+    expect((await storedTask()).status).toBe("FAILED");
+    const attempt = (await storedAttempts())[0];
+    expect(attempt?.status).toBe("FAILED");
+    expect(attempt?.failure?.kind).toBe("error");
+    expect(attempt?.failure?.message).toContain("root.txt");
+    expect(verification.runs).toHaveLength(0);
+    expect(await headRevision(`task/${taskId}/attempt-1`)).toBe(baseRevision);
+    expect(await headRevision("HEAD")).toBe(baseRevision);
+
+    const events = await store.listEvents({ taskId });
+    expect(
+      events.some(
+        (event) => event.type === ORCHESTRATION_EVENTS.verificationCompleted,
+      ),
+    ).toBe(false);
+    expect(
+      events.some((event) => event.type === ORCHESTRATION_EVENTS.commitCreated),
+    ).toBe(false);
+    expect(
+      events.some(
+        (event) => event.type === ORCHESTRATION_EVENTS.integrationCompleted,
+      ),
+    ).toBe(false);
+    expect(eventPayload(events.at(-1)?.payload)).toMatchObject({
+      from: "IMPLEMENTING",
+      to: "FAILED",
+      attemptId: "att_M001_1",
+    });
+    expect(outcome.cleanup).toEqual({
+      kind: "skipped",
+      reason: "dirty-worktree",
+    });
+    expect(existsSync(join(worktreesDir, taskId, "attempt-1"))).toBe(true);
+  });
+
+  it("reports every violating path when multiple changed paths are outside the scope", async () => {
+    wireOrchestrator({
+      agent: (invocation) => {
+        writeChangeAt(invocation.worktreePath, "z-root.txt", "z\n");
+        writeChangeAt(invocation.worktreePath, "lib/other.md", "other\n");
+        writeChangeAt(invocation.worktreePath, "src/inside.ts", "inside\n");
+        return {
+          kind: "success",
+          output: { stdout: "wrote three files", stderr: "" },
+          exitCode: 0,
+          durationMs: 5,
+        };
+      },
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      "lib/other.md (no allowed path pattern matched); z-root.txt (no allowed path pattern matched)",
+    );
+    expect(outcome.reason).not.toContain("src/inside.ts");
+    expect((await storedTask()).status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+  });
+
+  it("fails when a changed path is forbidden even though it is also allowed", async () => {
+    await seedScopedTask(taskId, ["src/**"], ["src/generated/**"]);
+    wireOrchestrator({
+      agent: agentAppliesChange({
+        path: "src/generated/schema.ts",
+        content: "export const schema = {};\n",
+      }),
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'src/generated/schema.ts (forbidden by "src/generated/**")',
+    );
+    expect((await storedTask()).status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+    expect(await headRevision(`task/${taskId}/attempt-1`)).toBe(baseRevision);
+    expect(await headRevision("HEAD")).toBe(baseRevision);
+  });
+
+  it("validates modified tracked files against the task scope", async () => {
+    await seedScopedTask(taskId, ["**"], ["README.md"]);
+    wireOrchestrator({
+      agent: (invocation) => {
+        writeChangeAt(invocation.worktreePath, "README.md", "modified\n");
+        return {
+          kind: "success",
+          output: { stdout: "modified README.md", stderr: "" },
+          exitCode: 0,
+          durationMs: 5,
+        };
+      },
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'README.md (forbidden by "README.md")',
+    );
+    expect(verification.runs).toHaveLength(0);
+    expect(await headRevision(`task/${taskId}/attempt-1`)).toBe(baseRevision);
+  });
+
+  it("validates deleted tracked files against the task scope", async () => {
+    await seedScopedTask(taskId, ["**"], ["README.md"]);
+    wireOrchestrator({
+      agent: (invocation) => {
+        unlinkSync(join(invocation.worktreePath, "README.md"));
+        return {
+          kind: "success",
+          output: { stdout: "deleted README.md", stderr: "" },
+          exitCode: 0,
+          durationMs: 5,
+        };
+      },
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'README.md (forbidden by "README.md")',
+    );
+    expect(verification.runs).toHaveLength(0);
+    expect(await headRevision(`task/${taskId}/attempt-1`)).toBe(baseRevision);
+  });
+
+  it("completes a valid scoped task that modifies and deletes tracked files", async () => {
+    await seedScopedTask(taskId, ["**"], ["docs/**"]);
+    wireOrchestrator({
+      agent: (invocation) => {
+        writeChangeAt(invocation.worktreePath, "README.md", "updated\n");
+        unlinkSync(join(invocation.worktreePath, "AGENTS.md"));
+        writeChangeAt(invocation.worktreePath, change.path, change.content);
+        return {
+          kind: "success",
+          output: { stdout: "changed tracked files", stderr: "" },
+          exitCode: 0,
+          durationMs: 5,
+        };
+      },
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectCompleted(outcome);
+    expect(verification.runs).toHaveLength(1);
+    expect((await storedTask()).status).toBe("DONE");
+    expect(await headRevision("HEAD")).not.toBe(baseRevision);
+  });
+
+  it("validates the previous path of renamed files against the task scope", async () => {
+    await commitFixtureFile("docs/legacy.txt", "legacy\n");
+    await seedScopedTask(taskId, ["**"], ["docs/**"]);
+    wireOrchestrator({ agent: agentRenamesViaGit("docs/legacy.txt", "moved-legacy.txt") });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'docs/legacy.txt (forbidden by "docs/**")',
+    );
+    expect(verification.runs).toHaveLength(0);
+    const taskBase = await headRevision("HEAD");
+    expect(await headRevision(`task/${taskId}/attempt-1`)).toBe(taskBase);
+  });
+
+  it("completes a scoped task whose staged rename stays inside the allowed paths", async () => {
+    await commitFixtureFile("src/keep.txt", "keep\n");
+    const taskBase = await headRevision("HEAD");
+    await seedScopedTask(taskId, ["src/**"], ["docs/**"]);
+    wireOrchestrator({ agent: agentRenamesViaGit("src/keep.txt", "src/renamed.txt") });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectCompleted(outcome);
+    expect(verification.runs).toHaveLength(1);
+    expect((await storedTask()).status).toBe("DONE");
+    expect(await headRevision(`task/${taskId}/attempt-1`)).not.toBe(taskBase);
+  });
+
+  it("matches repository-relative scope patterns against Windows-style host paths", async () => {
+    wireOrchestrator({ agent: agentAppliesChange(change) });
+    const scopedGit = withExtraStatusEntries(git, [
+      {
+        indexStatus: "?",
+        worktreeStatus: "?",
+        path: "docs\\secret.md",
+      },
+    ]);
+    orchestrator = createSingleTaskOrchestrator({
+      store,
+      git: scopedGit,
+      agent,
+      verification,
+      verificationChecks: [
+        { name: "typecheck", executable: "node", args: ["--version"] },
+        { name: "unit", executable: "node", args: ["--version"] },
+      ],
+      projectRoot: repoPath,
+      worktreesDir,
+      agentTimeoutMs: 5_000,
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'docs/secret.md (forbidden by "docs/**")',
+    );
+    expect(verification.runs).toHaveLength(0);
+  });
+
+  it("completes a scoped task when the Git layer reports Windows-style host paths", async () => {
+    const scopedGit = withExtraStatusEntries(git, [
+      { indexStatus: "M", worktreeStatus: "M", path: "src\\utils.ts" },
+    ]);
+    wireOrchestrator({ agent: agentAppliesChange(change) });
+    orchestrator = createSingleTaskOrchestrator({
+      store,
+      git: scopedGit,
+      agent,
+      verification,
+      verificationChecks: [
+        { name: "typecheck", executable: "node", args: ["--version"] },
+        { name: "unit", executable: "node", args: ["--version"] },
+      ],
+      projectRoot: repoPath,
+      worktreesDir,
+      agentTimeoutMs: 5_000,
+    });
+
+    const outcome = await orchestrator.run(taskId);
+
+    expectCompleted(outcome);
+    expect(verification.runs).toHaveLength(1);
+    expect((await storedTask()).status).toBe("DONE");
+  });
+
   it("prevents commit, integration, and DONE when verification fails", async () => {
     wireOrchestrator({
       agent: agentAppliesChange(change),
@@ -747,7 +1062,7 @@ describe("SingleTaskOrchestrator", () => {
     });
     wireOrchestrator({
       agent: async (invocation) => {
-        writeFileSync(join(invocation.worktreePath, change.path), change.content);
+        writeChangeAt(invocation.worktreePath, change.path, change.content);
         await gate;
         return {
           kind: "success",

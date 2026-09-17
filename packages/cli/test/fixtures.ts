@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Attempt, Project, Task } from "@agentic-dev-runner/core";
 import type { AgentDescriptor, AgentExecutionResult, AgentInvocation, AgentRuntime } from "@agentic-dev-runner/agents";
 import type { VerificationEngine, VerificationRunInput, VerificationRunResult } from "@agentic-dev-runner/verification";
@@ -91,7 +91,9 @@ export class RecordingAgentRuntime implements AgentRuntime {
 
   async invoke(invocation: AgentInvocation): Promise<AgentExecutionResult> {
     this.invocations.push(invocation);
-    writeFileSync(join(invocation.worktreePath, "change.txt"), "change\n");
+    const target = join(invocation.worktreePath, "src", "change.txt");
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, "change\n");
     return { kind: "success", output: { stdout: "ok" }, exitCode: 0, durationMs: 1 };
   }
 }

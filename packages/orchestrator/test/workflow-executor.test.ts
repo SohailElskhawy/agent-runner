@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import { createGitManager, GitError } from "@agentic-dev-runner/git";
-import type { GitManager } from "@agentic-dev-runner/git";
+import type { GitManager, GitStatusEntry } from "@agentic-dev-runner/git";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import type { RunnerStore, StoredEvent } from "@agentic-dev-runner/persistence";
 import type { StageRun, Task, WorkflowDefinition } from "@agentic-dev-runner/core";
@@ -149,6 +149,25 @@ function agentReplies(stdout: string): AgentBehavior {
     output: { stdout, stderr: "" },
     exitCode: 0,
     durationMs: 5,
+  });
+}
+
+function withExtraStatusEntries(
+  inner: GitManager,
+  extra: readonly GitStatusEntry[],
+): GitManager {
+  return new Proxy(inner, {
+    get(target, property) {
+      if (property === "status") {
+        return (cwd: string) =>
+          target.status(cwd).then((status) => ({
+            ...status,
+            entries: [...status.entries, ...extra],
+          }));
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
   });
 }
 
@@ -628,6 +647,200 @@ describe("WorkflowTaskExecutor", () => {
     expect(eventsOfType(events, ORCHESTRATION_EVENTS.integrationCompleted)).toHaveLength(0);
     const transitions = transitionPayloads(events);
     expect(transitions).not.toContainEqual(["VERIFYING", "INTEGRATING"]);
+  });
+
+  it("fails the task without verification, commit, or integration when a changed path is outside the allowed scope", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({
+        implement: agentImplements({
+          path: "root.txt",
+          content: "outside scope\n",
+        }),
+      }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      "task scope violation: the following changed paths are outside the task scope",
+    );
+    expect(outcome.reason).toContain(
+      "root.txt (no allowed path pattern matched)",
+    );
+    expect(outcome.task.status).toBe("FAILED");
+    expect(outcome.attempt.status).toBe("FAILED");
+    expect(outcome.attempt.failure?.kind).toBe("error");
+    expect(outcome.attempt.failure?.message).toContain("root.txt");
+    expect(verification.runs).toHaveLength(0);
+    expect(existsSync(join(worktreesDir, taskId, "attempt-1"))).toBe(true);
+    expect(outcome.cleanup).toEqual({ kind: "skipped", reason: "dirty-worktree" });
+
+    const events = await store.listEvents({ taskId });
+    expect(
+      eventsOfType(events, ORCHESTRATION_EVENTS.verificationCompleted),
+    ).toHaveLength(0);
+    expect(eventsOfType(events, ORCHESTRATION_EVENTS.commitCreated)).toHaveLength(0);
+    expect(
+      eventsOfType(events, ORCHESTRATION_EVENTS.integrationCompleted),
+    ).toHaveLength(0);
+    const transitions = transitionPayloads(events);
+    expect(transitions).toContainEqual(["CODE_REVIEW", "FAILED"]);
+    expect(transitions).not.toContainEqual(["CODE_REVIEW", "VERIFYING"]);
+    expect(transitions).not.toContainEqual(["VERIFYING", "INTEGRATING"]);
+    expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
+  });
+
+  it("fails when a changed path is forbidden even though it is also inside the allowed scope", async () => {
+    await store.putTask({
+      ...createTask({ id: taskId, status: "READY" }),
+      definition: {
+        ...createTask({ id: taskId, status: "READY" }).definition,
+        scope: {
+          allowedPaths: ["src/**"],
+          forbiddenPaths: ["src/generated/**"],
+        },
+      },
+    });
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({
+        implement: agentImplements({
+          path: "src/generated/schema.ts",
+          content: "export const schema = {};\n",
+        }),
+      }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'src/generated/schema.ts (forbidden by "src/generated/**")',
+    );
+    expect(outcome.task.status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+    const events = await store.listEvents({ taskId });
+    expect(eventsOfType(events, ORCHESTRATION_EVENTS.commitCreated)).toHaveLength(0);
+    expect(transitionPayloads(events)).not.toContainEqual([
+      "INTEGRATING",
+      "DONE",
+    ]);
+  });
+
+  it("fails on the violating paths when mixed in-scope and out-of-scope changes are produced", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({
+        implement: (invocation) => {
+          agentImplements(change)(invocation);
+          agentImplements({ path: "lib/other.md", content: "other\n" })(
+            invocation,
+          );
+          return {
+            kind: "success",
+            output: { stdout: "wrote two files", stderr: "" },
+            exitCode: 0,
+            durationMs: 5,
+          };
+        },
+      }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      "lib/other.md (no allowed path pattern matched)",
+    );
+    expect(outcome.reason).not.toContain("src/utils.ts");
+    expect(outcome.task.status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+  });
+
+  it("matches repository-relative scope patterns against Windows-style reported paths", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      gitOverride: withExtraStatusEntries(git, [
+        {
+          indexStatus: "?",
+          worktreeStatus: "?",
+          path: "docs\\secret.md",
+        },
+      ]),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'docs/secret.md (forbidden by "docs/**")',
+    );
+    expect(outcome.task.status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+  });
+
+  it("completes a workflow when the Git layer reports Windows-style in-scope paths", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      gitOverride: withExtraStatusEntries(git, [
+        { indexStatus: "M", worktreeStatus: "M", path: "src\\utils.ts" },
+      ]),
+    });
+
+    const outcome = await executor.run();
+
+    expectCompleted(outcome);
+    expect(outcome.task.status).toBe("DONE");
+    expect(verification.runs).toHaveLength(2);
+  });
+
+  it("validates the previous path of a renamed file against the task scope", async () => {
+    const legacyDir = join(repoPath, "docs");
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyDir, "legacy.txt"), "legacy\n");
+    await runFixtureGit(runner, repoPath, ["add", "docs/legacy.txt"]);
+    await runFixtureGit(runner, repoPath, [
+      "commit",
+      "-m",
+      "fixture: docs/legacy.txt",
+    ]);
+    const taskBaseRevision = (
+      await runFixtureGit(runner, repoPath, ["rev-parse", "HEAD"])
+    ).trim();
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({
+        implement: (invocation) => {
+          mkdirSync(join(invocation.worktreePath, "src"), { recursive: true });
+          return runFixtureGit(runner, invocation.worktreePath, [
+            "mv",
+            "docs/legacy.txt",
+            "src/renamed.txt",
+          ]).then(() => ({
+            kind: "success",
+            output: { stdout: "moved docs/legacy.txt", stderr: "" },
+            exitCode: 0,
+            durationMs: 5,
+          }));
+        },
+      }),
+    });
+
+    const outcome = await executor.run();
+
+    expectFailed(outcome);
+    expect(outcome.reason).toContain(
+      'docs/legacy.txt (forbidden by "docs/**")',
+    );
+    expect(outcome.task.status).toBe("FAILED");
+    expect(verification.runs).toHaveLength(0);
+    const attemptHead = (
+      await runFixtureGit(runner, repoPath, [
+        "rev-parse",
+        `refs/heads/task/${taskId}/attempt-1`,
+      ])
+    ).trim();
+    expect(attemptHead).toBe(taskBaseRevision);
+    const events = await store.listEvents({ taskId });
+    expect(eventsOfType(events, ORCHESTRATION_EVENTS.commitCreated)).toHaveLength(0);
   });
 
   it("does not mark DONE when integration fails", async () => {

@@ -79,6 +79,15 @@ export {
   type CodeReviewFixLoopOptions,
   type CodeReviewFixLoopOutcome,
 } from "./review-fix-loop.js";
+export {
+  describeTaskScopeViolations,
+  matchesScopePattern,
+  normalizeScopePath,
+  validateTaskScope,
+  type TaskScopeValidationResult,
+  type TaskScopeViolation,
+  type TaskScopeViolationKind,
+} from "./task-scope.js";
 
 export {
   createWorkflowTaskExecutor,

@@ -38,13 +38,14 @@ import {
   failedVerificationRun,
   passedVerificationRun,
   runFixtureGit,
+  writeChangeAt,
 } from "./fixtures.js";
 import type { VerificationResponse } from "./fixtures.js";
 
 const taskId = "M001";
 const attemptId = "att_M001_1";
 const change = {
-  path: "utils.ts",
+  path: "src/utils.ts",
   content: "export const add = (a: number, b: number): number => a + b;\n",
 };
 const commitMessage = `task ${taskId}: Add a small utility function`;
@@ -162,7 +163,7 @@ async function createInterruptedWorktree(): Promise<{
 }
 
 async function commitTaskChange(worktreePath: string): Promise<string> {
-  writeFileSync(join(worktreePath, change.path), change.content);
+  writeChangeAt(worktreePath, change.path, change.content);
   await git.stageAll(worktreePath);
   return await git.commitStaged(worktreePath, commitMessage);
 }
@@ -285,7 +286,7 @@ describe("CrashRecovery", () => {
 
   it("preserves uncommitted agent changes after a crash during agent execution", async () => {
     const { worktreePath } = await createInterruptedWorktree();
-    writeFileSync(join(worktreePath, change.path), change.content);
+    writeChangeAt(worktreePath, change.path, change.content);
     await seedTask("IMPLEMENTING");
     await store.putAttempt(runningAttempt());
 
@@ -308,7 +309,7 @@ describe("CrashRecovery", () => {
 
   it("is idempotent when reconciliation already moved the task out of the active state", async () => {
     const { worktreePath } = await createInterruptedWorktree();
-    writeFileSync(join(worktreePath, change.path), change.content);
+    writeChangeAt(worktreePath, change.path, change.content);
     await seedTask("IMPLEMENTING");
     await store.putAttempt(runningAttempt());
 
@@ -366,7 +367,7 @@ describe("CrashRecovery", () => {
 
   it("reruns deterministic verification after a crash during verification and integrates exactly once", async () => {
     const { worktreePath } = await createInterruptedWorktree();
-    writeFileSync(join(worktreePath, change.path), change.content);
+    writeChangeAt(worktreePath, change.path, change.content);
     await git.stageAll(worktreePath);
     await seedTask("VERIFYING");
     await store.putAttempt(runningAttempt());
@@ -409,7 +410,7 @@ describe("CrashRecovery", () => {
 
   it("does not fabricate verification success when the rerun fails", async () => {
     const { worktreePath } = await createInterruptedWorktree();
-    writeFileSync(join(worktreePath, change.path), change.content);
+    writeChangeAt(worktreePath, change.path, change.content);
     await git.stageAll(worktreePath);
     await seedTask("VERIFYING");
     await store.putAttempt(runningAttempt());
@@ -434,7 +435,7 @@ describe("CrashRecovery", () => {
 
   it("continues from durably recorded passing verification without rerunning verification", async () => {
     const { worktreePath } = await createInterruptedWorktree();
-    writeFileSync(join(worktreePath, change.path), change.content);
+    writeChangeAt(worktreePath, change.path, change.content);
     await git.stageAll(worktreePath);
     await seedTask("VERIFYING");
     await store.putAttempt(runningAttempt());
@@ -471,7 +472,7 @@ describe("CrashRecovery", () => {
 
   it("applies durably recorded failing verification evidence without fabricating success", async () => {
     const { worktreePath } = await createInterruptedWorktree();
-    writeFileSync(join(worktreePath, change.path), change.content);
+    writeChangeAt(worktreePath, change.path, change.content);
     await git.stageAll(worktreePath);
     await seedTask("VERIFYING");
     await store.putAttempt(runningAttempt());
@@ -638,7 +639,7 @@ describe("CrashRecovery", () => {
 
   it("reconciles every unfinished task without scheduling or parallelism", async () => {
     const first = await createInterruptedWorktree();
-    writeFileSync(join(first.worktreePath, change.path), change.content);
+    writeChangeAt(first.worktreePath, change.path, change.content);
     await seedTask("IMPLEMENTING");
     await store.putAttempt(runningAttempt());
 
@@ -647,7 +648,7 @@ describe("CrashRecovery", () => {
     const secondWorktreePath = join(worktreesDir, "M002", "attempt-1");
     await git.createBranch(repoPath, secondBranch);
     await git.createWorktree(repoPath, secondWorktreePath, secondBranch);
-    writeFileSync(join(secondWorktreePath, change.path), change.content);
+    writeChangeAt(secondWorktreePath, change.path, change.content);
     await git.stageAll(secondWorktreePath);
     const secondRevision = await git.commitStaged(
       secondWorktreePath,
