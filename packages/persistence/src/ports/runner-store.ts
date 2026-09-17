@@ -3,6 +3,7 @@ import type {
   AttemptId,
   Project,
   ProjectId,
+  ResourceLock,
   StageRun,
   Task,
   TaskId,
@@ -20,6 +21,16 @@ export type AttemptFilter = {
 export type EventFilter = {
   taskId?: TaskId | undefined;
   type?: string | undefined;
+};
+
+/**
+ * Selects the resource locks to release by ownership. At least one filter
+ * field must be provided: a filter without fields would release every lock
+ * in the store and is rejected deterministically.
+ */
+export type ResourceLockFilter = {
+  readonly taskId?: TaskId | undefined;
+  readonly attemptId?: AttemptId | undefined;
 };
 
 export interface RunnerStore {
@@ -46,6 +57,25 @@ export interface RunnerStore {
 
   putStageRun(stageRun: StageRun): Promise<void>;
   listStageRuns(attemptId: AttemptId): Promise<StageRun[]>;
+
+  /**
+   * Every currently held exclusive resource lock, ordered by resource.
+   */
+  listResourceLocks(filter?: ResourceLockFilter): Promise<ResourceLock[]>;
+
+  /**
+   * Acquires the given resource locks all-or-nothing inside one transaction.
+   * When any resource is already held by a different owner the acquisition
+   * fails and no lock is changed; locks already held by the same owner are
+   * idempotent no-ops. Duplicate resources within the request must carry
+   * the same ownership and collapse into a single lock.
+   */
+  acquireResourceLocks(locks: readonly ResourceLock[]): Promise<void>;
+
+  /**
+   * Releases exactly the locks matching the given ownership filter.
+   */
+  releaseResourceLocks(filter: ResourceLockFilter): Promise<void>;
 
   appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]>;
   listEvents(filter?: EventFilter): Promise<StoredEvent[]>;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   Attempt,
   Project,
+  ResourceLock,
   StageRun,
   Task,
 } from "@agentic-dev-runner/core";
@@ -73,6 +74,11 @@ class RecordingStore implements RunnerStore {
   async listStageRuns(): Promise<StageRun[]> {
     return [];
   }
+  async listResourceLocks(): Promise<ResourceLock[]> {
+    return [];
+  }
+  async acquireResourceLocks(): Promise<void> {}
+  async releaseResourceLocks(): Promise<void> {}
   async appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]> {
     this.events.push(...events);
     return [];

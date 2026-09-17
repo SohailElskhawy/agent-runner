@@ -16,6 +16,7 @@ import {
   type ContextManifest,
   type Project,
   type ProjectId,
+  type ResourceLock,
   type StageRun,
   type StageRunFailure,
   type StageRunOutput,
@@ -29,6 +30,7 @@ import type { NewEvent, StoredEvent } from "../ports/event.js";
 import {
   type AttemptFilter,
   type EventFilter,
+  type ResourceLockFilter,
   type RunnerStore,
   type TaskFilter,
 } from "../ports/runner-store.js";
@@ -323,6 +325,104 @@ export class SqliteRunnerStore implements RunnerStore {
     return rows.map(stageRunFromRow);
   }
 
+  async listResourceLocks(filter?: ResourceLockFilter): Promise<ResourceLock[]> {
+    const db = this.requireDb("listResourceLocks");
+    const conditions: string[] = [];
+    const parameters: SqlValue[] = [];
+    if (filter?.taskId !== undefined) {
+      conditions.push("task_id = ?");
+      parameters.push(filter.taskId);
+    }
+    if (filter?.attemptId !== undefined) {
+      conditions.push("attempt_id = ?");
+      parameters.push(filter.attemptId);
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+    const rows = getRows(
+      db.prepare(`SELECT * FROM resource_locks${where} ORDER BY resource`),
+      parameters,
+    );
+    return rows.map(resourceLockFromRow);
+  }
+
+  async acquireResourceLocks(locks: readonly ResourceLock[]): Promise<void> {
+    if (locks.length === 0) {
+      return;
+    }
+    const db = this.requireDb("acquireResourceLocks");
+    if (db.isTransaction) {
+      throw new PersistenceError("Nested transactions are not supported");
+    }
+    const requested = requestedResourceLocks(locks);
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const selectLock = db.prepare(
+        "SELECT * FROM resource_locks WHERE resource = ?",
+      );
+      const insertLock = db.prepare(
+        `INSERT INTO resource_locks (resource, task_id, attempt_id, acquired_at)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const lock of requested) {
+        const existing = getRow(selectLock, [lock.resource]);
+        if (existing === undefined) {
+          try {
+            insertLock.run(
+              lock.resource,
+              lock.taskId,
+              lock.attemptId ?? null,
+              lock.acquiredAt ?? null,
+            );
+          } catch (error) {
+            throw missingLockOwnerError(lock, error);
+          }
+          continue;
+        }
+        const held = resourceLockFromRow(existing);
+        if (
+          held.taskId !== lock.taskId ||
+          held.attemptId !== lock.attemptId
+        ) {
+          throw new PersistenceError(
+            `Resource "${lock.resource}" is already held by task "${held.taskId}"` +
+              (held.attemptId === undefined
+                ? ""
+                : ` (attempt "${held.attemptId}")`),
+          );
+        }
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
+      throw error instanceof PersistenceError
+        ? error
+        : new PersistenceError("Resource lock acquisition failed", error);
+    }
+  }
+
+  async releaseResourceLocks(filter: ResourceLockFilter): Promise<void> {
+    if (filter.taskId === undefined && filter.attemptId === undefined) {
+      throw new PersistenceError(
+        "Releasing resource locks requires an explicit task or attempt filter",
+      );
+    }
+    const db = this.requireDb("releaseResourceLocks");
+    const conditions: string[] = [];
+    const parameters: SqlValue[] = [];
+    if (filter.taskId !== undefined) {
+      conditions.push("task_id = ?");
+      parameters.push(filter.taskId);
+    }
+    if (filter.attemptId !== undefined) {
+      conditions.push("attempt_id = ?");
+      parameters.push(filter.attemptId);
+    }
+    db.prepare(`DELETE FROM resource_locks WHERE ${conditions.join(" AND ")}`)
+      .run(...parameters);
+  }
+
   async getTaskStatus(id: TaskId): Promise<TaskStatus | null> {
     const db = this.requireDb("getTaskStatus");
     const row = getRow(
@@ -525,8 +625,74 @@ function storedEventFromRow(row: Record<string, unknown>): StoredEvent {
   };
 }
 
-function stageRunFromRow(row: Record<string, unknown>): StageRun {
-  const startedAt = optionalTextColumn(row, "started_at");
+/**
+ * Normalizes an acquisition request into unique, ascending-ordered locks.
+ * Duplicate resources must carry identical ownership and collapse into one
+ * lock; conflicting duplicates are rejected deterministically before any
+ * database access.
+ */
+function requestedResourceLocks(
+  locks: readonly ResourceLock[],
+): readonly ResourceLock[] {
+  const requested = new Map<string, ResourceLock>();
+  for (const lock of locks) {
+    if (typeof lock.resource !== "string" || lock.resource.length === 0) {
+      throw new PersistenceError(
+        "Every acquired resource lock must have a non-empty resource",
+      );
+    }
+    if (typeof lock.taskId !== "string" || lock.taskId.length === 0) {
+      throw new PersistenceError(
+        `Resource lock "${lock.resource}" must have a non-empty owning task`,
+      );
+    }
+    const existing = requested.get(lock.resource);
+    if (existing === undefined) {
+      requested.set(lock.resource, lock);
+      continue;
+    }
+    if (
+      existing.taskId !== lock.taskId ||
+      existing.attemptId !== lock.attemptId
+    ) {
+      throw new PersistenceError(
+        `Duplicate acquisition request for resource "${lock.resource}" carries conflicting ownership`,
+      );
+    }
+  }
+  return [...requested.values()].sort((left, right) =>
+    left.resource < right.resource ? -1 : left.resource > right.resource ? 1 : 0,
+  );
+}
+
+function missingLockOwnerError(
+  lock: ResourceLock,
+  error: unknown,
+): PersistenceError {
+  if (isForeignKeyViolation(error)) {
+    return new PersistenceError(
+      `Cannot acquire resource "${lock.resource}": owning task "${lock.taskId}" does not exist`,
+      error,
+    );
+  }
+  return new PersistenceError(
+    `Failed to acquire resource lock "${lock.resource}"`,
+    error,
+  );
+}
+
+function resourceLockFromRow(row: Record<string, unknown>): ResourceLock {
+  const attemptId = optionalTextColumn(row, "attempt_id");
+  const acquiredAt = optionalTextColumn(row, "acquired_at");
+  return {
+    resource: textColumn(row, "resource"),
+    taskId: textColumn(row, "task_id"),
+    ...(attemptId === null ? {} : { attemptId }),
+    ...(acquiredAt === null ? {} : { acquiredAt }),
+  };
+}
+
+function stageRunFromRow(row: Record<string, unknown>): StageRun {  const startedAt = optionalTextColumn(row, "started_at");
   const finishedAt = optionalTextColumn(row, "finished_at");
   const failure = optionalJsonColumn<StageRunFailure>(row, "failure_json");
   const output = optionalJsonColumn<StageRunOutput>(row, "output_json");

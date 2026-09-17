@@ -60,6 +60,15 @@ function probeChain(): readonly SchemaMigration[] {
         );
       },
     },
+    {
+      version: 5,
+      name: "test-only-beyond-supported-migration-probe",
+      up: (db) => {
+        db.exec(
+          "INSERT INTO migration_probe (marker) VALUES ('v5-applied')",
+        );
+      },
+    },
   ];
 }
 
@@ -67,7 +76,7 @@ function failingProbeChain(): readonly SchemaMigration[] {
   return [
     ...probeChain(),
     {
-      version: 5,
+      version: 6,
       name: "test-only-invalid-sql",
       up: (db) => {
         db.exec("CREATE TABLE definitely_broken (");
@@ -164,6 +173,11 @@ describe("SQLite schema migrations", () => {
         name: "add-stage-run-output",
         appliedAt: expect.any(String),
       },
+      {
+        version: 4,
+        name: "add-resource-locks",
+        appliedAt: expect.any(String),
+      },
     ]);
   });
 
@@ -205,6 +219,11 @@ describe("SQLite schema migrations", () => {
         {
           version: 3,
           name: "add-stage-run-output",
+          appliedAt: expect.any(String),
+        },
+        {
+          version: 4,
+          name: "add-resource-locks",
           appliedAt: expect.any(String),
         },
       ]);
@@ -251,6 +270,11 @@ describe("SQLite schema migrations", () => {
           {
             version: 3,
             name: "add-stage-run-output",
+            appliedAt: expect.any(String),
+          },
+          {
+            version: 4,
+            name: "add-resource-locks",
             appliedAt: expect.any(String),
           },
         ]);
@@ -300,8 +324,17 @@ describe("SQLite schema migrations", () => {
           name: "test-only-far-future-migration-probe",
           appliedAt: expect.any(String),
         },
+        {
+          version: 5,
+          name: "test-only-beyond-supported-migration-probe",
+          appliedAt: expect.any(String),
+        },
       ]);
-      expect(readProbeMarkers(dbPath)).toEqual(["v3-applied", "v4-applied"]);
+      expect(readProbeMarkers(dbPath)).toEqual([
+        "v3-applied",
+        "v4-applied",
+        "v5-applied",
+      ]);
       expect(await upgraded.getProject(legacy.id)).toEqual(legacy);
       expect(await upgraded.getTask("M001")).toEqual(createTask());
     });
@@ -339,9 +372,9 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(SchemaVersionTooNewError);
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
-    expect((rejection as Error).message).toContain("schema version 4");
+    expect((rejection as Error).message).toContain("schema version 5");
     expect((rejection as Error).message).toContain(
-      "supported schema version 3",
+      "supported schema version 4",
     );
   });
 
@@ -353,7 +386,7 @@ describe("SQLite schema migrations", () => {
           migrations: probeChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(4);
+      ).toBe(5);
 
       expect(() =>
         migrateSchema(db, { migrations: [initialSchemaMigration()] }),
@@ -391,7 +424,7 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(PersistenceError);
     expect((rejection as Error).message).toBe(
-      'Schema migration "test-only-invalid-sql" (version 5) failed',
+      'Schema migration "test-only-invalid-sql" (version 6) failed',
     );
     expect(readMigrationRows(dbPath)).toEqual([
       { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
@@ -452,6 +485,11 @@ describe("SQLite schema migrations", () => {
           name: "add-stage-run-output",
           appliedAt: expect.any(String),
         },
+        {
+          version: 4,
+          name: "add-resource-locks",
+          appliedAt: expect.any(String),
+        },
       ]);
     });
   });
@@ -464,13 +502,13 @@ describe("SQLite schema migrations", () => {
           migrations: probeChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(4);
+      ).toBe(5);
       expect(
         migrateSchema(db, {
           migrations: probeChain(),
           now: () => "2026-01-02T00:00:00.000Z",
         }),
-      ).toBe(4);
+      ).toBe(5);
     } finally {
       db.close();
     }
@@ -496,8 +534,17 @@ describe("SQLite schema migrations", () => {
         name: "test-only-far-future-migration-probe",
         appliedAt: FIXED_CLOCK,
       },
+      {
+        version: 5,
+        name: "test-only-beyond-supported-migration-probe",
+        appliedAt: FIXED_CLOCK,
+      },
     ]);
-    expect(readProbeMarkers(dbPath)).toEqual(["v3-applied", "v4-applied"]);
+    expect(readProbeMarkers(dbPath)).toEqual([
+      "v3-applied",
+      "v4-applied",
+      "v5-applied",
+    ]);
   });
 
   it("bootstraps a pre-migration database and preserves its data", async () => {
@@ -527,6 +574,11 @@ describe("SQLite schema migrations", () => {
         {
           version: 3,
           name: "add-stage-run-output",
+          appliedAt: expect.any(String),
+        },
+        {
+          version: 4,
+          name: "add-resource-locks",
           appliedAt: expect.any(String),
         },
       ]);

@@ -108,6 +108,25 @@ export function applyStageRunOutputSchema(db: SchemaMigrationDatabase): void {
   }
 }
 
+const SCHEMA_V4_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS resource_locks (
+  resource TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  attempt_id TEXT,
+  acquired_at TEXT,
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+) STRICT`,
+
+  `CREATE INDEX IF NOT EXISTS idx_resource_locks_task_id ON resource_locks(task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_resource_locks_attempt_id ON resource_locks(attempt_id)`,
+];
+
+export function applyResourceLocksSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V4_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -123,6 +142,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 3,
     name: "add-stage-run-output",
     up: applyStageRunOutputSchema,
+  },
+  {
+    version: 4,
+    name: "add-resource-locks",
+    up: applyResourceLocksSchema,
   },
 ];
 

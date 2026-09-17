@@ -9,6 +9,7 @@ export * from "./task.js";
 export * from "./task-ingestion.js";
 export * from "./task-selection.js";
 export * from "./scheduling-priority.js";
+export * from "./resource-lock.js";
 export * from "./context-manifest.js";
 export * from "./context-pack.js";
 export * from "./attempt.js";

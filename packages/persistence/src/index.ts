@@ -2,6 +2,7 @@ export { type NewEvent, type StoredEvent } from "./ports/event.js";
 export {
   type AttemptFilter,
   type EventFilter,
+  type ResourceLockFilter,
   type RunnerStore,
   type TaskFilter,
 } from "./ports/runner-store.js";
