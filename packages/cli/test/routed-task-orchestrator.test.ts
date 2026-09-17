@@ -79,6 +79,17 @@ class RecordingStore implements RunnerStore {
   }
   async acquireResourceLocks(): Promise<void> {}
   async releaseResourceLocks(): Promise<void> {}
+  async listIntegrationQueueEntries(): Promise<never[]> {
+    return [];
+  }
+  async enqueueIntegrationQueueEntry(): Promise<never> {
+    throw new Error("integration queue must not be used in routing tests");
+  }
+  async claimNextIntegrationQueueEntry(): Promise<null> {
+    return null;
+  }
+  async completeIntegrationQueueEntry(): Promise<void> {}
+  async failIntegrationQueueEntry(): Promise<void> {}
   async appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]> {
     this.events.push(...events);
     return [];

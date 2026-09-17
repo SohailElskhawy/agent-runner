@@ -11,6 +11,7 @@ export * from "./task-selection.js";
 export * from "./scheduling-priority.js";
 export * from "./resource-lock.js";
 export * from "./task-conflicts.js";
+export * from "./integration-queue.js";
 export * from "./context-manifest.js";
 export * from "./context-pack.js";
 export * from "./attempt.js";

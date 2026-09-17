@@ -1,6 +1,10 @@
 import type {
   Attempt,
   AttemptId,
+  IntegrationQueueEntry,
+  IntegrationQueueRequest,
+  IntegrationQueueStatus,
+  IsoTimestamp,
   Project,
   ProjectId,
   ResourceLock,
@@ -31,6 +35,16 @@ export type EventFilter = {
 export type ResourceLockFilter = {
   readonly taskId?: TaskId | undefined;
   readonly attemptId?: AttemptId | undefined;
+};
+
+/**
+ * Selects the integration queue entries to list. Every field is optional;
+ * an empty filter lists the whole queue history.
+ */
+export type IntegrationQueueFilter = {
+  readonly taskId?: TaskId | undefined;
+  readonly attemptId?: AttemptId | undefined;
+  readonly status?: IntegrationQueueStatus | undefined;
 };
 
 export interface RunnerStore {
@@ -76,6 +90,58 @@ export interface RunnerStore {
    * Releases exactly the locks matching the given ownership filter.
    */
   releaseResourceLocks(filter: ResourceLockFilter): Promise<void>;
+
+  /**
+   * Every integration queue entry matching the filter, in the canonical
+   * deterministic queue order: enqueue sequence ascending, entry id
+   * ascending. Completed and failed entries are preserved history and stay
+   * listed until explicitly filtered out.
+   */
+  listIntegrationQueueEntries(
+    filter?: IntegrationQueueFilter,
+  ): Promise<IntegrationQueueEntry[]>;
+
+  /**
+   * Persists a new integration request for a prepared task/attempt as a
+   * PENDING queue entry. The (task, attempt) pair must not already have an
+   * active (PENDING or INTEGRATING) entry; a duplicate active enqueue is
+   * rejected deterministically. Assigns the durable queue identity and
+   * enqueue sequence and returns the persisted entry.
+   */
+  enqueueIntegrationQueueEntry(
+    request: IntegrationQueueRequest,
+  ): Promise<IntegrationQueueEntry>;
+
+  /**
+   * Atomically claims the next PENDING entry in canonical queue order for
+   * integration, marking it INTEGRATING. At most one entry may be actively
+   * integrating: when an entry is already INTEGRATING, or the queue holds
+   * no PENDING entry, this returns null without changing anything. The
+   * claim is atomic under SQLite concurrency; concurrent claimants never
+   * claim the same entry.
+   */
+  claimNextIntegrationQueueEntry(
+    claimedAt: IsoTimestamp,
+  ): Promise<IntegrationQueueEntry | null>;
+
+  /**
+   * Marks the actively integrating entry with the given id COMPLETED.
+   * Completing an entry that is not actively integrating fails
+   * deterministically. The entry is preserved as history, never deleted.
+   */
+  completeIntegrationQueueEntry(id: string, finishedAt: IsoTimestamp): Promise<void>;
+
+  /**
+   * Marks the actively integrating entry with the given id FAILED with a
+   * durable failure reason. Failing an entry that is not actively
+   * integrating fails deterministically. The entry is preserved as
+   * history, never deleted.
+   */
+  failIntegrationQueueEntry(
+    id: string,
+    failure: { readonly message: string },
+    finishedAt: IsoTimestamp,
+  ): Promise<void>;
 
   appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]>;
   listEvents(filter?: EventFilter): Promise<StoredEvent[]>;

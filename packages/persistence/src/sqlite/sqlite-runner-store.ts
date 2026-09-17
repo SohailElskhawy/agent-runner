@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   ATTEMPT_STATUSES,
+  INTEGRATION_QUEUE_STATUSES,
   STAGE_KINDS,
   STAGE_RUN_STATUSES,
   TASK_RISKS,
@@ -14,6 +15,9 @@ import {
   type AttemptId,
   type AttemptLogs,
   type ContextManifest,
+  type IntegrationQueueEntry,
+  type IntegrationQueueRequest,
+  type IsoTimestamp,
   type Project,
   type ProjectId,
   type ResourceLock,
@@ -30,6 +34,7 @@ import type { NewEvent, StoredEvent } from "../ports/event.js";
 import {
   type AttemptFilter,
   type EventFilter,
+  type IntegrationQueueFilter,
   type ResourceLockFilter,
   type RunnerStore,
   type TaskFilter,
@@ -423,6 +428,180 @@ export class SqliteRunnerStore implements RunnerStore {
       .run(...parameters);
   }
 
+  async listIntegrationQueueEntries(
+    filter?: IntegrationQueueFilter,
+  ): Promise<IntegrationQueueEntry[]> {
+    const db = this.requireDb("listIntegrationQueueEntries");
+    const conditions: string[] = [];
+    const parameters: SqlValue[] = [];
+    if (filter?.taskId !== undefined) {
+      conditions.push("task_id = ?");
+      parameters.push(filter.taskId);
+    }
+    if (filter?.attemptId !== undefined) {
+      conditions.push("attempt_id = ?");
+      parameters.push(filter.attemptId);
+    }
+    if (filter?.status !== undefined) {
+      conditions.push("status = ?");
+      parameters.push(filter.status);
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+    const rows = getRows(
+      db.prepare(
+        `SELECT * FROM integration_queue${where} ORDER BY sequence, id`,
+      ),
+      parameters,
+    );
+    return rows.map(integrationQueueEntryFromRow);
+  }
+
+  async enqueueIntegrationQueueEntry(
+    request: IntegrationQueueRequest,
+  ): Promise<IntegrationQueueEntry> {
+    const db = this.requireDb("enqueueIntegrationQueueEntry");
+    const id = request.id ?? `iq_${randomUUID()}`;
+    if (typeof id !== "string" || id.length === 0) {
+      throw new PersistenceError(
+        "Integration queue entry identity must be a non-empty string",
+      );
+    }
+    validateIntegrationQueueRequest(request);
+    try {
+      const result = db
+        .prepare(
+          `INSERT INTO integration_queue (
+             id, task_id, attempt_id, task_revision, branch, base_revision,
+             status, enqueued_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+        )
+        .run(
+          id,
+          request.taskId,
+          request.attemptId,
+          request.taskRevision,
+          request.branch,
+          request.baseRevision,
+          request.enqueuedAt,
+        );
+      return {
+        id,
+        sequence: Number(result.lastInsertRowid),
+        taskId: request.taskId,
+        attemptId: request.attemptId,
+        taskRevision: request.taskRevision,
+        branch: request.branch,
+        baseRevision: request.baseRevision,
+        status: "PENDING",
+        enqueuedAt: request.enqueuedAt,
+      };
+    } catch (error) {
+      throw enqueueIntegrationQueueError(request, error);
+    }
+  }
+
+  async claimNextIntegrationQueueEntry(
+    claimedAt: IsoTimestamp,
+  ): Promise<IntegrationQueueEntry | null> {
+    const db = this.requireDb("claimNextIntegrationQueueEntry");
+    if (db.isTransaction) {
+      throw new PersistenceError("Nested transactions are not supported");
+    }
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const active = getRow(
+        db.prepare(
+          "SELECT * FROM integration_queue WHERE status = 'INTEGRATING' LIMIT 1",
+        ),
+        [],
+      );
+      if (active !== undefined) {
+        db.exec("COMMIT");
+        return null;
+      }
+      const next = getRow(
+        db.prepare(
+          `SELECT * FROM integration_queue
+           WHERE status = 'PENDING'
+           ORDER BY sequence, id
+           LIMIT 1`,
+        ),
+        [],
+      );
+      if (next === undefined) {
+        db.exec("COMMIT");
+        return null;
+      }
+      const entry = integrationQueueEntryFromRow(next);
+      const updated = db
+        .prepare(
+          `UPDATE integration_queue
+           SET status = 'INTEGRATING', claimed_at = ?
+           WHERE sequence = ? AND status = 'PENDING'`,
+        )
+        .run(claimedAt, entry.sequence);
+      if (Number(updated.changes) === 0) {
+        throw new PersistenceError(
+          `Integration queue entry "${entry.id}" was claimed concurrently; the claim is aborted`,
+        );
+      }
+      db.exec("COMMIT");
+      return { ...entry, status: "INTEGRATING", claimedAt };
+    } catch (error) {
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
+      throw error instanceof PersistenceError
+        ? error
+        : new PersistenceError("Integration queue claim failed", error);
+    }
+  }
+
+  async completeIntegrationQueueEntry(
+    id: string,
+    finishedAt: IsoTimestamp,
+  ): Promise<void> {
+    const db = this.requireDb("completeIntegrationQueueEntry");
+    const result = db
+      .prepare(
+        `UPDATE integration_queue
+         SET status = 'COMPLETED', finished_at = ?, failure_json = NULL
+         WHERE id = ? AND status = 'INTEGRATING'`,
+      )
+      .run(finishedAt, id);
+    if (Number(result.changes) === 0) {
+      throw new PersistenceError(
+        `Cannot complete integration queue entry "${id}": it is not actively integrating`,
+      );
+    }
+  }
+
+  async failIntegrationQueueEntry(
+    id: string,
+    failure: { readonly message: string },
+    finishedAt: IsoTimestamp,
+  ): Promise<void> {
+    const db = this.requireDb("failIntegrationQueueEntry");
+    if (typeof failure.message !== "string" || failure.message.length === 0) {
+      throw new PersistenceError(
+        `Failed integration queue entry "${id}" requires a non-empty failure message`,
+      );
+    }
+    const result = db
+      .prepare(
+        `UPDATE integration_queue
+         SET status = 'FAILED', finished_at = ?, failure_json = ?
+         WHERE id = ? AND status = 'INTEGRATING'`,
+      )
+      .run(finishedAt, JSON.stringify(failure), id);
+    if (Number(result.changes) === 0) {
+      throw new PersistenceError(
+        `Cannot fail integration queue entry "${id}": it is not actively integrating`,
+      );
+    }
+  }
+
   async getTaskStatus(id: TaskId): Promise<TaskStatus | null> {
     const db = this.requireDb("getTaskStatus");
     const row = getRow(
@@ -690,6 +869,110 @@ function resourceLockFromRow(row: Record<string, unknown>): ResourceLock {
     ...(attemptId === null ? {} : { attemptId }),
     ...(acquiredAt === null ? {} : { acquiredAt }),
   };
+}
+
+function integrationQueueEntryFromRow(
+  row: Record<string, unknown>,
+): IntegrationQueueEntry {
+  const claimedAt = optionalTextColumn(row, "claimed_at");
+  const finishedAt = optionalTextColumn(row, "finished_at");
+  const failure = optionalJsonColumn<{ readonly message: string }>(
+    row,
+    "failure_json",
+  );
+  return {
+    id: textColumn(row, "id"),
+    sequence: numberColumn(row, "sequence"),
+    taskId: textColumn(row, "task_id"),
+    attemptId: textColumn(row, "attempt_id"),
+    taskRevision: textColumn(row, "task_revision"),
+    branch: textColumn(row, "branch"),
+    baseRevision: textColumn(row, "base_revision"),
+    status: parseEnumerated(
+      textColumn(row, "status"),
+      INTEGRATION_QUEUE_STATUSES,
+      "integration queue status",
+    ),
+    enqueuedAt: textColumn(row, "enqueued_at"),
+    ...(claimedAt === null ? {} : { claimedAt }),
+    ...(finishedAt === null ? {} : { finishedAt }),
+    ...(failure === null ? {} : { failure }),
+  };
+}
+
+/**
+ * Validates an enqueue request before any database access so an invalid
+ * request fails deterministically instead of surfacing as a constraint
+ * violation.
+ */
+function validateIntegrationQueueRequest(
+  request: IntegrationQueueRequest,
+): void {
+  requireNonEmptyText(request.taskId, "owning task id");
+  requireNonEmptyText(request.attemptId, "owning attempt id");
+  requireNonEmptyText(request.taskRevision, "task revision");
+  requireNonEmptyText(request.branch, "task branch");
+  requireNonEmptyText(request.baseRevision, "base revision");
+  requireNonEmptyText(request.enqueuedAt, "enqueue timestamp");
+}
+
+function requireNonEmptyText(value: string, label: string): void {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new PersistenceError(
+      `Integration queue entry requires a non-empty ${label}`,
+    );
+  }
+}
+
+/**
+ * Maps enqueue failures onto deterministic persistence errors: a missing
+ * owning task/attempt and an active duplicate of the same (task, attempt)
+ * pair are named explicitly, everything else is wrapped.
+ */
+function enqueueIntegrationQueueError(
+  request: IntegrationQueueRequest,
+  error: unknown,
+): PersistenceError {
+  if (isForeignKeyViolation(error)) {
+    return new PersistenceError(
+      `Cannot enqueue integration queue entry for task "${request.taskId}"` +
+        ` (attempt "${request.attemptId}"): the owning task or attempt does not exist`,
+      error,
+    );
+  }
+  if (isActiveIdentityViolation(error)) {
+    return new PersistenceError(
+      `An active integration queue entry for task "${request.taskId}"` +
+        ` (attempt "${request.attemptId}") already exists`,
+      error,
+    );
+  }
+  if (isDuplicateIdViolation(error)) {
+    return new PersistenceError(
+      `Integration queue entry identity is already in use`,
+      error,
+    );
+  }
+  return new PersistenceError(
+    `Failed to enqueue integration queue entry for task "${request.taskId}"`,
+    error,
+  );
+}
+
+function isActiveIdentityViolation(error: unknown): boolean {
+  return /UNIQUE constraint failed: integration_queue\.task_id, integration_queue\.attempt_id/i.test(
+    sqliteErrorMessage(error) ?? "",
+  );
+}
+
+function isDuplicateIdViolation(error: unknown): boolean {
+  return /UNIQUE constraint failed: integration_queue\.id/i.test(
+    sqliteErrorMessage(error) ?? "",
+  );
+}
+
+function sqliteErrorMessage(error: unknown): string | undefined {
+  return error instanceof Error ? error.message : undefined;
 }
 
 function stageRunFromRow(row: Record<string, unknown>): StageRun {  const startedAt = optionalTextColumn(row, "started_at");

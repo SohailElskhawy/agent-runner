@@ -127,6 +127,39 @@ export function applyResourceLocksSchema(db: SchemaMigrationDatabase): void {
   }
 }
 
+const SCHEMA_V5_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS integration_queue (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  task_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  task_revision TEXT NOT NULL,
+  branch TEXT NOT NULL,
+  base_revision TEXT NOT NULL,
+  status TEXT NOT NULL,
+  enqueued_at TEXT NOT NULL,
+  claimed_at TEXT,
+  finished_at TEXT,
+  failure_json TEXT,
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (attempt_id) REFERENCES attempts(id)
+) STRICT`,
+
+  `CREATE INDEX IF NOT EXISTS idx_integration_queue_task_id ON integration_queue(task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_integration_queue_attempt_id ON integration_queue(attempt_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_integration_queue_status ON integration_queue(status)`,
+
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_integration_queue_active_identity
+  ON integration_queue(task_id, attempt_id)
+  WHERE status IN ('PENDING', 'INTEGRATING')`,
+];
+
+export function applyIntegrationQueueSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V5_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -147,6 +180,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 4,
     name: "add-resource-locks",
     up: applyResourceLocksSchema,
+  },
+  {
+    version: 5,
+    name: "add-integration-queue",
+    up: applyIntegrationQueueSchema,
   },
 ];
 
