@@ -24,6 +24,7 @@ import {
   ORCHESTRATION_EVENTS,
   type CommitCreatedPayload,
   type IntegrationCompletedPayload,
+  type IntegrationVerificationCompletedPayload,
   type RecoveryOutcomeKind,
   type RecoveryReconciledPayload,
   type TaskTransitionedPayload,
@@ -399,6 +400,20 @@ class SequentialCrashRecovery implements CrashRecovery {
         `task "${task.id}" is FAILED and its recorded task commit ${commitEvidence.revision} is not integrated; the FAILED status reflects an observed integration failure`,
       );
     }
+    const integrationVerification = await this.latestIntegrationVerificationEvidence(
+      task.id,
+      attempt.id,
+    );
+    if (
+      integrationVerification !== undefined &&
+      integrationVerification.revision === commitEvidence.revision &&
+      integrationVerification.status !== "PASSED"
+    ) {
+      return noOp(
+        task.id,
+        `task "${task.id}" is FAILED and its recorded task commit ${commitEvidence.revision} is integrated, but the recorded integration verification for attempt "${attempt.id}" did not pass (${integrationVerification.status}); the FAILED status is kept because DONE requires passing integration verification`,
+      );
+    }
     return await this.finishIntegrated(
       task,
       attempt,
@@ -443,6 +458,36 @@ class SequentialCrashRecovery implements CrashRecovery {
       );
     }
     if (integrated) {
+      const integrationVerification = await this.latestIntegrationVerificationEvidence(
+        task.id,
+        attempt.id,
+      );
+      if (
+        integrationVerification !== undefined &&
+        integrationVerification.revision === commitRevision &&
+        integrationVerification.status === "FAILED"
+      ) {
+        return await this.finishFailed(
+          task,
+          attempt,
+          worktreePath,
+          "verification_failed",
+          "recorded integration verification evidence shows failure before the runner was interrupted",
+        );
+      }
+      if (
+        integrationVerification !== undefined &&
+        integrationVerification.revision === commitRevision &&
+        integrationVerification.status === "CANCELLED"
+      ) {
+        return await this.finishFailed(
+          task,
+          attempt,
+          worktreePath,
+          "cancelled",
+          "recorded integration verification evidence shows cancellation before the runner was interrupted",
+        );
+      }
       return await this.finishIntegrated(
         task,
         attempt,
@@ -983,6 +1028,19 @@ class SequentialCrashRecovery implements CrashRecovery {
     });
     return latestPayloadOf(events, attemptId) as
       | IntegrationCompletedPayload
+      | undefined;
+  }
+
+  private async latestIntegrationVerificationEvidence(
+    taskId: TaskId,
+    attemptId: string,
+  ): Promise<IntegrationVerificationCompletedPayload | undefined> {
+    const events = await this.store.listEvents({
+      taskId,
+      type: ORCHESTRATION_EVENTS.integrationVerificationCompleted,
+    });
+    return latestPayloadOf(events, attemptId) as
+      | IntegrationVerificationCompletedPayload
       | undefined;
   }
 
