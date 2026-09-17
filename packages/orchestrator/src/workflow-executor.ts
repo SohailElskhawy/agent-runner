@@ -8,12 +8,24 @@
  * commit/integration path into a single deterministic workflow executor.
  *
  * The executor runs the required stages of the resolved workflow definition
- * in definition order. There is no scheduler, no DAG traversal, and no
- * parallelism: exactly one task, one attempt, one sequential stage
- * sequence. Every authoritative decision — task status transitions, gate
- * acceptance, verification, staging, commits, integration, and DONE — is
- * owned by the runner; stage agents only produce stage results and never
- * choose the next workflow step. A required gate that fails aborts
+ * in definition order and progresses the authoritative Task status through
+ * the canonical workflow lifecycle:
+ *
+ *   READY → PLANNING → PLAN_REVIEW → IMPLEMENTING → CODE_REVIEW
+ *         → VERIFYING → INTEGRATING → DONE
+ *
+ * Workflows transition only through the lifecycle states of the stages they
+ * actually contain: a workflow without PLAN starts at the next applicable
+ * state, PLAN without PLAN_REVIEW advances from PLANNING into IMPLEMENTING,
+ * and IMPLEMENT without CODE_REVIEW advances into VERIFYING. Review/fix
+ * loops move the status legally through the review states (PLAN_REVIEW →
+ * PLANNING, CODE_REVIEW → IMPLEMENTING while changes are requested, back to
+ * the review state for the next cycle). There is no scheduler, no DAG
+ * traversal, and no parallelism: exactly one task, one attempt, one
+ * sequential stage sequence. Every authoritative decision — task status
+ * transitions, gate acceptance, verification, staging, commits, integration,
+ * and DONE — is owned by the runner; stage agents only produce stage results
+ * and never choose the next workflow step. A required gate that fails aborts
  * progression immediately, and DONE is persisted only after successful
  * integration.
  */
@@ -117,6 +129,32 @@ const PLAN_STAGE: StageKind = "PLAN";
 const VERIFY_STAGE: StageKind = "VERIFY";
 const INTEGRATE_STAGE: StageKind = "INTEGRATE";
 
+const PLAN_STATUS: TaskStatus = "PLANNING";
+const PLAN_REVIEW_STATUS: TaskStatus = "PLAN_REVIEW";
+const IMPLEMENTING_STATUS: TaskStatus = "IMPLEMENTING";
+const CODE_REVIEW_STATUS: TaskStatus = "CODE_REVIEW";
+
+/**
+ * The authoritative Task lifecycle state that corresponds to a workflow
+ * stage. The executor transitions into this state before running the stage.
+ */
+function stageLifecycleStatus(stage: StageKind): TaskStatus {
+  switch (stage) {
+    case "PLAN":
+      return "PLANNING";
+    case "PLAN_REVIEW":
+      return "PLAN_REVIEW";
+    case "IMPLEMENT":
+      return "IMPLEMENTING";
+    case "CODE_REVIEW":
+      return "CODE_REVIEW";
+    case "VERIFY":
+      return "VERIFYING";
+    case "INTEGRATE":
+      return "INTEGRATING";
+  }
+}
+
 class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
   private readonly store: RunnerStore;
   private readonly git: GitManager;
@@ -194,6 +232,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       );
     }
     const stages = this.workflow.stages;
+    const firstStage = stages[0];
     const hasPlan = stages.includes("PLAN");
     const hasPlanReview = stages.includes("PLAN_REVIEW");
     const hasCodeReview = stages.includes("CODE_REVIEW");
@@ -201,6 +240,13 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       return rejected(
         taskId,
         `workflow "${this.workflow.id}" requires PLAN_REVIEW without PLAN; PLAN_REVIEW reviews the PLAN output of the same attempt, so the workflow must also require PLAN`,
+        task.status,
+      );
+    }
+    if (firstStage === undefined) {
+      return rejected(
+        taskId,
+        `workflow "${this.workflow.id}" contains no stages`,
         task.status,
       );
     }
@@ -253,7 +299,12 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     let currentStatus: TaskStatus = task.status;
     let worktreeCreated = false;
     try {
-      currentStatus = await this.transitionTask(taskId, currentStatus, "IMPLEMENTING", attemptId);
+      currentStatus = await this.transitionTask(
+        taskId,
+        currentStatus,
+        stageLifecycleStatus(firstStage),
+        attemptId,
+      );
 
       await this.git.createBranch(this.projectRoot, branch);
       await this.git.createWorktree(this.projectRoot, worktreePath, branch);
@@ -276,7 +327,25 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
 
       if (hasPlan) {
         if (hasPlanReview) {
-          const planLoop = await executePlanReviewFixLoop(loopOptions);
+          const planLoop = await executePlanReviewFixLoop({
+            ...loopOptions,
+            onBeforeWorkStage: async () => {
+              currentStatus = await this.transitionToStageStatus(
+                taskId,
+                currentStatus,
+                PLAN_STATUS,
+                attemptId,
+              );
+            },
+            onBeforeReviewStage: async () => {
+              currentStatus = await this.transitionToStageStatus(
+                taskId,
+                currentStatus,
+                PLAN_REVIEW_STATUS,
+                attemptId,
+              );
+            },
+          });
           if (planLoop.kind === "review-limit-exhausted") {
             throw new WorkflowExecutionFailure(
               "review_exhausted",
@@ -296,12 +365,35 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
         }
       }
 
+      currentStatus = await this.transitionToStageStatus(
+        taskId,
+        currentStatus,
+        IMPLEMENTING_STATUS,
+        attemptId,
+      );
+
       if (hasCodeReview) {
         const codeLoop = await executeCodeReviewFixLoop({
           ...loopOptions,
           ...(implementGuidance?.plan === undefined
             ? {}
             : { initialPlan: implementGuidance.plan }),
+          onBeforeWorkStage: async () => {
+            currentStatus = await this.transitionToStageStatus(
+              taskId,
+              currentStatus,
+              IMPLEMENTING_STATUS,
+              attemptId,
+            );
+          },
+          onBeforeReviewStage: async () => {
+            currentStatus = await this.transitionToStageStatus(
+              taskId,
+              currentStatus,
+              CODE_REVIEW_STATUS,
+              attemptId,
+            );
+          },
         });
         if (codeLoop.kind === "review-limit-exhausted") {
           throw new WorkflowExecutionFailure(
@@ -715,6 +807,24 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       startedAt,
     });
     return integration;
+  }
+
+  /**
+   * Progresses the Task into the lifecycle status of a stage only when it is
+   * not already there. Optional workflow stages and loop cycles make the
+   * target status the current one in some workflow shapes (for example, a
+   * workflow without PLAN reaches IMPLEMENTING directly from READY), and
+   * re-transitioning to the same status is not a legal state machine move.
+   */
+  private async transitionToStageStatus(
+    taskId: TaskId,
+    from: TaskStatus,
+    to: TaskStatus,
+    attemptId: string,
+  ): Promise<TaskStatus> {
+    return from === to
+      ? from
+      : await this.transitionTask(taskId, from, to, attemptId);
   }
 
   private async transitionTask(

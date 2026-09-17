@@ -11,23 +11,28 @@ import {
   TaskTransitionError,
 } from "@agentic-dev-runner/core";
 
-const VERTICAL_SLICE_ACTIVE_STATES = [
+const ACTIVE_WORKFLOW_STATES = [
   "READY",
+  "PLANNING",
+  "PLAN_REVIEW",
   "IMPLEMENTING",
+  "CODE_REVIEW",
   "VERIFYING",
   "INTEGRATING",
 ] as const;
 
-const EXECUTION_STATES = ["IMPLEMENTING", "VERIFYING", "INTEGRATING"] as const;
+const STAGE_ACTIVE_STATES = [
+  "PLANNING",
+  "PLAN_REVIEW",
+  "IMPLEMENTING",
+  "CODE_REVIEW",
+  "VERIFYING",
+  "INTEGRATING",
+] as const;
 
 const TERMINAL_STATES = ["DONE", "FAILED", "CANCELLED", "NEEDS_HUMAN"] as const;
 
-const UNSUPPORTED_STATES = [
-  "BACKLOG",
-  "PLANNING",
-  "PLAN_REVIEW",
-  "CODE_REVIEW",
-] as const;
+const UNSUPPORTED_STATES = ["BACKLOG"] as const;
 
 const ESCALATION_STATES = ["BLOCKED", "FAILED", "CANCELLED"] as const;
 
@@ -38,12 +43,29 @@ describe("explicit transition table", () => {
     }
   });
 
-  it("matches the documented vertical-slice execution path", () => {
+  it("matches the canonical workflow lifecycle table", () => {
     expect([...getTaskStatusTransitions("READY")]).toEqual([
+      "PLANNING",
+      "IMPLEMENTING",
+      ...ESCALATION_STATES,
+    ]);
+    expect([...getTaskStatusTransitions("PLANNING")]).toEqual([
+      "PLAN_REVIEW",
+      "IMPLEMENTING",
+      ...ESCALATION_STATES,
+    ]);
+    expect([...getTaskStatusTransitions("PLAN_REVIEW")]).toEqual([
+      "PLANNING",
       "IMPLEMENTING",
       ...ESCALATION_STATES,
     ]);
     expect([...getTaskStatusTransitions("IMPLEMENTING")]).toEqual([
+      "CODE_REVIEW",
+      "VERIFYING",
+      ...ESCALATION_STATES,
+    ]);
+    expect([...getTaskStatusTransitions("CODE_REVIEW")]).toEqual([
+      "IMPLEMENTING",
       "VERIFYING",
       ...ESCALATION_STATES,
     ]);
@@ -64,15 +86,41 @@ describe("explicit transition table", () => {
 });
 
 describe("valid transitions", () => {
-  it("allows the full vertical-slice execution path", () => {
+  it("allows the full canonical workflow happy-path chain", () => {
+    expect(canTransitionTaskStatus("READY", "PLANNING")).toBe(true);
+    expect(canTransitionTaskStatus("PLANNING", "PLAN_REVIEW")).toBe(true);
+    expect(canTransitionTaskStatus("PLAN_REVIEW", "IMPLEMENTING")).toBe(true);
+    expect(canTransitionTaskStatus("IMPLEMENTING", "CODE_REVIEW")).toBe(true);
+    expect(canTransitionTaskStatus("CODE_REVIEW", "VERIFYING")).toBe(true);
+    expect(canTransitionTaskStatus("VERIFYING", "INTEGRATING")).toBe(true);
+    expect(canTransitionTaskStatus("INTEGRATING", "DONE")).toBe(true);
+  });
+
+  it("allows the vertical-slice path of workflows without optional stages", () => {
     expect(canTransitionTaskStatus("READY", "IMPLEMENTING")).toBe(true);
     expect(canTransitionTaskStatus("IMPLEMENTING", "VERIFYING")).toBe(true);
     expect(canTransitionTaskStatus("VERIFYING", "INTEGRATING")).toBe(true);
     expect(canTransitionTaskStatus("INTEGRATING", "DONE")).toBe(true);
   });
 
-  it("allows active vertical-slice states to escalate to BLOCKED, FAILED, and CANCELLED", () => {
-    for (const from of VERTICAL_SLICE_ACTIVE_STATES) {
+  it("allows PLAN review fix cycles to return to PLANNING and back", () => {
+    expect(canTransitionTaskStatus("PLAN_REVIEW", "PLANNING")).toBe(true);
+    expect(canTransitionTaskStatus("PLANNING", "PLAN_REVIEW")).toBe(true);
+  });
+
+  it("allows CODE review fix cycles to return to IMPLEMENTING and back", () => {
+    expect(canTransitionTaskStatus("CODE_REVIEW", "IMPLEMENTING")).toBe(true);
+    expect(canTransitionTaskStatus("IMPLEMENTING", "CODE_REVIEW")).toBe(true);
+  });
+
+  it("allows optional workflow stages to be skipped", () => {
+    expect(canTransitionTaskStatus("PLANNING", "IMPLEMENTING")).toBe(true);
+    expect(canTransitionTaskStatus("PLAN_REVIEW", "IMPLEMENTING")).toBe(true);
+    expect(canTransitionTaskStatus("IMPLEMENTING", "VERIFYING")).toBe(true);
+  });
+
+  it("allows every active workflow state to escalate to BLOCKED, FAILED, and CANCELLED", () => {
+    for (const from of ACTIVE_WORKFLOW_STATES) {
       for (const to of ESCALATION_STATES) {
         expect(canTransitionTaskStatus(from, to)).toBe(true);
       }
@@ -84,11 +132,11 @@ describe("valid transitions", () => {
   });
 
   it("returns ok results carrying the transition for valid moves", () => {
-    const result = checkTaskTransition("IMPLEMENTING", "VERIFYING");
+    const result = checkTaskTransition("PLANNING", "PLAN_REVIEW");
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.from).toBe("IMPLEMENTING");
-      expect(result.to).toBe("VERIFYING");
+      expect(result.from).toBe("PLANNING");
+      expect(result.to).toBe("PLAN_REVIEW");
     }
   });
 
@@ -106,13 +154,22 @@ describe("invalid transitions", () => {
   it("rejects skipping stages", () => {
     expect(canTransitionTaskStatus("READY", "VERIFYING")).toBe(false);
     expect(canTransitionTaskStatus("READY", "DONE")).toBe(false);
+    expect(canTransitionTaskStatus("PLANNING", "VERIFYING")).toBe(false);
+    expect(canTransitionTaskStatus("PLAN_REVIEW", "VERIFYING")).toBe(false);
     expect(canTransitionTaskStatus("IMPLEMENTING", "DONE")).toBe(false);
     expect(canTransitionTaskStatus("IMPLEMENTING", "INTEGRATING")).toBe(false);
+    expect(canTransitionTaskStatus("CODE_REVIEW", "INTEGRATING")).toBe(false);
     expect(canTransitionTaskStatus("VERIFYING", "DONE")).toBe(false);
+  });
+
+  it("rejects skipping backward out of a review cycle", () => {
+    expect(canTransitionTaskStatus("PLAN_REVIEW", "READY")).toBe(false);
+    expect(canTransitionTaskStatus("CODE_REVIEW", "PLANNING")).toBe(false);
   });
 
   it("rejects reversing and re-entering stages", () => {
     expect(canTransitionTaskStatus("VERIFYING", "IMPLEMENTING")).toBe(false);
+    expect(canTransitionTaskStatus("VERIFYING", "PLANNING")).toBe(false);
     expect(canTransitionTaskStatus("INTEGRATING", "VERIFYING")).toBe(false);
     expect(canTransitionTaskStatus("INTEGRATING", "READY")).toBe(false);
     expect(canTransitionTaskStatus("DONE", "INTEGRATING")).toBe(false);
@@ -128,7 +185,7 @@ describe("invalid transitions", () => {
     }
   });
 
-  it("rejects every transition out of states unsupported by VS003", () => {
+  it("rejects every transition out of states that do not belong to the lifecycle", () => {
     for (const from of UNSUPPORTED_STATES) {
       for (const to of TASK_STATUSES) {
         expect(canTransitionTaskStatus(from, to)).toBe(false);
@@ -137,7 +194,7 @@ describe("invalid transitions", () => {
   });
 
   it("keeps recovery-only transitions out of the normal execution table", () => {
-    for (const from of EXECUTION_STATES) {
+    for (const from of STAGE_ACTIVE_STATES) {
       expect(canTransitionTaskStatus(from, "NEEDS_HUMAN")).toBe(false);
     }
     expect(canTransitionTaskStatus("FAILED", "DONE")).toBe(false);
@@ -156,14 +213,14 @@ describe("invalid transitions", () => {
 describe("recovery transition table", () => {
   it("extends only the reconciliation-specific transitions", () => {
     expect([...getTaskRecoveryStatusTransitions("FAILED")]).toEqual(["DONE"]);
-    for (const from of EXECUTION_STATES) {
+    for (const from of STAGE_ACTIVE_STATES) {
       expect([...getTaskRecoveryStatusTransitions(from)]).toEqual([
         "NEEDS_HUMAN",
       ]);
     }
     for (const status of TASK_STATUSES) {
       if (
-        !(EXECUTION_STATES as readonly string[]).includes(status) &&
+        !(STAGE_ACTIVE_STATES as readonly string[]).includes(status) &&
         status !== "FAILED"
       ) {
         expect(getTaskRecoveryStatusTransitions(status)).toEqual([]);
@@ -171,8 +228,8 @@ describe("recovery transition table", () => {
     }
   });
 
-  it("allows crash recovery to escalate execution states to NEEDS_HUMAN", () => {
-    for (const from of EXECUTION_STATES) {
+  it("classifies the canonical workflow stage states as recovery-active", () => {
+    for (const from of STAGE_ACTIVE_STATES) {
       expect(canReconcileTaskStatus(from, "NEEDS_HUMAN")).toBe(true);
     }
     expect(canReconcileTaskStatus("READY", "NEEDS_HUMAN")).toBe(false);
@@ -189,7 +246,7 @@ describe("recovery transition table", () => {
   });
 
   it("allows every normal transition during reconciliation", () => {
-    for (const from of VERTICAL_SLICE_ACTIVE_STATES) {
+    for (const from of ACTIVE_WORKFLOW_STATES) {
       for (const to of ESCALATION_STATES) {
         expect(canReconcileTaskStatus(from, to)).toBe(true);
       }
@@ -201,7 +258,9 @@ describe("recovery transition table", () => {
 
 describe("assertTaskTransition", () => {
   it("does not throw for valid transitions", () => {
+    expect(() => assertTaskTransition("READY", "PLANNING")).not.toThrow();
     expect(() => assertTaskTransition("READY", "IMPLEMENTING")).not.toThrow();
+    expect(() => assertTaskTransition("PLANNING", "IMPLEMENTING")).not.toThrow();
     expect(() => assertTaskTransition("INTEGRATING", "DONE")).not.toThrow();
   });
 
@@ -224,10 +283,13 @@ describe("assertTaskTransition", () => {
   });
 
   it("throws for transitions out of unsupported states", () => {
-    expect(() => assertTaskTransition("PLANNING", "IMPLEMENTING")).toThrow(
+    expect(() => assertTaskTransition("BACKLOG", "READY")).toThrow(
       TaskTransitionError,
     );
-    expect(() => assertTaskTransition("BACKLOG", "READY")).toThrow(
+    expect(() => assertTaskTransition("PLANNING", "VERIFYING")).toThrow(
+      TaskTransitionError,
+    );
+    expect(() => assertTaskTransition("CODE_REVIEW", "DONE")).toThrow(
       TaskTransitionError,
     );
   });
@@ -239,6 +301,9 @@ describe("assertTaskTransition", () => {
     expect(() => assertTaskTransition("INTEGRATING", "NEEDS_HUMAN")).toThrow(
       TaskTransitionError,
     );
+    expect(() => assertTaskTransition("PLANNING", "NEEDS_HUMAN")).toThrow(
+      TaskTransitionError,
+    );
   });
 });
 
@@ -247,8 +312,8 @@ describe("assertReconcileTaskStatus", () => {
     expect(() => assertReconcileTaskStatus("FAILED", "DONE")).not.toThrow();
   });
 
-  it("allows recovery escalation of execution states to NEEDS_HUMAN", () => {
-    for (const from of EXECUTION_STATES) {
+  it("allows recovery escalation of canonical workflow states to NEEDS_HUMAN", () => {
+    for (const from of STAGE_ACTIVE_STATES) {
       expect(() => assertReconcileTaskStatus(from, "NEEDS_HUMAN")).not.toThrow();
     }
   });
@@ -259,6 +324,12 @@ describe("assertReconcileTaskStatus", () => {
     ).not.toThrow();
     expect(() =>
       assertReconcileTaskStatus("IMPLEMENTING", "BLOCKED"),
+    ).not.toThrow();
+    expect(() =>
+      assertReconcileTaskStatus("PLAN_REVIEW", "BLOCKED"),
+    ).not.toThrow();
+    expect(() =>
+      assertReconcileTaskStatus("CODE_REVIEW", "CANCELLED"),
     ).not.toThrow();
     expect(() =>
       assertReconcileTaskStatus("BLOCKED", "READY"),

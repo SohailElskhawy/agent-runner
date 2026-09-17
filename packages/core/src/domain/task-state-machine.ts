@@ -1,14 +1,25 @@
 import type { TaskStatus } from "./task-status.js";
 
+/**
+ * Canonical workflow lifecycle transitions. Each authoritative workflow stage
+ * has a matching lifecycle state (PLAN → PLANNING, PLAN_REVIEW, IMPLEMENT →
+ * IMPLEMENTING, CODE_REVIEW, VERIFY → VERIFYING, INTEGRATE → INTEGRATING, DONE
+ * after successful integration only). Optional workflow stages are skipped by
+ * the executor, so a state may legally advance past a stage the workflow does
+ * not contain (for example PLANNING → IMPLEMENTING when no PLAN_REVIEW stage
+ * exists). Review/fix loops are legal through the reverse review transitions
+ * (PLAN_REVIEW → PLANNING, CODE_REVIEW → IMPLEMENTING). Every active state can
+ * escalate to BLOCKED, FAILED, or CANCELLED.
+ */
 export const TASK_STATUS_TRANSITIONS: Readonly<
   Record<TaskStatus, readonly TaskStatus[]>
 > = {
   BACKLOG: [],
-  READY: ["IMPLEMENTING", "BLOCKED", "FAILED", "CANCELLED"],
-  PLANNING: [],
-  PLAN_REVIEW: [],
-  IMPLEMENTING: ["VERIFYING", "BLOCKED", "FAILED", "CANCELLED"],
-  CODE_REVIEW: [],
+  READY: ["PLANNING", "IMPLEMENTING", "BLOCKED", "FAILED", "CANCELLED"],
+  PLANNING: ["PLAN_REVIEW", "IMPLEMENTING", "BLOCKED", "FAILED", "CANCELLED"],
+  PLAN_REVIEW: ["PLANNING", "IMPLEMENTING", "BLOCKED", "FAILED", "CANCELLED"],
+  IMPLEMENTING: ["CODE_REVIEW", "VERIFYING", "BLOCKED", "FAILED", "CANCELLED"],
+  CODE_REVIEW: ["IMPLEMENTING", "VERIFYING", "BLOCKED", "FAILED", "CANCELLED"],
   VERIFYING: ["INTEGRATING", "BLOCKED", "FAILED", "CANCELLED"],
   INTEGRATING: ["DONE", "BLOCKED", "FAILED", "CANCELLED"],
   DONE: [],
@@ -21,7 +32,10 @@ export const TASK_STATUS_TRANSITIONS: Readonly<
 export const RECOVERY_STATUS_TRANSITIONS: Readonly<
   Partial<Record<TaskStatus, readonly TaskStatus[]>>
 > = {
+  PLANNING: ["NEEDS_HUMAN"],
+  PLAN_REVIEW: ["NEEDS_HUMAN"],
   IMPLEMENTING: ["NEEDS_HUMAN"],
+  CODE_REVIEW: ["NEEDS_HUMAN"],
   VERIFYING: ["NEEDS_HUMAN"],
   INTEGRATING: ["NEEDS_HUMAN"],
   FAILED: ["DONE"],

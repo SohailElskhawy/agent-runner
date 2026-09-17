@@ -37,7 +37,10 @@ import type {
 } from "./orchestration-outcome.js";
 
 export const RECOVERY_ACTIVE_STATUSES = [
+  "PLANNING",
+  "PLAN_REVIEW",
   "IMPLEMENTING",
+  "CODE_REVIEW",
   "VERIFYING",
   "INTEGRATING",
 ] as const;
@@ -141,8 +144,11 @@ class SequentialCrashRecovery implements CrashRecovery {
       );
     }
     switch (task.status) {
+      case "PLANNING":
+      case "PLAN_REVIEW":
+      case "CODE_REVIEW":
       case "IMPLEMENTING":
-        return await this.reconcileImplementing(task, attempt);
+        return await this.reconcileWorktreeStage(task, attempt);
       case "VERIFYING":
         return await this.reconcileVerifying(task, attempt);
       case "INTEGRATING":
@@ -150,7 +156,15 @@ class SequentialCrashRecovery implements CrashRecovery {
     }
   }
 
-  private async reconcileImplementing(
+  /**
+   * Reconciles a task that was interrupted while an agent-stage family
+   * (PLANNING, PLAN_REVIEW, IMPLEMENTING, CODE_REVIEW) owned the attempt.
+   * These stages produce no durable commit on the task branch, so the
+   * existing worktree-based classification applies unchanged: a missing or
+   * provably clean worktree is safe to retry, uncommitted agent output is
+   * preserved for a human decision.
+   */
+  private async reconcileWorktreeStage(
     task: Task,
     attempt: Attempt,
   ): Promise<RecoveryOutcome> {

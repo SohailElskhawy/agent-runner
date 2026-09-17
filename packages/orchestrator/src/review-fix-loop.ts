@@ -21,7 +21,12 @@
  *
  * These loops never mutate Task status, never mark a task DONE, never
  * verify, never integrate, and contain no provider-specific behavior: they
- * are orchestration primitives for the later workflow engine.
+ * are orchestration primitives for the later workflow engine. The workflow
+ * executor may attach optional runner-owned status hooks
+ * (`onBeforeWorkStage` / `onBeforeReviewStage`) that run before each stage
+ * invocation; the hooks let the runner progress the authoritative Task
+ * status through the canonical lifecycle states around each loop cycle
+ * while the loops themselves stay status-free.
  */
 
 import type {
@@ -52,6 +57,18 @@ export type PlanReviewFixLoopOptions = {
   readonly timeoutMs: number;
   readonly signal?: AbortSignal | undefined;
   readonly now?: (() => IsoTimestamp) | undefined;
+  /**
+   * Runner-owned hook invoked before every work-stage invocation of every
+   * cycle (PLAN for the plan loop, IMPLEMENT for the code loop). The hook
+   * lets the caller progress the authoritative Task status (for example to
+   * PLANNING or IMPLEMENTING) without the loop itself owning task state.
+   */
+  readonly onBeforeWorkStage?: (() => Promise<void>) | undefined;
+  /**
+   * Runner-owned hook invoked before every review-stage invocation of every
+   * cycle (PLAN_REVIEW for the plan loop, CODE_REVIEW for the code loop).
+   */
+  readonly onBeforeReviewStage?: (() => Promise<void>) | undefined;
 };
 
 export type CodeReviewFixLoopOptions = PlanReviewFixLoopOptions & {
@@ -186,6 +203,7 @@ async function runReviewFixLoop<TOptions extends PlanReviewFixLoopOptions>(
   let feedback: string | undefined;
 
   for (let cycle = 1; cycle <= maxReviewCycles; cycle += 1) {
+    await options.onBeforeWorkStage?.();
     const workOutcome = await strategy.runWorkStage(options, cycle, feedback);
     stageRuns.push(workOutcome.stageRun);
     if (workOutcome.kind === "failed") {
@@ -197,6 +215,7 @@ async function runReviewFixLoop<TOptions extends PlanReviewFixLoopOptions>(
       };
     }
 
+    await options.onBeforeReviewStage?.();
     const reviewOutcome = await strategy.runReviewStage(options, cycle);
     stageRuns.push(reviewOutcome.stageRun);
     if (reviewOutcome.kind === "failed") {

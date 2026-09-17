@@ -313,8 +313,11 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     expect(transitionPayloads(events)).toEqual([
-      ["READY", "IMPLEMENTING"],
-      ["IMPLEMENTING", "VERIFYING"],
+      ["READY", "PLANNING"],
+      ["PLANNING", "PLAN_REVIEW"],
+      ["PLAN_REVIEW", "IMPLEMENTING"],
+      ["IMPLEMENTING", "CODE_REVIEW"],
+      ["CODE_REVIEW", "VERIFYING"],
       ["VERIFYING", "INTEGRATING"],
       ["INTEGRATING", "DONE"],
     ]);
@@ -369,6 +372,148 @@ describe("WorkflowTaskExecutor", () => {
         (invocation.instruction ?? "").startsWith(PLAN_REVIEW_MARKER),
     );
     expect(planInvocations).toHaveLength(0);
+
+    const events = await store.listEvents({ taskId });
+    expect(transitionPayloads(events)).toEqual([
+      ["READY", "IMPLEMENTING"],
+      ["IMPLEMENTING", "VERIFYING"],
+      ["VERIFYING", "INTEGRATING"],
+      ["INTEGRATING", "DONE"],
+    ]);
+  });
+
+  it("transitions PLANNING directly into IMPLEMENTING when the workflow has PLAN without PLAN_REVIEW", async () => {
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({}),
+      workflowOverride: {
+        id: "plan-without-review",
+        stages: ["PLAN", "IMPLEMENT", "VERIFY", "INTEGRATE"],
+      },
+    });
+
+    const outcome = await executor.run();
+
+    expectCompleted(outcome);
+    expect(outcome.task.status).toBe("DONE");
+
+    const stageRuns = await store.listStageRuns(outcome.attemptId);
+    expect(stageRuns.map((run) => run.stage)).toEqual([
+      "PLAN",
+      "IMPLEMENT",
+      "VERIFY",
+      "INTEGRATE",
+    ]);
+
+    const events = await store.listEvents({ taskId });
+    expect(transitionPayloads(events)).toEqual([
+      ["READY", "PLANNING"],
+      ["PLANNING", "IMPLEMENTING"],
+      ["IMPLEMENTING", "VERIFYING"],
+      ["VERIFYING", "INTEGRATING"],
+      ["INTEGRATING", "DONE"],
+    ]);
+  });
+
+  it("runs the canonical PLAN review fix cycle through legal status transitions", async () => {
+    let planReviewCalls = 0;
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({
+        planReview: () => {
+          planReviewCalls += 1;
+          return planReviewCalls === 1
+            ? {
+                kind: "success" as const,
+                output: {
+                  stdout:
+                    '{"decision":"CHANGES_REQUIRED","feedback":"tighten the plan"}',
+                  stderr: "",
+                },
+                exitCode: 0,
+                durationMs: 5,
+              }
+            : {
+                kind: "success" as const,
+                output: { stdout: '{"decision":"APPROVED"}', stderr: "" },
+                exitCode: 0,
+                durationMs: 5,
+              };
+        },
+      }),
+    });
+
+    const outcome = await executor.run();
+
+    expectCompleted(outcome);
+    expect(outcome.task.status).toBe("DONE");
+    expect(planReviewCalls).toBe(2);
+
+    const stageRuns = await store.listStageRuns(outcome.attemptId);
+    expect(stageRuns.filter((run) => run.stage === "PLAN")).toHaveLength(2);
+    expect(stageRuns.filter((run) => run.stage === "PLAN_REVIEW")).toHaveLength(2);
+
+    const events = await store.listEvents({ taskId });
+    expect(transitionPayloads(events)).toEqual([
+      ["READY", "PLANNING"],
+      ["PLANNING", "PLAN_REVIEW"],
+      ["PLAN_REVIEW", "PLANNING"],
+      ["PLANNING", "PLAN_REVIEW"],
+      ["PLAN_REVIEW", "IMPLEMENTING"],
+      ["IMPLEMENTING", "CODE_REVIEW"],
+      ["CODE_REVIEW", "VERIFYING"],
+      ["VERIFYING", "INTEGRATING"],
+      ["INTEGRATING", "DONE"],
+    ]);
+  });
+
+  it("runs the canonical CODE review fix cycle through legal status transitions", async () => {
+    let codeReviewCalls = 0;
+    const executor = wireExecutor({
+      agent: stageDispatchAgent({
+        codeReview: () => {
+          codeReviewCalls += 1;
+          return codeReviewCalls === 1
+            ? {
+                kind: "success" as const,
+                output: {
+                  stdout:
+                    '{"decision":"CHANGES_REQUIRED","feedback":"fix the boundary case"}',
+                  stderr: "",
+                },
+                exitCode: 0,
+                durationMs: 5,
+              }
+            : {
+                kind: "success" as const,
+                output: { stdout: '{"decision":"APPROVED"}', stderr: "" },
+                exitCode: 0,
+                durationMs: 5,
+              };
+        },
+      }),
+    });
+
+    const outcome = await executor.run();
+
+    expectCompleted(outcome);
+    expect(outcome.task.status).toBe("DONE");
+    expect(codeReviewCalls).toBe(2);
+
+    const stageRuns = await store.listStageRuns(outcome.attemptId);
+    expect(stageRuns.filter((run) => run.stage === "IMPLEMENT")).toHaveLength(2);
+    expect(stageRuns.filter((run) => run.stage === "CODE_REVIEW")).toHaveLength(2);
+
+    const events = await store.listEvents({ taskId });
+    expect(transitionPayloads(events)).toEqual([
+      ["READY", "PLANNING"],
+      ["PLANNING", "PLAN_REVIEW"],
+      ["PLAN_REVIEW", "IMPLEMENTING"],
+      ["IMPLEMENTING", "CODE_REVIEW"],
+      ["CODE_REVIEW", "IMPLEMENTING"],
+      ["IMPLEMENTING", "CODE_REVIEW"],
+      ["CODE_REVIEW", "VERIFYING"],
+      ["VERIFYING", "INTEGRATING"],
+      ["INTEGRATING", "DONE"],
+    ]);
   });
 
   it("blocks the task and does not run IMPLEMENT when the plan review-cycle budget is exhausted", async () => {
@@ -415,8 +560,8 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     const transitions = transitionPayloads(events);
-    expect(transitions).toContainEqual(["IMPLEMENTING", "BLOCKED"]);
-    expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
+    expect(transitions).toContainEqual(["PLAN_REVIEW", "BLOCKED"]);
+    expect(transitions).not.toContainEqual(["PLAN_REVIEW", "VERIFYING"]);
     expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
     const failedEvent = events.find(
       (event) =>
@@ -453,8 +598,8 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     const transitions = transitionPayloads(events);
-    expect(transitions).toContainEqual(["IMPLEMENTING", "BLOCKED"]);
-    expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
+    expect(transitions).toContainEqual(["CODE_REVIEW", "BLOCKED"]);
+    expect(transitions).not.toContainEqual(["CODE_REVIEW", "VERIFYING"]);
     expect(transitions).not.toContainEqual(["VERIFYING", "INTEGRATING"]);
     expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
   });
@@ -584,8 +729,11 @@ describe("WorkflowTaskExecutor", () => {
     expectCompleted(outcome);
     const events = await store.listEvents({ taskId });
     expect(transitionPayloads(events)).toEqual([
-      ["READY", "IMPLEMENTING"],
-      ["IMPLEMENTING", "VERIFYING"],
+      ["READY", "PLANNING"],
+      ["PLANNING", "PLAN_REVIEW"],
+      ["PLAN_REVIEW", "IMPLEMENTING"],
+      ["IMPLEMENTING", "CODE_REVIEW"],
+      ["CODE_REVIEW", "VERIFYING"],
       ["VERIFYING", "INTEGRATING"],
       ["INTEGRATING", "DONE"],
     ]);
@@ -639,8 +787,8 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     const transitions = transitionPayloads(events);
-    expect(transitions).toContainEqual(["IMPLEMENTING", "FAILED"]);
-    expect(transitions).not.toContainEqual(["IMPLEMENTING", "VERIFYING"]);
+    expect(transitions).toContainEqual(["PLANNING", "FAILED"]);
+    expect(transitions).not.toContainEqual(["PLANNING", "VERIFYING"]);
     expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
   });
 
@@ -710,7 +858,7 @@ describe("WorkflowTaskExecutor", () => {
 
     const events = await store.listEvents({ taskId });
     expect(transitionPayloads(events)).toContainEqual([
-      "IMPLEMENTING",
+      "PLANNING",
       "CANCELLED",
     ]);
     expect(transitionPayloads(events)).not.toContainEqual([
