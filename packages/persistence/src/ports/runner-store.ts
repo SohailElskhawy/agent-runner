@@ -1,6 +1,9 @@
 import type {
   Attempt,
   AttemptId,
+  ExecutionClaim,
+  ExecutionClaimId,
+  ExecutionClaimStatus,
   IntegrationQueueEntry,
   IntegrationQueueRequest,
   IntegrationQueueStatus,
@@ -35,7 +38,32 @@ export type EventFilter = {
 export type ResourceLockFilter = {
   readonly taskId?: TaskId | undefined;
   readonly attemptId?: AttemptId | undefined;
+  readonly executionId?: ExecutionClaimId | undefined;
 };
+
+export type ExecutionClaimFilter = {
+  readonly taskId?: TaskId | undefined;
+  readonly status?: ExecutionClaimStatus | undefined;
+};
+
+export type TaskExecutionClaimRequest = {
+  readonly taskId: TaskId;
+  readonly executionId: ExecutionClaimId;
+  readonly maxParallelism: number;
+  readonly resources: readonly string[];
+  readonly claimedAt: IsoTimestamp;
+};
+
+export type TaskExecutionClaimResult =
+  | { readonly kind: "claimed"; readonly claim: ExecutionClaim }
+  | {
+      readonly kind:
+        | "task-not-ready"
+        | "already-claimed"
+        | "capacity-exhausted"
+        | "resource-unavailable";
+      readonly taskId: TaskId;
+    };
 
 /**
  * Selects the integration queue entries to list. Every field is optional;
@@ -44,6 +72,7 @@ export type ResourceLockFilter = {
 export type IntegrationQueueFilter = {
   readonly taskId?: TaskId | undefined;
   readonly attemptId?: AttemptId | undefined;
+  readonly executionId?: ExecutionClaimId | undefined;
   readonly status?: IntegrationQueueStatus | undefined;
 };
 
@@ -61,6 +90,24 @@ export interface RunnerStore {
   getAttempt(id: AttemptId): Promise<Attempt | null>;
   listAttempts(filter?: AttemptFilter): Promise<Attempt[]>;
   putAttempt(attempt: Attempt): Promise<void>;
+
+  listExecutionClaims(filter?: ExecutionClaimFilter): Promise<ExecutionClaim[]>;
+
+  /**
+   * Atomically reserves one global execution slot, claims a READY task, and
+   * acquires its execution-owned resource locks.
+   */
+  claimTaskExecution(
+    request: TaskExecutionClaimRequest,
+  ): Promise<TaskExecutionClaimResult>;
+
+  /** Completes/releases one execution claim and exactly its owned locks. */
+  releaseTaskExecution(
+    executionId: ExecutionClaimId,
+    status: Exclude<ExecutionClaimStatus, "ACTIVE">,
+    finishedAt: IsoTimestamp,
+    failure?: { readonly message: string } | undefined,
+  ): Promise<void>;
 
   getTaskStatus(id: TaskId): Promise<Task["status"] | null>;
   setTaskStatus(

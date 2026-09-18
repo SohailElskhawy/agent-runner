@@ -45,6 +45,7 @@ describe("unattended scheduler continuation (M066a)", () => {
     const executionOrder: string[] = [];
     let running = 0;
     let maximumRunning = 0;
+    let pendingExecutionId = "";
     const coordinator = createTaskExecutionCoordinator({
       store,
       agentCandidates: [
@@ -58,7 +59,7 @@ describe("unattended scheduler continuation (M066a)", () => {
         },
       ],
       maxParallelism: 2,
-      createExecutor: (selected) => fakeExecutor(selected, async () => {
+      createExecutor: (selected, executionId) => fakeExecutor(selected, async () => {
         executionOrder.push(selected.id);
         running += 1;
         maximumRunning = Math.max(maximumRunning, running);
@@ -69,8 +70,9 @@ describe("unattended scheduler continuation (M066a)", () => {
           return failedOutcome(selected);
         }
         if (selected.id === "B") {
+          pendingExecutionId = executionId;
           await store.setTaskStatus("B", "INTEGRATING", clock());
-          return pendingOutcome(selected);
+          return pendingOutcome(selected, executionId);
         }
         await store.setTaskStatus("C", "DONE", clock());
         return completedOutcome(selected);
@@ -88,7 +90,7 @@ describe("unattended scheduler continuation (M066a)", () => {
         processedB = true;
         observedPendingLock = (await store.listResourceLocks({ taskId: "B" })).length === 1;
         await store.setTaskStatus("B", "DONE", clock());
-        await store.releaseResourceLocks({ taskId: "B" });
+        await store.releaseTaskExecution(pendingExecutionId, "COMPLETED", clock());
         return {
           kind: "processed",
           entry: queueEntry("B"),
@@ -156,7 +158,7 @@ function failedOutcome(task: Task): WorkflowTaskRunOutcome {
   };
 }
 
-function pendingOutcome(task: Task): WorkflowTaskRunOutcome {
+function pendingOutcome(task: Task, executionId: string): WorkflowTaskRunOutcome {
   return {
     kind: "pending-integration",
     taskId: task.id,
@@ -166,6 +168,7 @@ function pendingOutcome(task: Task): WorkflowTaskRunOutcome {
     branch: `task/${task.id}/attempt-1`,
     worktreePath: `worktrees/${task.id}/attempt-1`,
     taskRevision: `revision-${task.id}`,
+    executionId,
   };
 }
 

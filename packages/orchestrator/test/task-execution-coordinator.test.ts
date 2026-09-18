@@ -114,6 +114,57 @@ describe("task execution coordinator (M061b)", () => {
     expect(calls).toEqual([]);
     expect(result.executions).toEqual([]);
   });
+
+  it("admits a zero-resource task at most once across concurrent coordinators", async () => {
+    const other = createSqliteRunnerStore({ path: join(directory, "state.db") });
+    await other.initialize();
+    const started: string[] = [];
+    let releaseExecution: (() => void) | undefined;
+    const executionReleased = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const createExecutor = (selected: Task): WorkflowTaskExecutor => ({
+      async run(): Promise<WorkflowTaskRunOutcome> {
+        started.push(selected.id);
+        await executionReleased;
+        return { kind: "rejected", taskId: selected.id, reason: "fixture" };
+      },
+    });
+    await store.putTask({
+      ...task("M010", "P0"),
+      definition: { ...task("M010", "P0").definition, resources: [] },
+    });
+    const first = coordinator(store, 1, createExecutor);
+    const second = coordinator(other, 1, createExecutor);
+    const firstRun = first.dispatchAvailable();
+    const secondRun = second.dispatchAvailable();
+    for (let attempt = 0; attempt < 50 && started.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    releaseExecution?.();
+    const results = await Promise.all([firstRun, secondRun]);
+    await other.close();
+
+    expect(started).toEqual(["M010"]);
+    expect(results.flatMap((result) => result.executions)).toHaveLength(1);
+    expect(await store.listExecutionClaims({ status: "ACTIVE" })).toEqual([]);
+    expect((await store.listExecutionClaims()).filter((claim) => claim.taskId === "M010")).toHaveLength(1);
+  });
+
+  it("durably marks an unexpected active-workflow exception for recovery", async () => {
+    await store.putTask(task("M011", "P0", "resource-exception", "src/exception/**"));
+    const result = await coordinator(store, 1, () => ({
+      async run(): Promise<WorkflowTaskRunOutcome> {
+        await store.setTaskStatus("M011", "IMPLEMENTING", "2026-01-01T00:00:00.000Z");
+        throw new Error("unexpected executor failure");
+      },
+    })).dispatchAvailable();
+
+    expect(result.executions[0]?.recoveryRequired).toBe(true);
+    expect((await store.getTask("M011"))?.status).toBe("NEEDS_HUMAN");
+    expect(await store.listExecutionClaims({ status: "ACTIVE" })).toEqual([]);
+    expect(await store.listResourceLocks()).toEqual([]);
+  });
 });
 
 function coordinator(

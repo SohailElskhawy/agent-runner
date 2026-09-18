@@ -61,6 +61,7 @@ export type IntegrationQueueProcessorOutcome =
       readonly entry: IntegrationQueueEntry;
       readonly taskRevision: string;
       readonly reason: string;
+      readonly recoveryRequired?: boolean | undefined;
     };
 
 export interface IntegrationQueueProcessor {
@@ -227,8 +228,18 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
         attempt,
         entry,
       );
+      try {
+        await this.releaseExecution(entry, "COMPLETED", undefined);
+      } catch (error) {
+        return {
+          kind: "failed",
+          entry,
+          taskRevision,
+          reason: `terminal integration settlement succeeded but execution lock release failed: ${describeError(error)}`,
+          recoveryRequired: true,
+        };
+      }
       await this.cleanupSuccessfulWorktree(worktreePath);
-      await this.store.releaseResourceLocks({ taskId: task.id });
       return {
         kind: "processed",
         entry,
@@ -246,6 +257,9 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
           settlementIssue === undefined
             ? reason
             : `${reason}; queue settlement failed: ${settlementIssue}`,
+        ...(settlementIssue === undefined
+          ? {}
+          : { recoveryRequired: true }),
       };
     }
   }
@@ -398,6 +412,7 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
     const attempt = await this.store.getAttempt(entry.attemptId);
     const finishedAt = this.clock();
     let settlementIssue: string | undefined;
+    let settled = false;
     try {
       await this.store.transaction(async () => {
         if (attempt !== null) {
@@ -413,15 +428,18 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
             failure,
           });
         }
+        const taskFailure = failureFor(error);
+        const terminalTaskStatus =
+          taskFailure.kind === "cancelled" ? "CANCELLED" : "FAILED";
         if (task !== null && task.status === "INTEGRATING") {
-          await this.store.setTaskStatus(task.id, "FAILED", finishedAt);
+          await this.store.setTaskStatus(task.id, terminalTaskStatus, finishedAt);
           await this.store.appendEvents([
             {
               type: ORCHESTRATION_EVENTS.taskTransitioned,
               taskId: task.id,
               payload: {
                 from: task.status,
-                to: "FAILED",
+                to: terminalTaskStatus,
                 attemptId: entry.attemptId,
                 failure: failureFor(error),
               } satisfies TaskTransitionedPayload,
@@ -434,22 +452,46 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
           { message: `${reason} (task revision ${taskRevision})` },
           finishedAt,
         );
+        settled = true;
       });
     } catch (settlementError) {
       settlementIssue = describeError(settlementError);
-    } finally {
-      if (task !== null) {
-        try {
-          await this.store.releaseResourceLocks({ taskId: task.id });
-        } catch (releaseError) {
-          settlementIssue =
-            settlementIssue === undefined
-              ? describeError(releaseError)
-              : `${settlementIssue}; lock release failed: ${describeError(releaseError)}`;
-        }
+    }
+    if (settled) {
+      try {
+        await this.releaseExecution(
+          entry,
+          failureFor(error).kind === "cancelled" ? "CANCELLED" : "FAILED",
+          { message: reason },
+        );
+      } catch (releaseError) {
+        settlementIssue =
+          settlementIssue === undefined
+            ? describeError(releaseError)
+            : `${settlementIssue}; lock release failed: ${describeError(releaseError)}`;
       }
     }
     return settlementIssue;
+  }
+
+  private async releaseExecution(
+    entry: IntegrationQueueEntry,
+    status: "COMPLETED" | "FAILED" | "CANCELLED",
+    failure: { readonly message: string } | undefined,
+  ): Promise<void> {
+    if (entry.executionId !== undefined) {
+      await this.store.releaseTaskExecution(
+        entry.executionId,
+        status,
+        this.clock(),
+        failure,
+      );
+      return;
+    }
+    await this.store.releaseResourceLocks({
+      taskId: entry.taskId,
+      attemptId: entry.attemptId,
+    });
   }
 
   private async markIntegrationStageRunning(attemptId: string): Promise<void> {

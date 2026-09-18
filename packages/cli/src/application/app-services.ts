@@ -13,27 +13,34 @@ import {
 import type { AgentRegistry, AgentRuntime } from "@agentic-dev-runner/agents";
 import {
   createCrashRecovery,
+  createIntegrationQueueProcessor,
   createSingleTaskOrchestrator,
+  createTaskExecutionCoordinator,
+  createUnattendedScheduler,
+  createWorkflowTaskExecutor,
 } from "@agentic-dev-runner/orchestrator";
 import type {
   CrashRecovery,
   SingleTaskOrchestrator,
+  UnattendedScheduler,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createAgentAdapterRegistry } from "./agents/agent-adapter-registry.js";
 import type { AgentAdapterRegistry } from "./agents/agent-adapter-registry.js";
 import { createRoutedTaskOrchestrator } from "./agents/routed-task-orchestrator.js";
-import type { ProjectConfiguration } from "@agentic-dev-runner/core";
+import { resolveWorkflow, type ProjectConfiguration } from "@agentic-dev-runner/core";
 import {
   loadStrictProjectConfiguration,
   ProjectConfigurationUnavailableError,
 } from "./project-configuration.js";
 import {
   resolveAgentTimeoutMs,
+  resolveMaxParallelism,
   resolveStorePath,
   resolveWorktreesDir,
   type AppServicesOptions,
 } from "./defaults.js";
+import { resolveRoutedAgent } from "./agents/agent-routing.js";
 
 export type AppServices = {
   readonly store: RunnerStore;
@@ -41,6 +48,7 @@ export type AppServices = {
   readonly recovery: CrashRecovery;
   readonly agents: AgentRegistry;
   readonly adapters: AgentAdapterRegistry;
+  readonly scheduler: UnattendedScheduler | null;
 };
 
 export type AppServicesOverrides = {
@@ -51,6 +59,7 @@ export type AppServicesOverrides = {
   readonly agentRegistry?: AgentRegistry | undefined;
   readonly agentAdapters?: AgentAdapterRegistry | undefined;
   readonly verification?: VerificationEngine | undefined;
+  readonly scheduler?: UnattendedScheduler | undefined;
 };
 
 export async function createAppServices(
@@ -122,7 +131,66 @@ export async function createAppServices(
     projectRoot: options.projectRoot,
     worktreesDir: resolveWorktreesDir(options),
   });
-  return { store, orchestrator, recovery, agents, adapters };
+  const scheduler =
+    overrides.scheduler ??
+    (routed
+      ? createUnattendedScheduler({
+          coordinator: createTaskExecutionCoordinator({
+            store,
+            maxParallelism: resolveMaxParallelism(options),
+            agentCandidates: () => discoverAgentCandidates(agentProfiles, agents),
+            createExecutor: async (task, executionId) => {
+              const routedAgent = await resolveRoutedAgent({
+                requiredCapabilities: task.routing.capabilities,
+                agentProfiles,
+                agents,
+                adapters,
+              });
+              if (!routedAgent.routed) {
+                throw new Error(routedAgent.reason);
+              }
+              const workflow = resolveWorkflow(task.workflow);
+              if (!workflow.resolved) {
+                throw new Error(`unknown workflow "${workflow.workflowId}"`);
+              }
+              return createWorkflowTaskExecutor({
+                ...orchestratorBaseOptions,
+                agent: routedAgent.runtime,
+                task,
+                workflow: workflow.workflow,
+                integrationMode: "queued",
+                executionId,
+              });
+            },
+          }),
+          integration: createIntegrationQueueProcessor({
+            store,
+            git,
+            verification,
+            verificationChecks,
+            projectRoot: options.projectRoot,
+            worktreesDir: resolveWorktreesDir(options),
+          }),
+        })
+      : null);
+  return { store, orchestrator, recovery, agents, adapters, scheduler };
+}
+
+async function discoverAgentCandidates(
+  profiles: ProjectConfiguration["agentProfiles"],
+  agents: AgentRegistry,
+) {
+  const availability = await agents.discoverAgents();
+  const availableById = new Map(
+    availability.map((entry) => [entry.id, entry.available]),
+  );
+  return profiles.map((profile) => ({
+    profile,
+    availability: {
+      id: profile.adapterId,
+      available: availableById.get(profile.adapterId) === true,
+    },
+  }));
 }
 
 function requireConfiguration(

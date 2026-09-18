@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   Attempt,
+  ExecutionClaim,
   Project,
   ResourceLock,
   StageRun,
@@ -10,6 +11,8 @@ import type {
   StoredEvent,
   NewEvent,
   RunnerStore,
+  TaskExecutionClaimRequest,
+  TaskExecutionClaimResult,
 } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "@agentic-dev-runner/orchestrator";
 import type {
@@ -66,6 +69,15 @@ class RecordingStore implements RunnerStore {
   async putAttempt(attempt: Attempt): Promise<void> {
     this.attempts.push(attempt);
   }
+  async listExecutionClaims(): Promise<ExecutionClaim[]> {
+    return [];
+  }
+  async claimTaskExecution(
+    request: TaskExecutionClaimRequest,
+  ): Promise<TaskExecutionClaimResult> {
+    return { kind: "task-not-ready", taskId: request.taskId };
+  }
+  async releaseTaskExecution(): Promise<void> {}
   async getTaskStatus(): Promise<Task["status"] | null> {
     return null;
   }

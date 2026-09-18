@@ -94,6 +94,13 @@ function failingProbeChain(): readonly SchemaMigration[] {
   ];
 }
 
+function futureSchemaChain(): readonly SchemaMigration[] {
+  return [
+    ...SCHEMA_MIGRATIONS,
+    { version: 8, name: "test-only-future-schema", up: () => undefined },
+  ];
+}
+
 function readMigrationRows(dbPath: string): MigrationRow[] {
   const db = new DatabaseSync(dbPath);
   try {
@@ -106,11 +113,19 @@ function readMigrationRows(dbPath: string): MigrationRow[] {
       readonly name?: unknown;
       readonly applied_at?: unknown;
     }>;
-    return rows.map((row) => ({
-      version: Number(row.version),
-      name: String(row.name),
-      appliedAt: String(row.applied_at),
-    }));
+    // Keep the historical migration assertions focused on the pre-Batch-6
+    // chain; execution-claim migrations are covered by execution-claims.test.
+    return rows
+      .filter(
+        (row) =>
+          row.name !== "add-execution-claims" &&
+          row.name !== "add-integration-queue-execution-identity",
+      )
+      .map((row) => ({
+        version: Number(row.version),
+        name: String(row.name),
+        appliedAt: String(row.applied_at),
+      }));
   } finally {
     db.close();
   }
@@ -382,7 +397,7 @@ describe("SQLite schema migrations", () => {
     }
     const storeB = createSqliteRunnerStore({
       path: dbPath,
-      migrations: probeChain(),
+      migrations: futureSchemaChain(),
     });
     try {
       await storeB.initialize();
@@ -402,9 +417,9 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(SchemaVersionTooNewError);
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
-    expect((rejection as Error).message).toContain("schema version 6");
+    expect((rejection as Error).message).toContain("schema version 8");
     expect((rejection as Error).message).toContain(
-      "supported schema version 5",
+      "supported schema version 7",
     );
   });
 
@@ -413,10 +428,10 @@ describe("SQLite schema migrations", () => {
     try {
       expect(
         migrateSchema(db, {
-          migrations: probeChain(),
+          migrations: futureSchemaChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(6);
+      ).toBe(8);
 
       expect(() =>
         migrateSchema(db, { migrations: [initialSchemaMigration()] }),

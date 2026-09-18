@@ -24,6 +24,7 @@ export type PendingIntegrationTaskRun = {
   readonly branch: string;
   readonly worktreePath: string;
   readonly taskRevision: string;
+  readonly executionId?: string | undefined;
 };
 
 export type CompletedTaskRun = {

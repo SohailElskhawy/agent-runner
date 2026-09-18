@@ -10,6 +10,7 @@ export type AppServicesOptions = {
   readonly worktreesDir?: string | undefined;
   readonly verificationChecks?: readonly VerificationCheckSpec[] | undefined;
   readonly agentTimeoutMs?: number | undefined;
+  readonly maxParallelism?: number | undefined;
 };
 
 export const STATE_ROOT_SEGMENT = join(".agentic", "projects");
@@ -19,6 +20,7 @@ export const WORKTREES_DIR_NAME = "worktrees";
 export const DEFAULT_PROJECT_ID = "proj-local";
 
 export const DEFAULT_AGENT_TIMEOUT_MS = 15 * 60 * 1000;
+export const DEFAULT_MAX_PARALLELISM = 1;
 
 const CASE_INSENSITIVE_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set([
   "win32",
@@ -67,4 +69,8 @@ export function resolveVerificationChecks(
 
 export function resolveAgentTimeoutMs(options: AppServicesOptions): number {
   return options.agentTimeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
+}
+
+export function resolveMaxParallelism(options: AppServicesOptions): number {
+  return options.maxParallelism ?? DEFAULT_MAX_PARALLELISM;
 }

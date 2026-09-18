@@ -26,7 +26,7 @@
  * this module's.
  */
 
-import type { AttemptId, TaskId } from "./ids.js";
+import type { AttemptId, ExecutionClaimId, TaskId } from "./ids.js";
 import type { IsoTimestamp } from "./timestamp.js";
 
 export const INTEGRATION_QUEUE_STATUSES = [
@@ -58,6 +58,7 @@ export type IntegrationQueueEntry = {
   readonly sequence: number;
   readonly taskId: TaskId;
   readonly attemptId: AttemptId;
+  readonly executionId?: ExecutionClaimId | undefined;
   /** The prepared task commit/revision this entry integrates. */
   readonly taskRevision: string;
   /** The isolated task branch the runner integrates through. */
@@ -75,6 +76,7 @@ export type IntegrationQueueEntry = {
 export type IntegrationQueueRequest = {
   readonly taskId: TaskId;
   readonly attemptId: AttemptId;
+  readonly executionId?: ExecutionClaimId | undefined;
   readonly taskRevision: string;
   readonly branch: string;
   readonly baseRevision: string;

@@ -1,11 +1,14 @@
 export { type NewEvent, type StoredEvent } from "./ports/event.js";
 export {
   type AttemptFilter,
+  type ExecutionClaimFilter,
   type EventFilter,
   type IntegrationQueueFilter,
   type ResourceLockFilter,
   type RunnerStore,
   type TaskFilter,
+  type TaskExecutionClaimRequest,
+  type TaskExecutionClaimResult,
 } from "./ports/runner-store.js";
 export { PersistenceError, SchemaVersionTooNewError, StoreClosedError } from "./sqlite/errors.js";
 export {

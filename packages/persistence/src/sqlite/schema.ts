@@ -160,6 +160,44 @@ export function applyIntegrationQueueSchema(db: SchemaMigrationDatabase): void {
   }
 }
 
+const SCHEMA_V6_STATEMENTS = [
+  `ALTER TABLE resource_locks ADD COLUMN execution_id TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_resource_locks_execution_id ON resource_locks(execution_id)`,
+  `CREATE TABLE IF NOT EXISTS execution_claims (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  claimed_at TEXT NOT NULL,
+  finished_at TEXT,
+  failure_json TEXT,
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+) STRICT`,
+  `CREATE INDEX IF NOT EXISTS idx_execution_claims_task_id ON execution_claims(task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_execution_claims_status ON execution_claims(status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_claims_active_task
+  ON execution_claims(task_id)
+  WHERE status = 'ACTIVE'`,
+];
+
+export function applyExecutionClaimsSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V6_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
+const SCHEMA_V7_STATEMENTS = [
+  `ALTER TABLE integration_queue ADD COLUMN execution_id TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_integration_queue_execution_id ON integration_queue(execution_id)`,
+];
+
+export function applyIntegrationQueueExecutionSchema(
+  db: SchemaMigrationDatabase,
+): void {
+  for (const statement of SCHEMA_V7_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -185,6 +223,16 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 5,
     name: "add-integration-queue",
     up: applyIntegrationQueueSchema,
+  },
+  {
+    version: 6,
+    name: "add-execution-claims",
+    up: applyExecutionClaimsSchema,
+  },
+  {
+    version: 7,
+    name: "add-integration-queue-execution-identity",
+    up: applyIntegrationQueueExecutionSchema,
   },
 ];
 

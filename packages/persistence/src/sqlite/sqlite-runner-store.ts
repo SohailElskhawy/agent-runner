@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   ATTEMPT_STATUSES,
+  EXECUTION_CLAIM_STATUSES,
   INTEGRATION_QUEUE_STATUSES,
   STAGE_KINDS,
   STAGE_RUN_STATUSES,
@@ -15,6 +16,9 @@ import {
   type AttemptId,
   type AttemptLogs,
   type ContextManifest,
+  type ExecutionClaim,
+  type ExecutionClaimId,
+  type ExecutionClaimStatus,
   type IntegrationQueueEntry,
   type IntegrationQueueRequest,
   type IsoTimestamp,
@@ -34,9 +38,12 @@ import type { NewEvent, StoredEvent } from "../ports/event.js";
 import {
   type AttemptFilter,
   type EventFilter,
+  type ExecutionClaimFilter,
   type IntegrationQueueFilter,
   type ResourceLockFilter,
   type RunnerStore,
+  type TaskExecutionClaimRequest,
+  type TaskExecutionClaimResult,
   type TaskFilter,
 } from "../ports/runner-store.js";
 import { PersistenceError, StoreClosedError } from "./errors.js";
@@ -277,6 +284,169 @@ export class SqliteRunnerStore implements RunnerStore {
     );
   }
 
+  async listExecutionClaims(filter?: ExecutionClaimFilter): Promise<ExecutionClaim[]> {
+    const db = this.requireDb("listExecutionClaims");
+    const conditions: string[] = [];
+    const parameters: SqlValue[] = [];
+    if (filter?.taskId !== undefined) {
+      conditions.push("task_id = ?");
+      parameters.push(filter.taskId);
+    }
+    if (filter?.status !== undefined) {
+      conditions.push("status = ?");
+      parameters.push(filter.status);
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+    const rows = getRows(
+      db.prepare(`SELECT * FROM execution_claims${where} ORDER BY claimed_at, id`),
+      parameters,
+    );
+    return rows.map(executionClaimFromRow);
+  }
+
+  async claimTaskExecution(
+    request: TaskExecutionClaimRequest,
+  ): Promise<TaskExecutionClaimResult> {
+    validateTaskExecutionClaimRequest(request);
+    const db = this.requireDb("claimTaskExecution");
+    if (db.isTransaction) {
+      throw new PersistenceError("Nested transactions are not supported");
+    }
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const taskRow = getRow(
+        db.prepare("SELECT status FROM tasks WHERE id = ?"),
+        [request.taskId],
+      );
+      if (taskRow === undefined || taskRow["status"] !== "READY") {
+        db.exec("COMMIT");
+        return { kind: "task-not-ready", taskId: request.taskId };
+      }
+      const activeClaim = getRow(
+        db.prepare(
+          "SELECT id FROM execution_claims WHERE task_id = ? AND status = 'ACTIVE' LIMIT 1",
+        ),
+        [request.taskId],
+      );
+      if (activeClaim !== undefined) {
+        db.exec("COMMIT");
+        return { kind: "already-claimed", taskId: request.taskId };
+      }
+      const activeCount = getRow(
+        db.prepare("SELECT COUNT(*) AS count FROM execution_claims WHERE status = 'ACTIVE'"),
+        [],
+      );
+      if (Number(activeCount?.["count"] ?? 0) >= request.maxParallelism) {
+        db.exec("COMMIT");
+        return { kind: "capacity-exhausted", taskId: request.taskId };
+      }
+
+      const requested = requestedResourceLocks(
+        request.resources.map((resource) => ({
+          resource,
+          taskId: request.taskId,
+          executionId: request.executionId,
+          acquiredAt: request.claimedAt,
+        })),
+      );
+      for (const lock of requested) {
+        const existing = getRow(
+          db.prepare("SELECT * FROM resource_locks WHERE resource = ?"),
+          [lock.resource],
+        );
+        if (
+          existing !== undefined &&
+          !sameExecutionLockOwner(resourceLockFromRow(existing), lock)
+        ) {
+          db.exec("COMMIT");
+          return { kind: "resource-unavailable", taskId: request.taskId };
+        }
+      }
+
+      db.prepare(
+        `INSERT INTO execution_claims (id, task_id, status, claimed_at)
+         VALUES (?, ?, 'ACTIVE', ?)`,
+      ).run(request.executionId, request.taskId, request.claimedAt);
+      const insertLock = db.prepare(
+        `INSERT INTO resource_locks
+         (resource, task_id, attempt_id, execution_id, acquired_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      for (const lock of requested) {
+        insertLock.run(
+          lock.resource,
+          lock.taskId,
+          lock.attemptId ?? null,
+          lock.executionId ?? null,
+          lock.acquiredAt ?? null,
+        );
+      }
+      db.exec("COMMIT");
+      return {
+        kind: "claimed",
+        claim: {
+          id: request.executionId,
+          taskId: request.taskId,
+          status: "ACTIVE",
+          claimedAt: request.claimedAt,
+        },
+      };
+    } catch (error) {
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
+      throw error instanceof PersistenceError
+        ? error
+        : new PersistenceError("Task execution claim failed", error);
+    }
+  }
+
+  async releaseTaskExecution(
+    executionId: ExecutionClaimId,
+    status: Exclude<ExecutionClaimStatus, "ACTIVE">,
+    finishedAt: IsoTimestamp,
+    failure?: { readonly message: string } | undefined,
+  ): Promise<void> {
+    if (!EXECUTION_CLAIM_STATUSES.includes(status)) {
+      throw new PersistenceError("Execution claim release requires a terminal status");
+    }
+    const db = this.requireDb("releaseTaskExecution");
+    if (db.isTransaction) {
+      throw new PersistenceError("Nested transactions are not supported");
+    }
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = db
+        .prepare(
+          `UPDATE execution_claims
+           SET status = ?, finished_at = ?, failure_json = ?
+           WHERE id = ? AND status = 'ACTIVE'`,
+        )
+        .run(
+          status,
+          finishedAt,
+          failure === undefined ? null : JSON.stringify(failure),
+          executionId,
+        );
+      if (Number(result.changes) === 0) {
+        throw new PersistenceError(
+          `Cannot release execution claim "${executionId}": it is not active`,
+        );
+      }
+      db.prepare("DELETE FROM resource_locks WHERE execution_id = ?").run(
+        executionId,
+      );
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) {
+        db.exec("ROLLBACK");
+      }
+      throw error instanceof PersistenceError
+        ? error
+        : new PersistenceError("Execution claim release failed", error);
+    }
+  }
+
   async putStageRun(stageRun: StageRun): Promise<void> {
     const db = this.requireDb("putStageRun");
     try {
@@ -340,6 +510,10 @@ export class SqliteRunnerStore implements RunnerStore {
     if (filter?.attemptId !== undefined) {
       conditions.push("attempt_id = ?");
       parameters.push(filter.attemptId);
+    }
+    if (filter?.executionId !== undefined) {
+      conditions.push("execution_id = ?");
+      parameters.push(filter.executionId);
     }
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
     const rows = getRows(
@@ -423,6 +597,10 @@ export class SqliteRunnerStore implements RunnerStore {
       conditions.push("attempt_id = ?");
       parameters.push(filter.attemptId);
     }
+    if (filter.executionId !== undefined) {
+      conditions.push("execution_id = ?");
+      parameters.push(filter.executionId);
+    }
     db.prepare(`DELETE FROM resource_locks WHERE ${conditions.join(" AND ")}`)
       .run(...parameters);
   }
@@ -440,6 +618,10 @@ export class SqliteRunnerStore implements RunnerStore {
     if (filter?.attemptId !== undefined) {
       conditions.push("attempt_id = ?");
       parameters.push(filter.attemptId);
+    }
+    if (filter?.executionId !== undefined) {
+      conditions.push("execution_id = ?");
+      parameters.push(filter.executionId);
     }
     if (filter?.status !== undefined) {
       conditions.push("status = ?");
@@ -470,15 +652,16 @@ export class SqliteRunnerStore implements RunnerStore {
       const result = db
         .prepare(
           `INSERT INTO integration_queue (
-             id, task_id, attempt_id, task_revision, branch, base_revision,
-             status, enqueued_at
+             id, task_id, attempt_id, execution_id, task_revision, branch,
+             base_revision, status, enqueued_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
         )
         .run(
           id,
           request.taskId,
           request.attemptId,
+          request.executionId ?? null,
           request.taskRevision,
           request.branch,
           request.baseRevision,
@@ -489,6 +672,9 @@ export class SqliteRunnerStore implements RunnerStore {
         sequence: Number(result.lastInsertRowid),
         taskId: request.taskId,
         attemptId: request.attemptId,
+        ...(request.executionId === undefined
+          ? {}
+          : { executionId: request.executionId }),
         taskRevision: request.taskRevision,
         branch: request.branch,
         baseRevision: request.baseRevision,
@@ -844,7 +1030,8 @@ function requestedResourceLocks(
     }
     if (
       existing.taskId !== lock.taskId ||
-      existing.attemptId !== lock.attemptId
+      existing.attemptId !== lock.attemptId ||
+      existing.executionId !== lock.executionId
     ) {
       throw new PersistenceError(
         `Duplicate acquisition request for resource "${lock.resource}" carries conflicting ownership`,
@@ -874,12 +1061,45 @@ function missingLockOwnerError(
 
 function resourceLockFromRow(row: Record<string, unknown>): ResourceLock {
   const attemptId = optionalTextColumn(row, "attempt_id");
+  const executionId = optionalTextColumn(row, "execution_id");
   const acquiredAt = optionalTextColumn(row, "acquired_at");
   return {
     resource: textColumn(row, "resource"),
     taskId: textColumn(row, "task_id"),
     ...(attemptId === null ? {} : { attemptId }),
+    ...(executionId === null ? {} : { executionId }),
     ...(acquiredAt === null ? {} : { acquiredAt }),
+  };
+}
+
+function sameExecutionLockOwner(
+  left: ResourceLock,
+  right: ResourceLock,
+): boolean {
+  return (
+    left.taskId === right.taskId &&
+    left.attemptId === right.attemptId &&
+    left.executionId === right.executionId
+  );
+}
+
+function executionClaimFromRow(row: Record<string, unknown>): ExecutionClaim {
+  const finishedAt = optionalTextColumn(row, "finished_at");
+  const failure = optionalJsonColumn<{ readonly message: string }>(
+    row,
+    "failure_json",
+  );
+  return {
+    id: textColumn(row, "id"),
+    taskId: textColumn(row, "task_id"),
+    status: parseEnumerated(
+      textColumn(row, "status"),
+      EXECUTION_CLAIM_STATUSES,
+      "execution claim status",
+    ),
+    claimedAt: textColumn(row, "claimed_at"),
+    ...(finishedAt === null ? {} : { finishedAt }),
+    ...(failure === null ? {} : { failure }),
   };
 }
 
@@ -892,11 +1112,13 @@ function integrationQueueEntryFromRow(
     row,
     "failure_json",
   );
+  const executionId = optionalTextColumn(row, "execution_id");
   return {
     id: textColumn(row, "id"),
     sequence: numberColumn(row, "sequence"),
     taskId: textColumn(row, "task_id"),
     attemptId: textColumn(row, "attempt_id"),
+    ...(executionId === null ? {} : { executionId }),
     taskRevision: textColumn(row, "task_revision"),
     branch: textColumn(row, "branch"),
     baseRevision: textColumn(row, "base_revision"),
@@ -922,10 +1144,29 @@ function validateIntegrationQueueRequest(
 ): void {
   requireNonEmptyText(request.taskId, "owning task id");
   requireNonEmptyText(request.attemptId, "owning attempt id");
+  if (request.executionId !== undefined) {
+    requireNonEmptyText(request.executionId, "execution claim id");
+  }
   requireNonEmptyText(request.taskRevision, "task revision");
   requireNonEmptyText(request.branch, "task branch");
   requireNonEmptyText(request.baseRevision, "base revision");
   requireNonEmptyText(request.enqueuedAt, "enqueue timestamp");
+}
+
+function validateTaskExecutionClaimRequest(
+  request: TaskExecutionClaimRequest,
+): void {
+  requireNonEmptyText(request.taskId, "task id");
+  requireNonEmptyText(request.executionId, "execution claim id");
+  requireNonEmptyText(request.claimedAt, "claim timestamp");
+  if (
+    !Number.isInteger(request.maxParallelism) ||
+    request.maxParallelism <= 0
+  ) {
+    throw new PersistenceError(
+      "Execution claim maxParallelism must be a positive integer",
+    );
+  }
 }
 
 function requireNonEmptyText(value: string, label: string): void {

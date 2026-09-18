@@ -122,6 +122,7 @@ export type WorkflowTaskExecutorOptions = {
   readonly projectRoot: string;
   readonly worktreesDir: string;
   readonly agentTimeoutMs: number;
+  readonly executionId?: string | undefined;
   /** Immediate integration is retained for the single-task path. */
   readonly integrationMode?: "immediate" | "queued" | undefined;
   readonly signal?: AbortSignal | undefined;
@@ -176,6 +177,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
   private readonly worktreesDir: string;
   private readonly agentTimeoutMs: number;
   private readonly integrationMode: "immediate" | "queued";
+  private readonly executionId: string | undefined;
   private readonly signal: AbortSignal | undefined;
   private readonly clock: () => IsoTimestamp;
   private running = false;
@@ -193,6 +195,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     this.worktreesDir = options.worktreesDir;
     this.agentTimeoutMs = options.agentTimeoutMs;
     this.integrationMode = options.integrationMode ?? "immediate";
+    this.executionId = options.executionId;
     this.signal = options.signal;
     this.clock = options.now ?? defaultClock;
   }
@@ -504,6 +507,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
               branch,
               commitRevision,
               worktreePath,
+              executionId: this.executionId,
             })
           : await this.runIntegrationStage({
               attemptId,
@@ -856,6 +860,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     branch: string;
     commitRevision: string;
     worktreePath: string;
+    executionId?: string | undefined;
   }): Promise<PendingIntegrationTaskRun> {
     const startedAt = this.clock();
     const stageRunId: StageRunId = `stage_${input.attemptId}_INTEGRATE`;
@@ -869,6 +874,9 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     await this.store.enqueueIntegrationQueueEntry({
       taskId: this.taskId,
       attemptId: input.attemptId,
+      ...(input.executionId === undefined
+        ? {}
+        : { executionId: input.executionId }),
       taskRevision: input.commitRevision,
       branch: input.branch,
       baseRevision: input.baseRevision,
@@ -895,6 +903,9 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       branch: input.branch,
       worktreePath: input.worktreePath,
       taskRevision: input.commitRevision,
+      ...(input.executionId === undefined
+        ? {}
+        : { executionId: input.executionId }),
     };
   }
 

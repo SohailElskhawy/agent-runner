@@ -17,6 +17,7 @@ export * from "./parallelism-capacity.js";
 export * from "./context-manifest.js";
 export * from "./context-pack.js";
 export * from "./attempt.js";
+export * from "./execution-claim.js";
 export * from "./stage-run.js";
 export * from "./verification-result.js";
 export * from "./project-config.js";

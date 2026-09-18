@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type {
   AgentRouteCandidate,
+  ExecutionClaim,
   IsoTimestamp,
   Task,
   TaskId,
@@ -8,23 +10,28 @@ import {
   countParallelismActiveExecutions,
   detectTaskConflicts,
   evaluateParallelismCapacity,
-  orderRunnableTasks,
-  requiredResourceLocks,
-  selectRunnableTasks,
   isParallelismActiveStatus,
+  orderRunnableTasks,
+  selectRunnableTasks,
 } from "@agentic-dev-runner/core";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
+import {
+  ORCHESTRATION_EVENTS,
+  type TaskTransitionedPayload,
+} from "./orchestration-events.js";
 import type { WorkflowTaskExecutor } from "./workflow-executor.js";
 import type { WorkflowTaskRunOutcome } from "./workflow-outcome.js";
 
 export type TaskExecutionCoordinatorOptions = {
   readonly store: RunnerStore;
-  readonly agentCandidates: readonly AgentRouteCandidate[];
+  readonly agentCandidates:
+    | readonly AgentRouteCandidate[]
+    | (() => Promise<readonly AgentRouteCandidate[]>);
   readonly maxParallelism: number;
   readonly projectId?: string | undefined;
-  /** Creates the already-wired workflow executor for one admitted task. */
   readonly createExecutor: (
     task: Task,
+    executionId: string,
   ) => WorkflowTaskExecutor | Promise<WorkflowTaskExecutor>;
   readonly now?: (() => IsoTimestamp) | undefined;
 };
@@ -35,6 +42,7 @@ export type TaskAdmission = {
   readonly reason?:
     | "capacity-exhausted"
     | "conflict"
+    | "already-claimed"
     | "lock-unavailable"
     | undefined;
 };
@@ -43,21 +51,17 @@ export type TaskExecutionResult = {
   readonly taskId: TaskId;
   readonly outcome: WorkflowTaskRunOutcome | undefined;
   readonly error?: string | undefined;
+  readonly recoveryRequired?: boolean | undefined;
 };
 
 export type TaskDispatchResult = {
   readonly admissions: readonly TaskAdmission[];
   readonly executions: readonly TaskExecutionResult[];
   readonly activeExecutions: number;
+  readonly activeClaims: readonly ExecutionClaim[];
 };
 
 export interface TaskExecutionCoordinator {
-  /**
-   * Re-reads durable state, admits every currently eligible task that fits,
-   * starts admitted workflows concurrently, and waits for that batch to
-   * settle. Individual workflow failures are returned as results and never
-   * reject the batch.
-   */
   dispatchAvailable(): Promise<TaskDispatchResult>;
 }
 
@@ -69,7 +73,7 @@ export function createTaskExecutionCoordinator(
 
 class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
   private readonly store: RunnerStore;
-  private readonly agentCandidates: readonly AgentRouteCandidate[];
+  private readonly candidates: TaskExecutionCoordinatorOptions["agentCandidates"];
   private readonly maxParallelism: number;
   private readonly projectId: string | undefined;
   private readonly createExecutor: TaskExecutionCoordinatorOptions["createExecutor"];
@@ -81,7 +85,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       throw new Error("maxParallelism must be a positive integer");
     }
     this.store = options.store;
-    this.agentCandidates = [...options.agentCandidates];
+    this.candidates = options.agentCandidates;
     this.maxParallelism = options.maxParallelism;
     this.projectId = options.projectId;
     this.createExecutor = options.createExecutor;
@@ -92,16 +96,23 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     const tasks = await this.store.listTasks(
       this.projectId === undefined ? undefined : { projectId: this.projectId },
     );
+    const activeClaims = await this.store.listExecutionClaims({ status: "ACTIVE" });
+    const claimedTaskIds = new Set(activeClaims.map((claim) => claim.taskId));
+    const selectableTasks = tasks.filter((task) => !claimedTaskIds.has(task.id));
     const attempts = await Promise.all(
-      tasks.map(async (task) => [
+      selectableTasks.map(async (task) => [
         task.id,
         (await this.store.listAttempts({ taskId: task.id })).length,
       ] as const),
     );
+    const agentCandidates =
+      typeof this.candidates === "function"
+        ? await this.candidates()
+        : this.candidates;
     const selection = selectRunnableTasks({
-      tasks,
+      tasks: selectableTasks,
       attemptCounts: new Map(attempts),
-      agentCandidates: this.agentCandidates,
+      agentCandidates,
     });
     const ordered = orderRunnableTasks(selection.runnable);
     const activePersisted = tasks.filter((task) =>
@@ -110,8 +121,9 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     const admissions: TaskAdmission[] = [];
     const admittedTasks: Task[] = [];
     const executions: Promise<TaskExecutionResult>[] = [];
-    let activeExecutions = countParallelismActiveExecutions(
-      tasks.map((task) => task.status),
+    let activeExecutions = Math.max(
+      activeClaims.length,
+      countParallelismActiveExecutions(tasks.map((task) => task.status)),
     );
 
     for (const task of ordered) {
@@ -131,7 +143,6 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
         });
         break;
       }
-
       const conflicts = detectTaskConflicts([
         ...activePersisted,
         ...admittedTasks,
@@ -145,21 +156,27 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
         continue;
       }
 
-      const locks = requiredResourceLocks(
-        { taskId: task.id },
-        task.definition.resources,
-      ).map((lock) => ({ ...lock, acquiredAt: this.clock() }));
-      try {
-        await this.store.acquireResourceLocks(locks);
-      } catch {
-        // The store acquisition is the race-safe gate. A contender losing the
-        // race is deferred, while later independent candidates are still
-        // considered in this same deterministic pass.
-        admissions.push({
-          taskId: task.id,
-          kind: "deferred",
-          reason: "lock-unavailable",
-        });
+      const executionId = `exec_${randomUUID()}`;
+      const claim = await this.store.claimTaskExecution({
+        taskId: task.id,
+        executionId,
+        maxParallelism: this.maxParallelism,
+        resources: task.definition.resources,
+        claimedAt: this.clock(),
+      });
+      if (claim.kind !== "claimed") {
+        const reason =
+          claim.kind === "capacity-exhausted"
+            ? "capacity-exhausted"
+            : claim.kind === "already-claimed"
+              ? "already-claimed"
+              : claim.kind === "resource-unavailable"
+                ? "lock-unavailable"
+                : "conflict";
+        admissions.push({ taskId: task.id, kind: "deferred", reason });
+        if (claim.kind === "capacity-exhausted") {
+          break;
+        }
         continue;
       }
 
@@ -167,7 +184,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       admittedTasks.push(task);
       activeExecutions += 1;
       this.activeTaskIds.add(task.id);
-      executions.push(this.executeAdmitted(task));
+      executions.push(this.executeAdmitted(task, claim.claim));
     }
 
     const settled = await Promise.all(executions);
@@ -175,33 +192,127 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       admissions,
       executions: settled,
       activeExecutions,
+      activeClaims: await this.store.listExecutionClaims({ status: "ACTIVE" }),
     };
   }
 
-  private async executeAdmitted(task: Task): Promise<TaskExecutionResult> {
+  private async executeAdmitted(
+    task: Task,
+    claim: ExecutionClaim,
+  ): Promise<TaskExecutionResult> {
     try {
-      const executor = await this.createExecutor(task);
+      const executor = await this.createExecutor(task, claim.id);
       const outcome = await executor.run();
-      await this.releaseIfTerminal(task.id);
+      await this.releaseIfTerminal(task.id, claim, outcome);
       return { taskId: task.id, outcome };
     } catch (error) {
-      await this.releaseIfTerminal(task.id);
+      const recoveryRequired = await this.handleUnexpectedFailure(task, claim, error);
       return {
         taskId: task.id,
         outcome: undefined,
         error: describeError(error),
+        recoveryRequired,
       };
     } finally {
       this.activeTaskIds.delete(task.id);
     }
   }
 
-  private async releaseIfTerminal(taskId: TaskId): Promise<void> {
+  private async releaseIfTerminal(
+    taskId: TaskId,
+    claim: ExecutionClaim,
+    outcome: WorkflowTaskRunOutcome,
+  ): Promise<void> {
+    if (outcome.kind === "pending-integration") {
+      return;
+    }
     const task = await this.store.getTask(taskId);
     if (task === null || isParallelismActiveStatus(task.status)) {
       return;
     }
-    await this.store.releaseResourceLocks({ taskId });
+    await this.store.releaseTaskExecution(
+      claim.id,
+      claimStatusForTask(task.status),
+      this.clock(),
+    );
+  }
+
+  private async handleUnexpectedFailure(
+    task: Task,
+    claim: ExecutionClaim,
+    error: unknown,
+  ): Promise<boolean> {
+    const queueEntries = await this.store.listIntegrationQueueEntries({
+      executionId: claim.id,
+    });
+    if (queueEntries.some((entry) => entry.status === "PENDING" || entry.status === "INTEGRATING")) {
+      return true;
+    }
+    const current = await this.store.getTask(task.id);
+    const finishedAt = this.clock();
+    const targetStatus =
+      current !== null && isParallelismActiveStatus(current.status)
+        ? "NEEDS_HUMAN"
+        : "FAILED";
+    try {
+      await this.store.transaction(async () => {
+        const attempts = await this.store.listAttempts({ taskId: task.id });
+        const runningAttempt = attempts
+          .filter((attempt) => attempt.status === "RUNNING")
+          .at(-1);
+        if (runningAttempt !== undefined) {
+          await this.store.putAttempt({
+            ...runningAttempt,
+            status: "FAILED",
+            finishedAt,
+            failure: { kind: "error", message: describeError(error) },
+          });
+        }
+        if (current !== null && current.status !== "DONE") {
+          await this.store.setTaskStatus(task.id, targetStatus, finishedAt);
+          await this.store.appendEvents([
+            {
+              type: ORCHESTRATION_EVENTS.taskTransitioned,
+              taskId: task.id,
+              payload: {
+                from: current.status,
+                to: targetStatus,
+                ...(runningAttempt === undefined
+                  ? {}
+                  : { attemptId: runningAttempt.id }),
+                failure: { kind: "error", message: describeError(error) },
+              } satisfies TaskTransitionedPayload,
+              occurredAt: finishedAt,
+            },
+          ]);
+        }
+      });
+      await this.store.releaseTaskExecution(
+        claim.id,
+        targetStatus === "NEEDS_HUMAN" ? "RECOVERY_REQUIRED" : "FAILED",
+        finishedAt,
+        { message: describeError(error) },
+      );
+      return targetStatus === "NEEDS_HUMAN";
+    } catch {
+      return true;
+    }
+  }
+}
+
+function claimStatusForTask(
+  status: Task["status"],
+): "COMPLETED" | "FAILED" | "CANCELLED" | "RECOVERY_REQUIRED" {
+  switch (status) {
+    case "DONE":
+      return "COMPLETED";
+    case "CANCELLED":
+      return "CANCELLED";
+    case "BLOCKED":
+    case "NEEDS_HUMAN":
+      return "RECOVERY_REQUIRED";
+    default:
+      return "FAILED";
   }
 }
 

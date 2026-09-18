@@ -154,6 +154,16 @@ describe("createAppServices wiring", () => {
     expect(appServices.agents.agentIds).toEqual(["opencode", "codex"]);
   });
 
+  it("exposes the production unattended scheduler composition", async () => {
+    const appServices = await createAppServices({
+      ...options,
+      maxParallelism: 2,
+    });
+    store = appServices.store;
+
+    expect(appServices.scheduler).not.toBeNull();
+  });
+
   it("accepts an agent registry override for testing", async () => {
     const registry = {
       agentIds: ["fake"],

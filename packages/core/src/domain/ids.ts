@@ -7,3 +7,5 @@ export type AttemptId = string;
 export type StageRunId = string;
 
 export type VerificationResultId = string;
+
+export type ExecutionClaimId = string;

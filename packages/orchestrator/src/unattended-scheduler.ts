@@ -89,6 +89,7 @@ class DurableUnattendedScheduler implements UnattendedScheduler {
         // repeatedly invoking the same rejected task forever.
         const executionProgress = dispatch.executions.some(
           (execution) =>
+            execution.error !== undefined ||
             (execution.outcome !== undefined &&
               execution.outcome.kind !== "rejected"),
         );
@@ -96,6 +97,19 @@ class DurableUnattendedScheduler implements UnattendedScheduler {
           (outcome) =>
             outcome.kind === "processed" || outcome.kind === "failed",
         );
+        if (
+          dispatch.executions.some((execution) => execution.recoveryRequired) ||
+          (dispatch.activeClaims.length > 0 &&
+            !executionProgress &&
+            !integrationProgress)
+        ) {
+          return {
+            kind: "blocked",
+            cycles,
+            completedTaskIds,
+            failedTaskIds,
+          };
+        }
         if (!executionProgress && !integrationProgress) {
           return {
             kind: "quiescent",

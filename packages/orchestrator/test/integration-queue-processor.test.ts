@@ -22,6 +22,7 @@ import {
 import {
   createProject,
   createTask,
+  cancelledVerificationRun,
   passedVerificationRun,
 } from "./fixtures.js";
 
@@ -178,12 +179,68 @@ describe("integration queue processor (M047b)", () => {
     expect((await store.listIntegrationQueueEntries())[0]?.status).toBe("FAILED");
   });
 
+  it("retains execution locks when durable queue settlement fails", async () => {
+    await store.putTask({ ...task, status: "READY" });
+    const claim = await store.claimTaskExecution({
+      taskId: task.id,
+      executionId: "exec-settlement-failure",
+      maxParallelism: 1,
+      resources: task.definition.resources,
+      claimedAt: clock(),
+    });
+    expect(claim.kind).toBe("claimed");
+    await store.putTask({ ...task, status: "INTEGRATING" });
+    await store.enqueueIntegrationQueueEntry(
+      queueRequest("exec-settlement-failure"),
+    );
+    const failingStore = new Proxy(store, {
+      get(target, property) {
+        if (property === "transaction") {
+          return async () => {
+            throw new Error("simulated settlement persistence failure");
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const result = await createProcessor(failingStore, currentDrift()).processNext();
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.recoveryRequired).toBe(true);
+    }
+    expect(await store.listExecutionClaims({ status: "ACTIVE" })).toHaveLength(1);
+    expect(await store.listResourceLocks()).toHaveLength(1);
+    expect((await store.listIntegrationQueueEntries())[0]?.status).toBe(
+      "INTEGRATING",
+    );
+  });
+
+  it("maps queue cancellation to CANCELLED task and attempt states", async () => {
+    await enqueue();
+    const processor = createProcessor(store, currentDrift(), {
+      verification: {
+        async run(input) {
+          return cancelledVerificationRun(input);
+        },
+      },
+    });
+
+    const result = await processor.processNext();
+
+    expect(result.kind).toBe("failed");
+    expect((await store.getTask(task.id))?.status).toBe("CANCELLED");
+    expect((await store.getAttempt(attempt.id))?.status).toBe("CANCELLED");
+    expect((await store.listIntegrationQueueEntries())[0]?.status).toBe("FAILED");
+  });
+
   async function enqueue(): Promise<void> {
     await store.putTask({ ...task, status: "INTEGRATING" });
-    await store.enqueueIntegrationQueueEntry(queueRequest());
+      await store.enqueueIntegrationQueueEntry(queueRequest());
   }
 
-  function queueRequest() {
+  function queueRequest(executionId?: string) {
     return {
       taskId: task.id,
       attemptId: attempt.id,
@@ -191,6 +248,7 @@ describe("integration queue processor (M047b)", () => {
       branch: "task/M001/attempt-1",
       baseRevision: "base-revision",
       enqueuedAt: clock(),
+      ...(executionId === undefined ? {} : { executionId }),
     };
   }
 });

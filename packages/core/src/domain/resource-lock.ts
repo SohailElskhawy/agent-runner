@@ -22,19 +22,21 @@
  * Already-owned resources are idempotent no-ops, never duplicate holders.
  */
 
-import type { AttemptId, TaskId } from "./ids.js";
+import type { AttemptId, ExecutionClaimId, TaskId } from "./ids.js";
 import type { IsoTimestamp } from "./timestamp.js";
 
 export type ResourceLock = {
   readonly resource: string;
   readonly taskId: TaskId;
   readonly attemptId?: AttemptId | undefined;
+  readonly executionId?: ExecutionClaimId | undefined;
   readonly acquiredAt?: IsoTimestamp | undefined;
 };
 
 export type ResourceLockOwner = {
   readonly taskId: TaskId;
   readonly attemptId?: AttemptId | undefined;
+  readonly executionId?: ExecutionClaimId | undefined;
 };
 
 export type ResourceLockConflict = {
@@ -139,6 +141,7 @@ function lockFor(owner: ResourceLockOwner, resource: string): ResourceLock {
     resource,
     taskId: owner.taskId,
     ...(owner.attemptId === undefined ? {} : { attemptId: owner.attemptId }),
+    ...(owner.executionId === undefined ? {} : { executionId: owner.executionId }),
   };
 }
 
@@ -146,7 +149,11 @@ function sameOwnership(
   lock: ResourceLock,
   owner: ResourceLockOwner,
 ): boolean {
-  return lock.taskId === owner.taskId && lock.attemptId === owner.attemptId;
+  return (
+    lock.taskId === owner.taskId &&
+    lock.attemptId === owner.attemptId &&
+    lock.executionId === owner.executionId
+  );
 }
 
 function compareResourceLocks(
