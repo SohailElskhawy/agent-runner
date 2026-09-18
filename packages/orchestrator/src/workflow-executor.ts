@@ -67,6 +67,7 @@ import {
   type AttemptStartedPayload,
   type CommitCreatedPayload,
   type ImplementationCompletedPayload,
+  type IntegrationQueuedPayload,
   type IntegrationCompletedPayload,
   type IntegrationVerificationCompletedPayload,
   type TaskTransitionedPayload,
@@ -78,6 +79,7 @@ import type {
   CancelledTaskRun,
   CompletedTaskRun,
   FailedTaskRun,
+  PendingIntegrationTaskRun,
   RejectedTaskRun,
   WorktreeCleanupOutcome,
 } from "./orchestration-outcome.js";
@@ -120,6 +122,8 @@ export type WorkflowTaskExecutorOptions = {
   readonly projectRoot: string;
   readonly worktreesDir: string;
   readonly agentTimeoutMs: number;
+  /** Immediate integration is retained for the single-task path. */
+  readonly integrationMode?: "immediate" | "queued" | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly now?: (() => IsoTimestamp) | undefined;
 };
@@ -171,6 +175,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
   private readonly projectRoot: string;
   private readonly worktreesDir: string;
   private readonly agentTimeoutMs: number;
+  private readonly integrationMode: "immediate" | "queued";
   private readonly signal: AbortSignal | undefined;
   private readonly clock: () => IsoTimestamp;
   private running = false;
@@ -187,6 +192,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     this.projectRoot = options.projectRoot;
     this.worktreesDir = options.worktreesDir;
     this.agentTimeoutMs = options.agentTimeoutMs;
+    this.integrationMode = options.integrationMode ?? "immediate";
     this.signal = options.signal;
     this.clock = options.now ?? defaultClock;
   }
@@ -489,11 +495,25 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
         ],
       );
 
-      const integration = await this.runIntegrationStage({
-        attemptId,
-        branch,
-        checks: verificationResolution.checks,
-      });
+      const integration =
+        this.integrationMode === "queued"
+          ? await this.enqueueIntegrationStage({
+              attempt,
+              attemptId,
+              baseRevision,
+              branch,
+              commitRevision,
+              worktreePath,
+            })
+          : await this.runIntegrationStage({
+              attemptId,
+              branch,
+              checks: verificationResolution.checks,
+            });
+
+      if (integration.kind === "pending-integration") {
+        return integration;
+      }
 
       const finishedAt = this.clock();
       const succeededAttempt: Attempt = {
@@ -822,6 +842,60 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       startedAt,
     });
     return integration;
+  }
+
+  /**
+   * Queues a committed task for the serialized integration processor. The
+   * task remains INTEGRATING and the attempt remains RUNNING until the queue
+   * processor performs integration verification and settles both records.
+   */
+  private async enqueueIntegrationStage(input: {
+    attempt: Attempt;
+    attemptId: AttemptId;
+    baseRevision: string;
+    branch: string;
+    commitRevision: string;
+    worktreePath: string;
+  }): Promise<PendingIntegrationTaskRun> {
+    const startedAt = this.clock();
+    const stageRunId: StageRunId = `stage_${input.attemptId}_INTEGRATE`;
+    await this.putStageRun({
+      id: stageRunId,
+      attemptId: input.attemptId,
+      stage: INTEGRATE_STAGE,
+      status: "PENDING",
+      startedAt,
+    });
+    await this.store.enqueueIntegrationQueueEntry({
+      taskId: this.taskId,
+      attemptId: input.attemptId,
+      taskRevision: input.commitRevision,
+      branch: input.branch,
+      baseRevision: input.baseRevision,
+      enqueuedAt: startedAt,
+    });
+    await this.store.appendEvents([
+      {
+        type: ORCHESTRATION_EVENTS.integrationQueued,
+        taskId: this.taskId,
+        payload: {
+          attemptId: input.attemptId,
+          revision: input.commitRevision,
+          branch: input.branch,
+        } satisfies IntegrationQueuedPayload,
+        occurredAt: startedAt,
+      },
+    ]);
+    return {
+      kind: "pending-integration",
+      taskId: this.taskId,
+      attemptId: input.attemptId,
+      task: await this.requireTask(this.taskId),
+      attempt: input.attempt,
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+      taskRevision: input.commitRevision,
+    };
   }
 
   /**

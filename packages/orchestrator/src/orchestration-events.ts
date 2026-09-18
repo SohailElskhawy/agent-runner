@@ -7,6 +7,7 @@ export const ORCHESTRATION_EVENTS = {
   implementationCompleted: "implementation.completed",
   verificationCompleted: "verification.completed",
   commitCreated: "commit.created",
+  integrationQueued: "integration.queued",
   integrationCompleted: "integration.completed",
   integrationVerificationCompleted: "integration.verification.completed",
   worktreeCleanupFailed: "worktree.cleanup.failed",
@@ -44,8 +45,16 @@ export type ImplementationCompletedPayload = {
 
 export type VerificationCompletedPayload = {
   readonly attemptId: string;
+  /** Revision verified when the pass was performed after reconciliation. */
+  readonly revision?: string | undefined;
   readonly status: "PASSED" | "FAILED" | "CANCELLED";
   readonly checks: readonly VerificationResult[];
+};
+
+export type IntegrationQueuedPayload = {
+  readonly attemptId: string;
+  readonly revision: string;
+  readonly branch: string;
 };
 
 export type CommitCreatedPayload = {

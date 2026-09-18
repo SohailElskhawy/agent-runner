@@ -5,6 +5,7 @@ export {
   type CommitCreatedPayload,
   type ImplementationCompletedPayload,
   type IntegrationCompletedPayload,
+  type IntegrationQueuedPayload,
   type OrchestrationEventType,
   type RecoveryOutcomeKind,
   type RecoveryReconciledPayload,
@@ -20,6 +21,7 @@ export type {
   CompletedTaskRun,
   FailedRecovery,
   FailedTaskRun,
+  PendingIntegrationTaskRun,
   NoOpRecovery,
   RejectedTaskRun,
   RequiresHumanRecovery,
@@ -119,6 +121,12 @@ export {
   type TaskExecutionResult,
   type TaskDispatchResult,
 } from "./task-execution-coordinator.js";
+export {
+  createIntegrationQueueProcessor,
+  type IntegrationQueueProcessor,
+  type IntegrationQueueProcessorOptions,
+  type IntegrationQueueProcessorOutcome,
+} from "./integration-queue-processor.js";
 export type {
   IntegrationVerificationCompletedPayload,
 } from "./orchestration-events.js";

@@ -13,6 +13,7 @@ import type {
   CancelledTaskRun,
   CompletedTaskRun,
   FailedTaskRun,
+  PendingIntegrationTaskRun,
   RejectedTaskRun,
   WorktreeCleanupOutcome,
 } from "./orchestration-outcome.js";
@@ -31,4 +32,5 @@ export type WorkflowTaskRunOutcome =
   | FailedTaskRun
   | CancelledTaskRun
   | BlockedTaskRun
+  | PendingIntegrationTaskRun
   | RejectedTaskRun;

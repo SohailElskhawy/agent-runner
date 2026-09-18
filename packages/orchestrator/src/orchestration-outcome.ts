@@ -15,6 +15,17 @@ export type WorktreeCleanupOutcome =
     }
   | { readonly kind: "failed"; readonly message: string };
 
+export type PendingIntegrationTaskRun = {
+  readonly kind: "pending-integration";
+  readonly taskId: TaskId;
+  readonly attemptId: AttemptId;
+  readonly task: Task;
+  readonly attempt: Attempt;
+  readonly branch: string;
+  readonly worktreePath: string;
+  readonly taskRevision: string;
+};
+
 export type CompletedTaskRun = {
   readonly kind: "completed";
   readonly taskId: TaskId;
