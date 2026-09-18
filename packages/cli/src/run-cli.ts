@@ -8,6 +8,7 @@ import {
   executeInitCommand,
   executeInspectCommand,
   executeRunCommand,
+  executeUnattendedRunCommand,
   executeStatusCommand,
   EXIT_FAILURE,
 } from "./commands/execute-commands.js";
@@ -47,6 +48,7 @@ export async function runCli(
         return 0;
       case "init":
       case "run":
+      case "run-all":
       case "status":
       case "inspect":
       case "tasks":
@@ -58,6 +60,8 @@ export async function runCli(
                 return await executeInitCommand(services, io);
               case "run":
                 return await executeRunCommand(command.taskId, services, io);
+              case "run-all":
+                return await executeUnattendedRunCommand(services, io);
               case "status":
                 return await executeStatusCommand(services, io);
               case "inspect":

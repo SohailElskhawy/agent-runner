@@ -9,6 +9,7 @@ import type {
   CrashRecovery,
   SingleTaskOrchestrator,
   SingleTaskRunOutcome,
+  UnattendedScheduler,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import type { AgentRegistry } from "@agentic-dev-runner/agents";
@@ -38,6 +39,7 @@ export type StoreBackedAppServiceOptions = {
   readonly orchestrator: SingleTaskOrchestrator;
   readonly recovery: CrashRecovery;
   readonly agents: AgentRegistry;
+  readonly scheduler?: UnattendedScheduler | null | undefined;
 };
 
 export function createStoreBackedAppService(
@@ -53,6 +55,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly orchestrator: SingleTaskOrchestrator;
   private readonly recovery: CrashRecovery;
   private readonly agents: AgentRegistry;
+  private readonly scheduler: UnattendedScheduler | null;
   private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
@@ -62,6 +65,7 @@ class StoreBackedAppService implements RunnerAppService {
     this.orchestrator = options.orchestrator;
     this.recovery = options.recovery;
     this.agents = options.agents;
+    this.scheduler = options.scheduler ?? null;
   }
 
   async init(): Promise<InitResult> {
@@ -130,6 +134,26 @@ class StoreBackedAppService implements RunnerAppService {
     }
     const outcome: SingleTaskRunOutcome = await this.orchestrator.run(taskId);
     return outcomeToRunResult(outcome);
+  }
+
+  async runUnattended(): Promise<RunResult> {
+    await this.startupReconcile();
+    if (this.scheduler === null) {
+      return {
+        kind: "rejected",
+        message: "unattended scheduling is unavailable for this application composition",
+      };
+    }
+    const outcome = await this.scheduler.run();
+    return outcome.kind === "quiescent"
+      ? {
+          kind: "completed",
+          message: `unattended run reached quiescence after ${String(outcome.cycles.length)} cycle(s)`,
+        }
+      : {
+          kind: "rejected",
+          message: `unattended run is blocked after ${String(outcome.cycles.length)} cycle(s)`,
+        };
   }
 
   async status(): Promise<ProjectStatus> {

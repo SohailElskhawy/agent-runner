@@ -3,6 +3,7 @@ import { CliError } from "./errors.js";
 export type ParsedCommand =
   | { readonly name: "init" }
   | { readonly name: "run"; readonly taskId: string }
+  | { readonly name: "run-all" }
   | { readonly name: "status" }
   | { readonly name: "inspect"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
@@ -13,6 +14,7 @@ export type ParsedCommand =
 export const KNOWN_COMMANDS = [
   "init",
   "run",
+  "run-all",
   "status",
   "inspect",
   "tasks",
@@ -32,6 +34,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return { name: "init" };
     case "run":
       return { name: "run", taskId: requireTaskId(command, rest) };
+    case "run-all":
+      requireNoExtraArguments(command, rest);
+      return { name: "run-all" };
     case "status":
       requireNoExtraArguments(command, rest);
       return { name: "status" };
@@ -112,6 +117,7 @@ function requireNoExtraArguments(
 export const USAGE = `Usage:
   agentic init
   agentic run <task-id>
+  agentic run-all
   agentic status
   agentic inspect <task-id>
   agentic tasks add <task-file>

@@ -7,6 +7,7 @@ import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { createAppServices } from "../src/application/app-services.js";
+import { createServices } from "../src/wiring.js";
 import { createAgentAdapterRegistry } from "../src/application/agents/agent-adapter-registry.js";
 import {
   defaultStateDir,
@@ -162,6 +163,28 @@ describe("createAppServices wiring", () => {
     store = appServices.store;
 
     expect(appServices.scheduler).not.toBeNull();
+  });
+
+  it("connects createServices to the application unattended operation", async () => {
+    const previousProfile = process.env.USERPROFILE;
+    const profile = temporaryDirectory("agentic-unattended-profile");
+    process.env.USERPROFILE = profile;
+    try {
+      const services = await createServices(directory);
+      try {
+        const result = await services.runUnattended();
+        expect(result.kind).toBe("completed");
+      } finally {
+        await services.close();
+      }
+    } finally {
+      if (previousProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousProfile;
+      }
+      rmSync(profile, { recursive: true, force: true });
+    }
   });
 
   it("accepts an agent registry override for testing", async () => {

@@ -11,6 +11,10 @@ describe("CLI argument parsing", () => {
     expect(parseArgs(["run", "M001"])).toEqual({ name: "run", taskId: "M001" });
   });
 
+  it("parses unattended execution", () => {
+    expect(parseArgs(["run-all"])).toEqual({ name: "run-all" });
+  });
+
   it("parses task ids containing spaces", () => {
     expect(parseArgs(["run", "task 42 — fix header"])).toEqual({
       name: "run",

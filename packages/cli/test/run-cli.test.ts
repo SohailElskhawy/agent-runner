@@ -74,6 +74,9 @@ function recordingService(result: {
         }
       );
     },
+    async runUnattended() {
+      return { kind: "completed", message: "unattended completed" };
+    },
     async status() {
       return (
         result.status ?? {
@@ -132,6 +135,21 @@ describe("runCli command dispatch", () => {
     expect(exitCode).toBe(0);
     expect(recording.runCalls.calls).toEqual(["M001"]);
     expect(lines.join("\n")).toContain('task "M001" completed');
+  });
+
+  it("delegates unattended execution to the application service", async () => {
+    const recording = recordingService({
+      run: { kind: "completed", message: "unattended completed" },
+    });
+    const { io, lines } = captureIo();
+
+    const exitCode = await runCli(["run-all"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(lines.join("\n")).toContain("unattended completed");
   });
 
   it("exits non-zero for failed, cancelled, and rejected run outcomes", async () => {

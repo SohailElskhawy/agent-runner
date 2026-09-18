@@ -40,6 +40,15 @@ export async function executeRunCommand(
   return result.kind === "completed" ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+export async function executeUnattendedRunCommand(
+  services: RunnerAppService,
+  io: CliIo,
+): Promise<number> {
+  const result = await services.runUnattended();
+  renderRunResult(io, result);
+  return result.kind === "completed" ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
 export async function executeStatusCommand(
   services: RunnerAppService,
   io: CliIo,

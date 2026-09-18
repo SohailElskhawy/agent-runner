@@ -627,6 +627,9 @@ describe("agentic tasks add", () => {
       async run() {
         throw new Error("run must not be called");
       },
+      async runUnattended() {
+        throw new Error("runUnattended must not be called");
+      },
       async status() {
         throw new Error("status must not be called");
       },
