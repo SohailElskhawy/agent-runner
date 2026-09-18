@@ -111,6 +111,14 @@ export type {
   BlockedTaskRun,
   WorkflowTaskRunOutcome,
 } from "./workflow-outcome.js";
+export {
+  createTaskExecutionCoordinator,
+  type TaskAdmission,
+  type TaskExecutionCoordinator,
+  type TaskExecutionCoordinatorOptions,
+  type TaskExecutionResult,
+  type TaskDispatchResult,
+} from "./task-execution-coordinator.js";
 export type {
   IntegrationVerificationCompletedPayload,
 } from "./orchestration-events.js";
