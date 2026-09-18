@@ -18,5 +18,6 @@ export { migrateSchema, type MigrateSchemaOptions } from "./sqlite/migrations.js
 export {
   createSqliteRunnerStore,
   SqliteRunnerStore,
+  configureSqliteConnection,
   type SqliteRunnerStoreOptions,
 } from "./sqlite/sqlite-runner-store.js";

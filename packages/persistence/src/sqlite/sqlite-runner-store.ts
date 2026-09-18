@@ -82,8 +82,7 @@ export class SqliteRunnerStore implements RunnerStore {
       db = new DatabaseSync(this.path, {
         enableForeignKeyConstraints: true,
       });
-      db.exec(`PRAGMA journal_mode = WAL;`);
-      db.exec(`PRAGMA busy_timeout = ${String(this.busyTimeoutMs)};`);
+      configureSqliteConnection(db, this.busyTimeoutMs);
       migrateSchema(db, {
         migrations: this.migrations,
         source: this.path,
@@ -711,6 +710,19 @@ export class SqliteRunnerStore implements RunnerStore {
       db.close();
     }
   }
+}
+
+/**
+ * Configure contention handling before WAL initialization. SQLite may need
+ * the busy handler while changing the journal mode, so this ordering is a
+ * startup-safety invariant rather than a performance preference.
+ */
+export function configureSqliteConnection(
+  db: { readonly exec: (sql: string) => void },
+  busyTimeoutMs: number,
+): void {
+  db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
+  db.exec(`PRAGMA journal_mode = WAL;`);
 }
 
 type SqlValue = string | number | bigint | null;

@@ -127,6 +127,13 @@ export {
   type IntegrationQueueProcessorOptions,
   type IntegrationQueueProcessorOutcome,
 } from "./integration-queue-processor.js";
+export {
+  createUnattendedScheduler,
+  type UnattendedScheduler,
+  type UnattendedSchedulerCycle,
+  type UnattendedSchedulerOptions,
+  type UnattendedSchedulerResult,
+} from "./unattended-scheduler.js";
 export type {
   IntegrationVerificationCompletedPayload,
 } from "./orchestration-events.js";
