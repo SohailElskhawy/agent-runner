@@ -49,6 +49,11 @@ export {
   type ExecutionClaimRecoveryOutcome,
 } from "./execution-claim-recovery.js";
 export {
+  createWorktreeRecovery,
+  type WorktreeRecovery,
+  type WorktreeRecoveryOutcome,
+} from "./worktree-recovery.js";
+export {
   CODE_REVIEW_STAGE_INSTRUCTION,
   codeReviewStageRunId,
   executeCodeReviewStage,

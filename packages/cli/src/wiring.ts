@@ -24,6 +24,7 @@ export async function createServices(
     recovery: appServices.recovery,
     executionClaimRecovery: appServices.executionClaimRecovery,
     integrationRecovery: appServices.integrationRecovery,
+    worktreeRecovery: appServices.worktreeRecovery,
     agents: appServices.agents,
     scheduler: appServices.scheduler,
   });

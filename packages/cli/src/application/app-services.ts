@@ -14,6 +14,7 @@ import type { AgentRegistry, AgentRuntime } from "@agentic-dev-runner/agents";
 import {
   createCrashRecovery,
   createExecutionClaimRecovery,
+  createWorktreeRecovery,
   createIntegrationQueueProcessor,
   createSingleTaskOrchestrator,
   createTaskExecutionCoordinator,
@@ -52,6 +53,7 @@ export type AppServices = {
   readonly adapters: AgentAdapterRegistry;
   readonly scheduler: UnattendedScheduler | null;
   readonly integrationRecovery: ReturnType<typeof createIntegrationQueueProcessor>;
+  readonly worktreeRecovery: ReturnType<typeof createWorktreeRecovery>;
 };
 
 export type AppServicesOverrides = {
@@ -135,6 +137,9 @@ export async function createAppServices(
     worktreesDir: resolveWorktreesDir(options),
   });
   const executionClaimRecovery = createExecutionClaimRecovery({ store, recovery });
+  const worktreeRecovery = createWorktreeRecovery({
+    store, git, projectRoot: options.projectRoot, worktreesDir: resolveWorktreesDir(options),
+  });
   const integrationRecovery = createIntegrationQueueProcessor({
     store,
     git,
@@ -178,7 +183,7 @@ export async function createAppServices(
           integration: integrationRecovery,
         })
       : null);
-  return { store, orchestrator, recovery, executionClaimRecovery, integrationRecovery, agents, adapters, scheduler };
+  return { store, orchestrator, recovery, executionClaimRecovery, integrationRecovery, worktreeRecovery, agents, adapters, scheduler };
 }
 
 async function discoverAgentCandidates(

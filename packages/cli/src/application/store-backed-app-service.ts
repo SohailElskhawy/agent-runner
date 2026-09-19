@@ -10,6 +10,7 @@ import type {
   CrashRecovery,
   ExecutionClaimRecovery,
   IntegrationQueueProcessor,
+  WorktreeRecovery,
   SingleTaskOrchestrator,
   SingleTaskRunOutcome,
   UnattendedScheduler,
@@ -43,6 +44,7 @@ export type StoreBackedAppServiceOptions = {
   readonly recovery: CrashRecovery;
   readonly executionClaimRecovery?: ExecutionClaimRecovery | undefined;
   readonly integrationRecovery?: IntegrationQueueProcessor | undefined;
+  readonly worktreeRecovery?: WorktreeRecovery | undefined;
   readonly agents: AgentRegistry;
   readonly scheduler?: UnattendedScheduler | null | undefined;
 };
@@ -61,6 +63,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly recovery: CrashRecovery;
   private readonly executionClaimRecovery: ExecutionClaimRecovery;
   private readonly integrationRecovery: IntegrationQueueProcessor | undefined;
+  private readonly worktreeRecovery: WorktreeRecovery | undefined;
   private readonly agents: AgentRegistry;
   private readonly scheduler: UnattendedScheduler | null;
   private startupReconciliation: Promise<void> | undefined;
@@ -76,6 +79,7 @@ class StoreBackedAppService implements RunnerAppService {
       recovery: options.recovery,
     });
     this.integrationRecovery = options.integrationRecovery;
+    this.worktreeRecovery = options.worktreeRecovery;
     this.agents = options.agents;
     this.scheduler = options.scheduler ?? null;
   }
@@ -220,6 +224,7 @@ class StoreBackedAppService implements RunnerAppService {
       await this.executionClaimRecovery.reconcileExpired();
       const activeClaims = await this.store.listExecutionClaims({ status: "ACTIVE" });
       await this.recovery.reconcileUnfinished(activeClaims.map((claim) => claim.taskId));
+      await this.worktreeRecovery?.reconcileTerminalWorktrees();
     })();
     return this.startupReconciliation;
   }
