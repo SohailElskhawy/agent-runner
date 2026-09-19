@@ -28,6 +28,8 @@ export type TaskExecutionCoordinatorOptions = {
     | readonly AgentRouteCandidate[]
     | (() => Promise<readonly AgentRouteCandidate[]>);
   readonly maxParallelism: number;
+  /** Bounded durable liveness window for a scheduler execution. */
+  readonly leaseDurationMs?: number | undefined;
   readonly projectId?: string | undefined;
   readonly createExecutor: (
     task: Task,
@@ -78,6 +80,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
   private readonly projectId: string | undefined;
   private readonly createExecutor: TaskExecutionCoordinatorOptions["createExecutor"];
   private readonly clock: () => IsoTimestamp;
+  private readonly leaseDurationMs: number;
   private readonly activeTaskIds = new Set<TaskId>();
 
   constructor(options: TaskExecutionCoordinatorOptions) {
@@ -90,6 +93,10 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     this.projectId = options.projectId;
     this.createExecutor = options.createExecutor;
     this.clock = options.now ?? defaultClock;
+    this.leaseDurationMs = options.leaseDurationMs ?? 30_000;
+    if (!Number.isSafeInteger(this.leaseDurationMs) || this.leaseDurationMs <= 0) {
+      throw new Error("leaseDurationMs must be a positive integer");
+    }
   }
 
   async dispatchAvailable(): Promise<TaskDispatchResult> {
@@ -163,6 +170,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
         maxParallelism: this.maxParallelism,
         resources: task.definition.resources,
         claimedAt: this.clock(),
+        leaseExpiresAt: addLease(this.clock(), this.leaseDurationMs),
       });
       if (claim.kind !== "claimed") {
         const reason =
@@ -202,6 +210,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
   ): Promise<TaskExecutionResult> {
     try {
       const executor = await this.createExecutor(task, claim.id);
+      await this.renew(claim.id);
       const outcome = await executor.run();
       await this.releaseIfTerminal(task.id, claim, outcome);
       return { taskId: task.id, outcome };
@@ -215,6 +224,18 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       };
     } finally {
       this.activeTaskIds.delete(task.id);
+    }
+  }
+
+  private async renew(executionId: string): Promise<void> {
+    const renewedAt = this.clock();
+    const renewed = await this.store.renewTaskExecution(
+      executionId,
+      renewedAt,
+      addLease(renewedAt, this.leaseDurationMs),
+    );
+    if (!renewed) {
+      throw new Error(`execution claim "${executionId}" is no longer active`);
     }
   }
 
@@ -318,6 +339,14 @@ function claimStatusForTask(
 
 function defaultClock(): IsoTimestamp {
   return new Date().toISOString();
+}
+
+function addLease(now: IsoTimestamp, durationMs: number): IsoTimestamp {
+  const time = Date.parse(now);
+  if (Number.isNaN(time)) {
+    throw new Error(`execution claim clock returned an invalid timestamp: ${now}`);
+  }
+  return new Date(time + durationMs).toISOString();
 }
 
 function describeError(error: unknown): string {

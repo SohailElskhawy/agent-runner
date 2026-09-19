@@ -364,9 +364,10 @@ export class SqliteRunnerStore implements RunnerStore {
       }
 
       db.prepare(
-        `INSERT INTO execution_claims (id, task_id, status, claimed_at)
-         VALUES (?, ?, 'ACTIVE', ?)`,
-      ).run(request.executionId, request.taskId, request.claimedAt);
+        `INSERT INTO execution_claims
+         (id, task_id, status, claimed_at, renewed_at, lease_expires_at)
+         VALUES (?, ?, 'ACTIVE', ?, ?, ?)`,
+      ).run(request.executionId, request.taskId, request.claimedAt, request.claimedAt, request.leaseExpiresAt);
       const insertLock = db.prepare(
         `INSERT INTO resource_locks
          (resource, task_id, attempt_id, execution_id, acquired_at)
@@ -389,6 +390,8 @@ export class SqliteRunnerStore implements RunnerStore {
           taskId: request.taskId,
           status: "ACTIVE",
           claimedAt: request.claimedAt,
+          renewedAt: request.claimedAt,
+          leaseExpiresAt: request.leaseExpiresAt,
         },
       };
     } catch (error) {
@@ -399,6 +402,20 @@ export class SqliteRunnerStore implements RunnerStore {
         ? error
         : new PersistenceError("Task execution claim failed", error);
     }
+  }
+
+  async renewTaskExecution(
+    executionId: ExecutionClaimId,
+    renewedAt: IsoTimestamp,
+    leaseExpiresAt: IsoTimestamp,
+  ): Promise<boolean> {
+    const db = this.requireDb("renewTaskExecution");
+    const result = db.prepare(
+      `UPDATE execution_claims
+       SET renewed_at = ?, lease_expires_at = ?
+       WHERE id = ? AND status = 'ACTIVE'`,
+    ).run(renewedAt, leaseExpiresAt, executionId);
+    return Number(result.changes) === 1;
   }
 
   async releaseTaskExecution(
@@ -1098,6 +1115,8 @@ function executionClaimFromRow(row: Record<string, unknown>): ExecutionClaim {
       "execution claim status",
     ),
     claimedAt: textColumn(row, "claimed_at"),
+    renewedAt: optionalTextColumn(row, "renewed_at") ?? textColumn(row, "claimed_at"),
+    leaseExpiresAt: optionalTextColumn(row, "lease_expires_at") ?? textColumn(row, "claimed_at"),
     ...(finishedAt === null ? {} : { finishedAt }),
     ...(failure === null ? {} : { failure }),
   };
@@ -1159,6 +1178,7 @@ function validateTaskExecutionClaimRequest(
   requireNonEmptyText(request.taskId, "task id");
   requireNonEmptyText(request.executionId, "execution claim id");
   requireNonEmptyText(request.claimedAt, "claim timestamp");
+  requireNonEmptyText(request.leaseExpiresAt, "execution claim lease expiry");
   if (
     !Number.isInteger(request.maxParallelism) ||
     request.maxParallelism <= 0

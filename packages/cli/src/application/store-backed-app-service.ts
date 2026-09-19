@@ -5,8 +5,10 @@ import {
   type Project,
   type TaskId,
 } from "@agentic-dev-runner/core";
+import { createExecutionClaimRecovery } from "@agentic-dev-runner/orchestrator";
 import type {
   CrashRecovery,
+  ExecutionClaimRecovery,
   SingleTaskOrchestrator,
   SingleTaskRunOutcome,
   UnattendedScheduler,
@@ -38,6 +40,7 @@ export type StoreBackedAppServiceOptions = {
   readonly store: RunnerStore;
   readonly orchestrator: SingleTaskOrchestrator;
   readonly recovery: CrashRecovery;
+  readonly executionClaimRecovery?: ExecutionClaimRecovery | undefined;
   readonly agents: AgentRegistry;
   readonly scheduler?: UnattendedScheduler | null | undefined;
 };
@@ -54,6 +57,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly store: RunnerStore;
   private readonly orchestrator: SingleTaskOrchestrator;
   private readonly recovery: CrashRecovery;
+  private readonly executionClaimRecovery: ExecutionClaimRecovery;
   private readonly agents: AgentRegistry;
   private readonly scheduler: UnattendedScheduler | null;
   private startupReconciliation: Promise<void> | undefined;
@@ -64,6 +68,10 @@ class StoreBackedAppService implements RunnerAppService {
     this.store = options.store;
     this.orchestrator = options.orchestrator;
     this.recovery = options.recovery;
+    this.executionClaimRecovery = options.executionClaimRecovery ?? createExecutionClaimRecovery({
+      store: options.store,
+      recovery: options.recovery,
+    });
     this.agents = options.agents;
     this.scheduler = options.scheduler ?? null;
   }
@@ -204,7 +212,9 @@ class StoreBackedAppService implements RunnerAppService {
   private startupReconcile(): Promise<void> {
     this.startupReconciliation ??= (async () => {
       await this.store.initialize();
-      await this.recovery.reconcileUnfinished();
+      await this.executionClaimRecovery.reconcileExpired();
+      const activeClaims = await this.store.listExecutionClaims({ status: "ACTIVE" });
+      await this.recovery.reconcileUnfinished(activeClaims.map((claim) => claim.taskId));
     })();
     return this.startupReconciliation;
   }

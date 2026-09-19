@@ -187,6 +187,7 @@ describe("integration queue processor (M047b)", () => {
       maxParallelism: 1,
       resources: task.definition.resources,
       claimedAt: clock(),
+      leaseExpiresAt: "2026-01-01T00:00:30.000Z",
     });
     expect(claim.kind).toBe("claimed");
     await store.putTask({ ...task, status: "INTEGRATING" });

@@ -97,7 +97,7 @@ function failingProbeChain(): readonly SchemaMigration[] {
 function futureSchemaChain(): readonly SchemaMigration[] {
   return [
     ...SCHEMA_MIGRATIONS,
-    { version: 8, name: "test-only-future-schema", up: () => undefined },
+    { version: 9, name: "test-only-future-schema", up: () => undefined },
   ];
 }
 
@@ -209,6 +209,7 @@ describe("SQLite schema migrations", () => {
         name: "add-integration-queue-execution-identity",
         appliedAt: expect.any(String),
       },
+      { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
     ]);
   });
 
@@ -272,6 +273,7 @@ describe("SQLite schema migrations", () => {
           name: "add-integration-queue-execution-identity",
           appliedAt: expect.any(String),
         },
+      { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject(legacyProject.id)).toEqual(legacyProject);
       expect(await opened.getTask(legacyTask.id)).toEqual(legacyTask);
@@ -338,6 +340,7 @@ describe("SQLite schema migrations", () => {
             name: "add-integration-queue-execution-identity",
             appliedAt: expect.any(String),
           },
+      { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
         ]);
       });
     }
@@ -439,9 +442,9 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(SchemaVersionTooNewError);
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
-    expect((rejection as Error).message).toContain("schema version 8");
+    expect((rejection as Error).message).toContain("schema version 9");
     expect((rejection as Error).message).toContain(
-      "supported schema version 7",
+      "supported schema version 8",
     );
   });
 
@@ -453,7 +456,7 @@ describe("SQLite schema migrations", () => {
           migrations: futureSchemaChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(8);
+      ).toBe(9);
 
       expect(() =>
         migrateSchema(db, { migrations: [initialSchemaMigration()] }),
@@ -552,6 +555,7 @@ describe("SQLite schema migrations", () => {
         { version: 5, name: "add-integration-queue", appliedAt: expect.any(String) },
         { version: 6, name: "add-execution-claims", appliedAt: expect.any(String) },
         { version: 7, name: "add-integration-queue-execution-identity", appliedAt: expect.any(String) },
+        { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
       ]);
     });
   });
@@ -644,6 +648,7 @@ describe("SQLite schema migrations", () => {
         { version: 5, name: "add-integration-queue", appliedAt: expect.any(String) },
         { version: 6, name: "add-execution-claims", appliedAt: expect.any(String) },
         { version: 7, name: "add-integration-queue-execution-identity", appliedAt: expect.any(String) },
+        { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject("proj-1")).toEqual({
         id: "proj-1",

@@ -69,6 +69,28 @@ describe("durable execution claims", () => {
     expect((await store.listExecutionClaims())[0]?.status).toBe("COMPLETED");
   });
 
+  it("renews only the exact active execution lease and never lets a second coordinator steal it", async () => {
+    const first = await claim(store, "M001", "exec-live", 2, ["shared"]);
+    expect(first.kind).toBe("claimed");
+    expect(await store.renewTaskExecution(
+      "exec-live",
+      "2026-01-01T00:00:10.000Z",
+      "2026-01-01T00:00:40.000Z",
+    )).toBe(true);
+    const claims = await store.listExecutionClaims({ status: "ACTIVE" });
+    expect(claims[0]).toMatchObject({
+      id: "exec-live",
+      renewedAt: "2026-01-01T00:00:10.000Z",
+      leaseExpiresAt: "2026-01-01T00:00:40.000Z",
+    });
+    expect((await claim(store, "M001", "exec-second", 2, ["shared"])).kind).toBe("already-claimed");
+    expect(await store.renewTaskExecution(
+      "exec-second",
+      "2026-01-01T00:00:10.000Z",
+      "2026-01-01T00:00:40.000Z",
+    )).toBe(false);
+  });
+
   it("upgrades a pre-claim database without losing locks or queue entries", async () => {
     await store.close();
     dbPath = join(directory, "upgrade-state.db");
@@ -112,7 +134,7 @@ describe("durable execution claims", () => {
 
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
     const oldLock = (await store.listResourceLocks())[0];
     expect(oldLock).toMatchObject({
       resource: "legacy-resource",
@@ -129,6 +151,7 @@ describe("durable execution claims", () => {
       maxParallelism: 2,
       resources: ["new-resource"],
       claimedAt: clock(),
+      leaseExpiresAt: "2026-01-01T00:00:30.000Z",
     });
     expect(claim.kind).toBe("claimed");
     expect(
@@ -165,6 +188,7 @@ async function claim(
     maxParallelism,
     resources,
     claimedAt: clock(),
+    leaseExpiresAt: "2026-01-01T00:00:30.000Z",
   });
 }
 

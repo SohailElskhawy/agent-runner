@@ -52,6 +52,7 @@ export type TaskExecutionClaimRequest = {
   readonly maxParallelism: number;
   readonly resources: readonly string[];
   readonly claimedAt: IsoTimestamp;
+  readonly leaseExpiresAt: IsoTimestamp;
 };
 
 export type TaskExecutionClaimResult =
@@ -100,6 +101,13 @@ export interface RunnerStore {
   claimTaskExecution(
     request: TaskExecutionClaimRequest,
   ): Promise<TaskExecutionClaimResult>;
+
+  /** Renews only an active claim with the exact durable execution identity. */
+  renewTaskExecution(
+    executionId: ExecutionClaimId,
+    renewedAt: IsoTimestamp,
+    leaseExpiresAt: IsoTimestamp,
+  ): Promise<boolean>;
 
   /** Completes/releases one execution claim and exactly its owned locks. */
   releaseTaskExecution(

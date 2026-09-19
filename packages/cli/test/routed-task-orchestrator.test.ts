@@ -78,6 +78,9 @@ class RecordingStore implements RunnerStore {
     return { kind: "task-not-ready", taskId: request.taskId };
   }
   async releaseTaskExecution(): Promise<void> {}
+  async renewTaskExecution(): Promise<boolean> {
+    return false;
+  }
   async getTaskStatus(): Promise<Task["status"] | null> {
     return null;
   }

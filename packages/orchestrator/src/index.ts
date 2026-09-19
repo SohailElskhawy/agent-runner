@@ -44,6 +44,11 @@ export {
   type RecoveryActiveStatus,
 } from "./crash-recovery.js";
 export {
+  createExecutionClaimRecovery,
+  type ExecutionClaimRecovery,
+  type ExecutionClaimRecoveryOutcome,
+} from "./execution-claim-recovery.js";
+export {
   CODE_REVIEW_STAGE_INSTRUCTION,
   codeReviewStageRunId,
   executeCodeReviewStage,

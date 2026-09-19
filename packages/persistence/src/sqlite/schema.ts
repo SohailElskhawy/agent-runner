@@ -198,6 +198,22 @@ export function applyIntegrationQueueExecutionSchema(
   }
 }
 
+const SCHEMA_V8_STATEMENTS = [
+  `ALTER TABLE execution_claims ADD COLUMN renewed_at TEXT`,
+  `ALTER TABLE execution_claims ADD COLUMN lease_expires_at TEXT`,
+  `UPDATE execution_claims
+   SET renewed_at = claimed_at, lease_expires_at = claimed_at
+   WHERE renewed_at IS NULL OR lease_expires_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_execution_claims_lease
+   ON execution_claims(status, lease_expires_at)`,
+];
+
+export function applyExecutionClaimLeaseSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V8_STATEMENTS) {
+    db.exec(statement);
+  }
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -233,6 +249,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 7,
     name: "add-integration-queue-execution-identity",
     up: applyIntegrationQueueExecutionSchema,
+  },
+  {
+    version: 8,
+    name: "add-execution-claim-leases",
+    up: applyExecutionClaimLeaseSchema,
   },
 ];
 

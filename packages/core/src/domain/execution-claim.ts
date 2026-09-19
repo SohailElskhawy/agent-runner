@@ -16,6 +16,10 @@ export type ExecutionClaim = {
   readonly taskId: TaskId;
   readonly status: ExecutionClaimStatus;
   readonly claimedAt: IsoTimestamp;
+  /** Last successful liveness renewal by the owning local runner. */
+  readonly renewedAt: IsoTimestamp;
+  /** Bounded liveness deadline. Expiry is a recovery trigger, never failure proof. */
+  readonly leaseExpiresAt: IsoTimestamp;
   readonly finishedAt?: IsoTimestamp | undefined;
   readonly failure?: { readonly message: string } | undefined;
 };

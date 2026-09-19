@@ -60,7 +60,7 @@ export type CrashRecoveryOptions = {
 
 export interface CrashRecovery {
   reconcileTask(taskId: TaskId): Promise<RecoveryOutcome>;
-  reconcileUnfinished(): Promise<RecoveryOutcome[]>;
+  reconcileUnfinished(skipTaskIds?: readonly TaskId[]): Promise<RecoveryOutcome[]>;
 }
 
 export function createCrashRecovery(
@@ -101,11 +101,12 @@ class SequentialCrashRecovery implements CrashRecovery {
     this.clock = options.now ?? defaultClock;
   }
 
-  async reconcileUnfinished(): Promise<RecoveryOutcome[]> {
+  async reconcileUnfinished(skipTaskIds: readonly TaskId[] = []): Promise<RecoveryOutcome[]> {
+    const skipped = new Set(skipTaskIds);
     const tasks = await this.store.listTasks();
     const outcomes: RecoveryOutcome[] = [];
     for (const task of tasks) {
-      if (!isRecoveryEligibleStatus(task.status)) {
+      if (!isRecoveryEligibleStatus(task.status) || skipped.has(task.id)) {
         continue;
       }
       outcomes.push(await this.reconcileTask(task.id));
