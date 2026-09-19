@@ -113,19 +113,11 @@ function readMigrationRows(dbPath: string): MigrationRow[] {
       readonly name?: unknown;
       readonly applied_at?: unknown;
     }>;
-    // Keep the historical migration assertions focused on the pre-Batch-6
-    // chain; execution-claim migrations are covered by execution-claims.test.
-    return rows
-      .filter(
-        (row) =>
-          row.name !== "add-execution-claims" &&
-          row.name !== "add-integration-queue-execution-identity",
-      )
-      .map((row) => ({
-        version: Number(row.version),
-        name: String(row.name),
-        appliedAt: String(row.applied_at),
-      }));
+    return rows.map((row) => ({
+      version: Number(row.version),
+      name: String(row.name),
+      appliedAt: String(row.applied_at),
+    }));
   } finally {
     db.close();
   }
@@ -207,6 +199,16 @@ describe("SQLite schema migrations", () => {
         name: "add-integration-queue",
         appliedAt: expect.any(String),
       },
+      {
+        version: 6,
+        name: "add-execution-claims",
+        appliedAt: expect.any(String),
+      },
+      {
+        version: 7,
+        name: "add-integration-queue-execution-identity",
+        appliedAt: expect.any(String),
+      },
     ]);
   });
 
@@ -258,6 +260,16 @@ describe("SQLite schema migrations", () => {
         {
           version: 5,
           name: "add-integration-queue",
+          appliedAt: expect.any(String),
+        },
+        {
+          version: 6,
+          name: "add-execution-claims",
+          appliedAt: expect.any(String),
+        },
+        {
+          version: 7,
+          name: "add-integration-queue-execution-identity",
           appliedAt: expect.any(String),
         },
       ]);
@@ -314,6 +326,16 @@ describe("SQLite schema migrations", () => {
           {
             version: 5,
             name: "add-integration-queue",
+            appliedAt: expect.any(String),
+          },
+          {
+            version: 6,
+            name: "add-execution-claims",
+            appliedAt: expect.any(String),
+          },
+          {
+            version: 7,
+            name: "add-integration-queue-execution-identity",
             appliedAt: expect.any(String),
           },
         ]);
@@ -525,21 +547,11 @@ describe("SQLite schema migrations", () => {
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
         { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
-        {
-          version: 3,
-          name: "add-stage-run-output",
-          appliedAt: expect.any(String),
-        },
-        {
-          version: 4,
-          name: "add-resource-locks",
-          appliedAt: expect.any(String),
-        },
-        {
-          version: 5,
-          name: "add-integration-queue",
-          appliedAt: expect.any(String),
-        },
+        { version: 3, name: "add-stage-run-output", appliedAt: expect.any(String) },
+        { version: 4, name: "add-resource-locks", appliedAt: expect.any(String) },
+        { version: 5, name: "add-integration-queue", appliedAt: expect.any(String) },
+        { version: 6, name: "add-execution-claims", appliedAt: expect.any(String) },
+        { version: 7, name: "add-integration-queue-execution-identity", appliedAt: expect.any(String) },
       ]);
     });
   });
@@ -627,21 +639,11 @@ describe("SQLite schema migrations", () => {
       expect(readMigrationRows(dbPath)).toEqual([
         { version: 1, name: "initial-schema", appliedAt: expect.any(String) },
         { version: 2, name: "add-stage-runs", appliedAt: expect.any(String) },
-        {
-          version: 3,
-          name: "add-stage-run-output",
-          appliedAt: expect.any(String),
-        },
-        {
-          version: 4,
-          name: "add-resource-locks",
-          appliedAt: expect.any(String),
-        },
-        {
-          version: 5,
-          name: "add-integration-queue",
-          appliedAt: expect.any(String),
-        },
+        { version: 3, name: "add-stage-run-output", appliedAt: expect.any(String) },
+        { version: 4, name: "add-resource-locks", appliedAt: expect.any(String) },
+        { version: 5, name: "add-integration-queue", appliedAt: expect.any(String) },
+        { version: 6, name: "add-execution-claims", appliedAt: expect.any(String) },
+        { version: 7, name: "add-integration-queue-execution-identity", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject("proj-1")).toEqual({
         id: "proj-1",
