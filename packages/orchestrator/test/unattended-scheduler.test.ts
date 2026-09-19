@@ -83,6 +83,9 @@ describe("unattended scheduler continuation (M066a)", () => {
     let processedB = false;
     let observedPendingLock = false;
     const integration: IntegrationQueueProcessor = {
+      async recoverAbandoned(): Promise<readonly IntegrationQueueProcessorOutcome[]> {
+        return [];
+      },
       async processNext(): Promise<IntegrationQueueProcessorOutcome> {
         if (processedB) {
           return { kind: "empty" };

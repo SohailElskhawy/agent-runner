@@ -804,6 +804,20 @@ export class SqliteRunnerStore implements RunnerStore {
     }
   }
 
+  async requeueIntegrationQueueEntry(id: string): Promise<void> {
+    const db = this.requireDb("requeueIntegrationQueueEntry");
+    const result = db.prepare(
+      `UPDATE integration_queue
+       SET status = 'PENDING', claimed_at = NULL
+       WHERE id = ? AND status = 'INTEGRATING'`,
+    ).run(id);
+    if (Number(result.changes) === 0) {
+      throw new PersistenceError(
+        `Cannot requeue integration queue entry "${id}": it is not actively integrating`,
+      );
+    }
+  }
+
   async getTaskStatus(id: TaskId): Promise<TaskStatus | null> {
     const db = this.requireDb("getTaskStatus");
     const row = getRow(

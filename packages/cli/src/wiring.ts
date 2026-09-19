@@ -23,6 +23,7 @@ export async function createServices(
     orchestrator: appServices.orchestrator,
     recovery: appServices.recovery,
     executionClaimRecovery: appServices.executionClaimRecovery,
+    integrationRecovery: appServices.integrationRecovery,
     agents: appServices.agents,
     scheduler: appServices.scheduler,
   });

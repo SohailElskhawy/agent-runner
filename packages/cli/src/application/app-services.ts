@@ -51,6 +51,7 @@ export type AppServices = {
   readonly agents: AgentRegistry;
   readonly adapters: AgentAdapterRegistry;
   readonly scheduler: UnattendedScheduler | null;
+  readonly integrationRecovery: ReturnType<typeof createIntegrationQueueProcessor>;
 };
 
 export type AppServicesOverrides = {
@@ -134,6 +135,14 @@ export async function createAppServices(
     worktreesDir: resolveWorktreesDir(options),
   });
   const executionClaimRecovery = createExecutionClaimRecovery({ store, recovery });
+  const integrationRecovery = createIntegrationQueueProcessor({
+    store,
+    git,
+    verification,
+    verificationChecks,
+    projectRoot: options.projectRoot,
+    worktreesDir: resolveWorktreesDir(options),
+  });
   const scheduler =
     overrides.scheduler ??
     (routed
@@ -166,17 +175,10 @@ export async function createAppServices(
               });
             },
           }),
-          integration: createIntegrationQueueProcessor({
-            store,
-            git,
-            verification,
-            verificationChecks,
-            projectRoot: options.projectRoot,
-            worktreesDir: resolveWorktreesDir(options),
-          }),
+          integration: integrationRecovery,
         })
       : null);
-  return { store, orchestrator, recovery, executionClaimRecovery, agents, adapters, scheduler };
+  return { store, orchestrator, recovery, executionClaimRecovery, integrationRecovery, agents, adapters, scheduler };
 }
 
 async function discoverAgentCandidates(

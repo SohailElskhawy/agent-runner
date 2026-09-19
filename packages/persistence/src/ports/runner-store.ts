@@ -198,6 +198,9 @@ export interface RunnerStore {
     finishedAt: IsoTimestamp,
   ): Promise<void>;
 
+  /** Returns an abandoned INTEGRATING entry to the serialized queue. */
+  requeueIntegrationQueueEntry(id: string): Promise<void>;
+
   appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]>;
   listEvents(filter?: EventFilter): Promise<StoredEvent[]>;
 

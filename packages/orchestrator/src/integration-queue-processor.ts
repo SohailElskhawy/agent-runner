@@ -67,6 +67,8 @@ export type IntegrationQueueProcessorOutcome =
 export interface IntegrationQueueProcessor {
   /** Claims and settles at most one durable queue entry. */
   processNext(): Promise<IntegrationQueueProcessorOutcome>;
+  /** Reconciles abandoned persisted INTEGRATING work without parallel integration. */
+  recoverAbandoned(): Promise<readonly IntegrationQueueProcessorOutcome[]>;
 }
 
 export function createIntegrationQueueProcessor(
@@ -140,6 +142,63 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
     } finally {
       this.processing = false;
     }
+  }
+
+  async recoverAbandoned(): Promise<readonly IntegrationQueueProcessorOutcome[]> {
+    if (this.processing) {
+      throw new OrchestrationError("integration queue processing is already in progress");
+    }
+    this.processing = true;
+    try {
+      const active = await this.store.listIntegrationQueueEntries({ status: "INTEGRATING" });
+      const outcomes: IntegrationQueueProcessorOutcome[] = [];
+      for (const entry of active) {
+        if (entry.executionId !== undefined) {
+          const claim = (await this.store.listExecutionClaims({ status: "ACTIVE" }))
+            .find((candidate) => candidate.id === entry.executionId);
+          if (claim !== undefined && claim.leaseExpiresAt > this.clock()) {
+            outcomes.push({ kind: "blocked", activeEntry: entry });
+            continue;
+          }
+        }
+        try {
+          const head = await this.git.resolveHeadRevision(this.projectRoot);
+          const integrated = await this.git.isAncestor(
+            this.projectRoot,
+            entry.taskRevision,
+            head,
+          );
+          // Both cases return through the ordinary serialized processor. If
+          // already integrated, its drift probe reports that fact and skips
+          // merging; integration verification is still recorded at real HEAD.
+          await this.store.requeueIntegrationQueueEntry(entry.id);
+          const outcome = await this.processRequeued(entry, integrated);
+          outcomes.push(outcome);
+        } catch (error) {
+          outcomes.push({
+            kind: "failed",
+            entry,
+            taskRevision: entry.taskRevision,
+            reason: `integration recovery requires human intervention: ${describeError(error)}`,
+            recoveryRequired: true,
+          });
+        }
+      }
+      return outcomes;
+    } finally {
+      this.processing = false;
+    }
+  }
+
+  private async processRequeued(
+    entry: IntegrationQueueEntry,
+    _alreadyIntegrated: boolean,
+  ): Promise<IntegrationQueueProcessorOutcome> {
+    const claimed = await this.store.claimNextIntegrationQueueEntry(this.clock());
+    if (claimed === null || claimed.id !== entry.id) {
+      return { kind: "blocked", activeEntry: entry };
+    }
+    return await this.processClaimed(claimed);
   }
 
   private async processClaimed(

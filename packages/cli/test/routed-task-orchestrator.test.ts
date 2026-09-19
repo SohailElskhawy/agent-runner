@@ -105,6 +105,7 @@ class RecordingStore implements RunnerStore {
   }
   async completeIntegrationQueueEntry(): Promise<void> {}
   async failIntegrationQueueEntry(): Promise<void> {}
+  async requeueIntegrationQueueEntry(): Promise<void> {}
   async appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]> {
     this.events.push(...events);
     return [];
