@@ -163,7 +163,7 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
         }
         try {
           const head = await this.git.resolveHeadRevision(this.projectRoot);
-          const integrated = await this.git.isAncestor(
+          await this.git.isAncestor(
             this.projectRoot,
             entry.taskRevision,
             head,
@@ -172,7 +172,7 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
           // already integrated, its drift probe reports that fact and skips
           // merging; integration verification is still recorded at real HEAD.
           await this.store.requeueIntegrationQueueEntry(entry.id);
-          const outcome = await this.processRequeued(entry, integrated);
+          const outcome = await this.processRequeued(entry);
           outcomes.push(outcome);
         } catch (error) {
           outcomes.push({
@@ -192,7 +192,6 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
 
   private async processRequeued(
     entry: IntegrationQueueEntry,
-    _alreadyIntegrated: boolean,
   ): Promise<IntegrationQueueProcessorOutcome> {
     const claimed = await this.store.claimNextIntegrationQueueEntry(this.clock());
     if (claimed === null || claimed.id !== entry.id) {
