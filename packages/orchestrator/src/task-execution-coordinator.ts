@@ -208,18 +208,29 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     task: Task,
     claim: ExecutionClaim,
   ): Promise<TaskExecutionResult> {
+    let stopHeartbeat: (() => Promise<void>) | undefined;
     try {
       const executor = await this.createExecutor(task, claim.id);
-      await this.renew(claim.id);
+      stopHeartbeat = await this.startHeartbeat(claim.id);
       const outcome = await executor.run();
       await this.releaseIfTerminal(task.id, claim, outcome);
+      await stopHeartbeat();
+      stopHeartbeat = undefined;
       return { taskId: task.id, outcome };
     } catch (error) {
-      const recoveryRequired = await this.handleUnexpectedFailure(task, claim, error);
+      let effectiveError = error;
+      if (stopHeartbeat !== undefined) {
+        try {
+          await stopHeartbeat();
+        } catch (heartbeatError) {
+          effectiveError = heartbeatError;
+        }
+      }
+      const recoveryRequired = await this.handleUnexpectedFailure(task, claim, effectiveError);
       return {
         taskId: task.id,
         outcome: undefined,
-        error: describeError(error),
+        error: describeError(effectiveError),
         recoveryRequired,
       };
     } finally {
@@ -237,6 +248,29 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     if (!renewed) {
       throw new Error(`execution claim "${executionId}" is no longer active`);
     }
+  }
+
+  private async startHeartbeat(executionId: string): Promise<() => Promise<void>> {
+    await this.renew(executionId);
+    const cadenceMs = Math.max(1, Math.floor(this.leaseDurationMs / 3));
+    let stopped = false;
+    let failure: unknown;
+    let inFlight: Promise<void> | undefined;
+    const beat = (): void => {
+      if (stopped || failure !== undefined || inFlight !== undefined) return;
+      inFlight = this.renew(executionId).catch((error: unknown) => {
+        failure = error;
+      }).finally(() => {
+        inFlight = undefined;
+      });
+    };
+    const timer = setInterval(beat, cadenceMs);
+    return async () => {
+      stopped = true;
+      clearInterval(timer);
+      await inFlight;
+      if (failure !== undefined) throw failure;
+    };
   }
 
   private async releaseIfTerminal(

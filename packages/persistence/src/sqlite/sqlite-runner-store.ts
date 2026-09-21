@@ -418,6 +418,30 @@ export class SqliteRunnerStore implements RunnerStore {
     return Number(result.changes) === 1;
   }
 
+  async claimExpiredExecutionRecovery(
+    executionId: ExecutionClaimId,
+    recoveryOwnerId: string,
+    now: IsoTimestamp,
+    recoveryExpiresAt: IsoTimestamp,
+  ): Promise<boolean> {
+    const db = this.requireDb("claimExpiredExecutionRecovery");
+    if (db.isTransaction) throw new PersistenceError("Nested transactions are not supported");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = db.prepare(
+        `UPDATE execution_claims
+         SET recovery_owner_id = ?, recovery_expires_at = ?
+         WHERE id = ? AND status = 'ACTIVE' AND lease_expires_at <= ?
+           AND (recovery_expires_at IS NULL OR recovery_expires_at <= ?)`,
+      ).run(recoveryOwnerId, recoveryExpiresAt, executionId, now, now);
+      db.exec("COMMIT");
+      return Number(result.changes) === 1;
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw new PersistenceError("Execution recovery claim failed", error);
+    }
+  }
+
   async releaseTaskExecution(
     executionId: ExecutionClaimId,
     status: Exclude<ExecutionClaimStatus, "ACTIVE">,

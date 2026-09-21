@@ -71,6 +71,12 @@ export interface IntegrationQueueProcessor {
   recoverAbandoned(): Promise<readonly IntegrationQueueProcessorOutcome[]>;
 }
 
+type AbandonedIntegrationClassification =
+  | "NOT_INTEGRATED"
+  | "ALREADY_INTEGRATED"
+  | "INTEGRATED_VERIFICATION_MISSING"
+  | "AMBIGUOUS_OR_UNSAFE";
+
 export function createIntegrationQueueProcessor(
   options: IntegrationQueueProcessorOptions,
 ): IntegrationQueueProcessor {
@@ -163,14 +169,25 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
         }
         try {
           const head = await this.git.resolveHeadRevision(this.projectRoot);
-          await this.git.isAncestor(
+          const integrated = await this.git.isAncestor(
             this.projectRoot,
             entry.taskRevision,
             head,
           );
-          // Both cases return through the ordinary serialized processor. If
-          // already integrated, its drift probe reports that fact and skips
-          // merging; integration verification is still recorded at real HEAD.
+          const classification = await this.classifyAbandoned(entry, integrated);
+          if (classification === "AMBIGUOUS_OR_UNSAFE") {
+            outcomes.push({
+              kind: "failed",
+              entry,
+              taskRevision: entry.taskRevision,
+              reason: "integration recovery requires human intervention: Git state cannot prove the queue entry is safe to resume",
+              recoveryRequired: true,
+            });
+            continue;
+          }
+          // The normal processor is reused only after classification. Its
+          // current-HEAD drift probe prevents a merge for ALREADY_INTEGRATED
+          // and verification evidence is recorded against the actual HEAD.
           await this.store.requeueIntegrationQueueEntry(entry.id);
           const outcome = await this.processRequeued(entry);
           outcomes.push(outcome);
@@ -188,6 +205,26 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
     } finally {
       this.processing = false;
     }
+  }
+
+  private async classifyAbandoned(
+    entry: IntegrationQueueEntry,
+    integrated: boolean,
+  ): Promise<AbandonedIntegrationClassification> {
+    if (!integrated) {
+      return (await this.git.branchExists(this.projectRoot, entry.branch))
+        ? "NOT_INTEGRATED"
+        : "AMBIGUOUS_OR_UNSAFE";
+    }
+    const events = await this.store.listEvents({
+      taskId: entry.taskId,
+      type: ORCHESTRATION_EVENTS.integrationVerificationCompleted,
+    });
+    const verified = events.some((event) => {
+      const payload = event.payload as Partial<IntegrationVerificationCompletedPayload>;
+      return payload.attemptId === entry.attemptId && payload.status === "PASSED";
+    });
+    return verified ? "ALREADY_INTEGRATED" : "INTEGRATED_VERIFICATION_MISSING";
   }
 
   private async processRequeued(

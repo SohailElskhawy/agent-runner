@@ -109,6 +109,14 @@ export interface RunnerStore {
     leaseExpiresAt: IsoTimestamp,
   ): Promise<boolean>;
 
+  /** Atomically takes bounded recovery ownership of one expired active claim. */
+  claimExpiredExecutionRecovery(
+    executionId: ExecutionClaimId,
+    recoveryOwnerId: string,
+    now: IsoTimestamp,
+    recoveryExpiresAt: IsoTimestamp,
+  ): Promise<boolean>;
+
   /** Completes/releases one execution claim and exactly its owned locks. */
   releaseTaskExecution(
     executionId: ExecutionClaimId,

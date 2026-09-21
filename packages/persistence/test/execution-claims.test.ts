@@ -91,6 +91,27 @@ describe("durable execution claims", () => {
     )).toBe(false);
   });
 
+  it("allows exactly one recovery owner to claim an expired execution", async () => {
+    const claimed = await claim(store, "M002", "exec-expired", 2, ["recovery-resource"]);
+    expect(claimed.kind).toBe("claimed");
+    const other = createSqliteRunnerStore({ path: dbPath });
+    await other.initialize();
+    try {
+      const results = await Promise.all([
+        store.claimExpiredExecutionRecovery(
+          "exec-expired", "recovery-a", "2026-01-01T00:01:00.000Z", "2026-01-01T00:02:00.000Z",
+        ),
+        other.claimExpiredExecutionRecovery(
+          "exec-expired", "recovery-b", "2026-01-01T00:01:00.000Z", "2026-01-01T00:02:00.000Z",
+        ),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(await store.listResourceLocks({ executionId: "exec-expired" })).toHaveLength(1);
+    } finally {
+      await other.close();
+    }
+  });
+
   it("upgrades a pre-claim database without losing locks or queue entries", async () => {
     await store.close();
     dbPath = join(directory, "upgrade-state.db");
@@ -134,7 +155,7 @@ describe("durable execution claims", () => {
 
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBe(9);
     const oldLock = (await store.listResourceLocks())[0];
     expect(oldLock).toMatchObject({
       resource: "legacy-resource",

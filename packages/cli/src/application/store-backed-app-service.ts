@@ -220,12 +220,41 @@ class StoreBackedAppService implements RunnerAppService {
   private startupReconcile(): Promise<void> {
     this.startupReconciliation ??= (async () => {
       await this.store.initialize();
-      await this.integrationRecovery?.recoverAbandoned();
-      await this.executionClaimRecovery.reconcileExpired();
+      const integration = await this.integrationRecovery?.recoverAbandoned() ?? [];
+      const claims = await this.executionClaimRecovery.reconcileExpired();
       const activeClaims = await this.store.listExecutionClaims({ status: "ACTIVE" });
       await this.recovery.reconcileUnfinished(activeClaims.map((claim) => claim.taskId));
-      await this.worktreeRecovery?.reconcileTerminalWorktrees();
+      const worktrees = await this.worktreeRecovery?.reconcileTerminalWorktrees() ?? [];
+      await this.recordStartupRecovery(integration, claims, worktrees);
     })();
     return this.startupReconciliation;
+  }
+
+  private async recordStartupRecovery(
+    integration: readonly { readonly kind: string; readonly entry?: { readonly taskId: string } }[],
+    claims: readonly { readonly kind: string; readonly claim: { readonly taskId: string } }[],
+    worktrees: readonly { readonly kind: string; readonly taskId: string }[],
+  ): Promise<void> {
+    const occurredAt = new Date().toISOString();
+    await this.store.appendEvents([
+      ...integration.map((outcome) => ({
+        type: "recovery.startup.integration",
+        taskId: outcome.entry?.taskId ?? null,
+        payload: { kind: outcome.kind },
+        occurredAt,
+      })),
+      ...claims.map((outcome) => ({
+        type: "recovery.startup.execution-claim",
+        taskId: outcome.claim.taskId,
+        payload: { kind: outcome.kind },
+        occurredAt,
+      })),
+      ...worktrees.map((outcome) => ({
+        type: "recovery.startup.worktree",
+        taskId: outcome.taskId,
+        payload: { kind: outcome.kind },
+        occurredAt,
+      })),
+    ]);
   }
 }

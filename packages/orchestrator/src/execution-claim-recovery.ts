@@ -22,14 +22,29 @@ export function createExecutionClaimRecovery(options: {
   readonly store: RunnerStore;
   readonly recovery: CrashRecovery;
   readonly now?: (() => IsoTimestamp) | undefined;
+  readonly recoveryLeaseDurationMs?: number | undefined;
 }): ExecutionClaimRecovery {
   const clock = options.now ?? (() => new Date().toISOString());
+  const recoveryLeaseDurationMs = options.recoveryLeaseDurationMs ?? 30_000;
   return {
     async reconcileExpired(): Promise<readonly ExecutionClaimRecoveryOutcome[]> {
       const claims = await options.store.listExecutionClaims({ status: "ACTIVE" });
       const outcomes: ExecutionClaimRecoveryOutcome[] = [];
       for (const claim of claims) {
         if (claim.leaseExpiresAt > clock()) {
+          outcomes.push({ kind: "live", claim });
+          continue;
+        }
+        const recoveryNow = clock();
+        const owned = await options.store.claimExpiredExecutionRecovery(
+          claim.id,
+          `recovery_${randomUUID()}`,
+          recoveryNow,
+          addLease(recoveryNow, recoveryLeaseDurationMs),
+        );
+        if (!owned) {
+          // A competing restart owns recovery, or the original execution
+          // renewed before the CAS. Never inspect or mutate it concurrently.
           outcomes.push({ kind: "live", claim });
           continue;
         }
@@ -69,6 +84,12 @@ export function createExecutionClaimRecovery(options: {
   };
 }
 
+function addLease(now: IsoTimestamp, durationMs: number): IsoTimestamp {
+  const milliseconds = Date.parse(now);
+  if (!Number.isFinite(milliseconds)) throw new Error(`invalid recovery timestamp ${now}`);
+  return new Date(milliseconds + durationMs).toISOString();
+}
+
 function isTerminal(status: TaskStatus): boolean {
   return status === "DONE" || status === "FAILED" || status === "CANCELLED";
 }
@@ -76,3 +97,4 @@ function isTerminal(status: TaskStatus): boolean {
 function claimStatus(status: TaskStatus): "COMPLETED" | "FAILED" | "CANCELLED" {
   return status === "DONE" ? "COMPLETED" : status === "CANCELLED" ? "CANCELLED" : "FAILED";
 }
+import { randomUUID } from "node:crypto";

@@ -214,6 +214,17 @@ export function applyExecutionClaimLeaseSchema(db: SchemaMigrationDatabase): voi
   }
 }
 
+const SCHEMA_V9_STATEMENTS = [
+  `ALTER TABLE execution_claims ADD COLUMN recovery_owner_id TEXT`,
+  `ALTER TABLE execution_claims ADD COLUMN recovery_expires_at TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_execution_claims_recovery
+   ON execution_claims(status, lease_expires_at, recovery_expires_at)`,
+];
+
+export function applyExecutionRecoveryOwnershipSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V9_STATEMENTS) db.exec(statement);
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -254,6 +265,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 8,
     name: "add-execution-claim-leases",
     up: applyExecutionClaimLeaseSchema,
+  },
+  {
+    version: 9,
+    name: "add-execution-recovery-ownership",
+    up: applyExecutionRecoveryOwnershipSchema,
   },
 ];
 

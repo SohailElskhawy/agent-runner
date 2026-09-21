@@ -81,6 +81,9 @@ class RecordingStore implements RunnerStore {
   async renewTaskExecution(): Promise<boolean> {
     return false;
   }
+  async claimExpiredExecutionRecovery(): Promise<boolean> {
+    return false;
+  }
   async getTaskStatus(): Promise<Task["status"] | null> {
     return null;
   }
