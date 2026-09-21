@@ -124,13 +124,13 @@ export interface RunnerStore {
     now: IsoTimestamp,
   ): Promise<void>;
 
-  /** Completes/releases one execution claim and exactly its owned locks. */
+  /** Completes/releases one execution claim and exactly its owned locks if currently active and unexpired. */
   releaseTaskExecution(
     executionId: ExecutionClaimId,
     status: Exclude<ExecutionClaimStatus, "ACTIVE">,
     finishedAt: IsoTimestamp,
     failure?: { readonly message: string } | undefined,
-  ): Promise<void>;
+  ): Promise<boolean>;
 
   /** Settles a recovered claim only while its bounded recovery owner is current. */
   releaseRecoveredTaskExecution(

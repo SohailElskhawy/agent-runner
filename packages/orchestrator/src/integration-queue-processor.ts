@@ -174,21 +174,27 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
             entry.taskRevision,
             head,
           );
-          const classification = await this.classifyAbandoned(entry, integrated);
-          if (classification === "AMBIGUOUS_OR_UNSAFE") {
-            outcomes.push({
-              kind: "failed",
-              entry,
-              taskRevision: entry.taskRevision,
-              reason: "integration recovery requires human intervention: Git state cannot prove the queue entry is safe to resume",
-              recoveryRequired: true,
-            });
-            continue;
+          const classification = await this.classifyAbandoned(entry, integrated, head);
+          switch (classification) {
+            case "AMBIGUOUS_OR_UNSAFE":
+              outcomes.push({
+                kind: "failed",
+                entry,
+                taskRevision: entry.taskRevision,
+                reason: "integration recovery requires human intervention: Git state cannot prove the queue entry is safe to resume",
+                recoveryRequired: true,
+              });
+              break;
+            case "NOT_INTEGRATED":
+              outcomes.push(await this.requeueNotIntegrated(entry));
+              break;
+            case "ALREADY_INTEGRATED":
+              outcomes.push(await this.settleAlreadyIntegrated(entry, head));
+              break;
+            case "INTEGRATED_VERIFICATION_MISSING":
+              outcomes.push(await this.verifyAndSettleIntegrated(entry, head));
+              break;
           }
-          const outcome = classification === "NOT_INTEGRATED"
-            ? await this.requeueNotIntegrated(entry)
-            : await this.processRecoveredIntegrated(entry);
-          outcomes.push(outcome);
         } catch (error) {
           outcomes.push({
             kind: "failed",
@@ -210,15 +216,149 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
     return await this.processRequeued(entry);
   }
 
-  private async processRecoveredIntegrated(entry: IntegrationQueueEntry): Promise<IntegrationQueueProcessorOutcome> {
-    // Entry remains INTEGRATING: processClaimed's drift probe observes the
-    // actual HEAD as already integrated, so integration is never replayed.
-    return await this.processClaimed(entry);
+  private async settleAlreadyIntegrated(
+    entry: IntegrationQueueEntry,
+    head: string,
+  ): Promise<IntegrationQueueProcessorOutcome> {
+    try {
+      const task = await this.requireTask(entry.taskId);
+      const attempt = await this.requireAttempt(entry.attemptId);
+      const integration: GitIntegrationResult = {
+        kind: "already-integrated",
+        revision: head,
+      };
+      const events = await this.store.listEvents({
+        taskId: entry.taskId,
+        type: ORCHESTRATION_EVENTS.integrationCompleted,
+      });
+      const hasCompleted = events.some((event) => {
+        const payload = event.payload as Partial<IntegrationCompletedPayload>;
+        return payload.attemptId === entry.attemptId;
+      });
+      if (!hasCompleted) {
+        await this.appendIntegrationCompleted(task.id, entry.attemptId, integration);
+      }
+      await this.settleSuccess(task, attempt, entry);
+      try {
+        await this.releaseExecution(entry, "COMPLETED", undefined);
+      } catch (error) {
+        return {
+          kind: "failed",
+          entry,
+          taskRevision: entry.taskRevision,
+          reason: `terminal integration settlement succeeded but execution lock release failed: ${describeError(error)}`,
+          recoveryRequired: true,
+        };
+      }
+      const worktreePath = join(
+        this.worktreesDir,
+        task.id,
+        `attempt-${String(attempt.number)}`,
+      );
+      await this.cleanupSuccessfulWorktree(worktreePath);
+      return {
+        kind: "processed",
+        entry,
+        taskRevision: entry.taskRevision,
+        integration,
+      };
+    } catch (error) {
+      const reason = describeError(error);
+      const settlementIssue = await this.settleFailure(entry, entry.taskRevision, error);
+      return {
+        kind: "failed",
+        entry,
+        taskRevision: entry.taskRevision,
+        reason:
+          settlementIssue === undefined
+            ? reason
+            : `${reason}; queue settlement failed: ${settlementIssue}`,
+        ...(settlementIssue === undefined ? {} : { recoveryRequired: true }),
+      };
+    }
+  }
+
+  private async verifyAndSettleIntegrated(
+    entry: IntegrationQueueEntry,
+    head: string,
+  ): Promise<IntegrationQueueProcessorOutcome> {
+    try {
+      const task = await this.requireTask(entry.taskId);
+      const attempt = await this.requireAttempt(entry.attemptId);
+      const verificationResolution = resolveVerificationChecksForTask(
+        task.definition.verification.required,
+        this.verificationChecks,
+      );
+      if (!verificationResolution.ok) {
+        throw new QueueProcessingFailure(
+          "error",
+          `no verification command configured for required checks: ${verificationResolution.missingChecks.join(", ")}`,
+        );
+      }
+      const integration: GitIntegrationResult = {
+        kind: "already-integrated",
+        revision: head,
+      };
+      const events = await this.store.listEvents({
+        taskId: entry.taskId,
+        type: ORCHESTRATION_EVENTS.integrationCompleted,
+      });
+      const hasCompleted = events.some((event) => {
+        const payload = event.payload as Partial<IntegrationCompletedPayload>;
+        return payload.attemptId === entry.attemptId;
+      });
+      if (!hasCompleted) {
+        await this.appendIntegrationCompleted(task.id, entry.attemptId, integration);
+      }
+      await this.runIntegrationVerification(
+        entry,
+        verificationResolution.checks,
+        head,
+      );
+      await this.settleSuccess(task, attempt, entry);
+      try {
+        await this.releaseExecution(entry, "COMPLETED", undefined);
+      } catch (error) {
+        return {
+          kind: "failed",
+          entry,
+          taskRevision: entry.taskRevision,
+          reason: `terminal integration settlement succeeded but execution lock release failed: ${describeError(error)}`,
+          recoveryRequired: true,
+        };
+      }
+      const worktreePath = join(
+        this.worktreesDir,
+        task.id,
+        `attempt-${String(attempt.number)}`,
+      );
+      await this.cleanupSuccessfulWorktree(worktreePath);
+      return {
+        kind: "processed",
+        entry,
+        taskRevision: entry.taskRevision,
+        integration,
+      };
+    } catch (error) {
+      const reason = describeError(error);
+      const settlementIssue = await this.settleFailure(entry, entry.taskRevision, error);
+      return {
+        kind: "failed",
+        entry,
+        taskRevision: entry.taskRevision,
+        reason:
+          settlementIssue === undefined
+            ? reason
+            : `${reason}; queue settlement failed: ${settlementIssue}`,
+        ...(settlementIssue === undefined ? {} : { recoveryRequired: true }),
+      };
+    }
   }
 
   private async classifyAbandoned(
     entry: IntegrationQueueEntry,
     integrated: boolean,
+    head: string,
   ): Promise<AbandonedIntegrationClassification> {
     if (!integrated) {
       return (await this.git.branchExists(this.projectRoot, entry.branch))
@@ -231,7 +371,11 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
     });
     const verified = events.some((event) => {
       const payload = event.payload as Partial<IntegrationVerificationCompletedPayload>;
-      return payload.attemptId === entry.attemptId && payload.status === "PASSED";
+      return (
+        payload.attemptId === entry.attemptId &&
+        payload.status === "PASSED" &&
+        payload.revision === head
+      );
     });
     return verified ? "ALREADY_INTEGRATED" : "INTEGRATED_VERIFICATION_MISSING";
   }

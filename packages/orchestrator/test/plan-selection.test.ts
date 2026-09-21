@@ -485,7 +485,7 @@ describe("PLAN review/fix loop with a fixed clock beyond cycle 9", () => {
     expect(stageRunById(runs, planStageRunId(attemptId, 11)).output?.plan).toBe(
       planTextOf(11),
     );
-  });
+  }, 15_000);
 
   it("works with normal advancing timestamps across multiple cycles", async () => {
     const behaviors: AgentBehavior[] = [

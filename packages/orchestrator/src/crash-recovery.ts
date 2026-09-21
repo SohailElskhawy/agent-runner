@@ -285,9 +285,11 @@ class SequentialCrashRecovery implements CrashRecovery {
         `verification rerun failed during recovery: ${describeError(error)}`,
       );
     }
-    await this.store.appendEvents([
-      verificationCompletedEvent(task.id, attempt.id, run, this.clock()),
-    ]);
+    await this.recoveryTransaction(async () => {
+      await this.store.appendEvents([
+        verificationCompletedEvent(task.id, attempt.id, run, this.clock()),
+      ]);
+    });
     if (run.cancelled) {
       return await this.finishFailed(
         task,
@@ -945,6 +947,7 @@ class SequentialCrashRecovery implements CrashRecovery {
         worktreePath,
         describeError(error),
         this.clock(),
+        (body) => this.recoveryTransaction(body),
       );
     }
   }
@@ -983,6 +986,7 @@ class SequentialCrashRecovery implements CrashRecovery {
         worktreePath,
         describeError(error),
         this.clock(),
+        (body) => this.recoveryTransaction(body),
       );
     }
   }
@@ -1209,20 +1213,28 @@ async function reportCleanupFailure(
   worktreePath: string,
   reason: string,
   occurredAt: IsoTimestamp,
+  recoveryTransaction?: (<T>(body: () => Promise<T>) => Promise<T>) | undefined,
 ): Promise<WorktreeCleanupOutcome> {
   try {
-    await store.appendEvents([
-      {
-        type: ORCHESTRATION_EVENTS.worktreeCleanupFailed,
-        taskId,
-        payload: {
-          attemptId,
-          worktreePath,
-          reason,
-        } satisfies WorktreeCleanupFailedPayload,
-        occurredAt,
-      },
-    ]);
+    const append = async () => {
+      await store.appendEvents([
+        {
+          type: ORCHESTRATION_EVENTS.worktreeCleanupFailed,
+          taskId,
+          payload: {
+            attemptId,
+            worktreePath,
+            reason,
+          } satisfies WorktreeCleanupFailedPayload,
+          occurredAt,
+        },
+      ]);
+    };
+    if (recoveryTransaction !== undefined) {
+      await recoveryTransaction(append);
+    } else {
+      await append();
+    }
   } catch {
     return { kind: "failed", message: reason };
   }

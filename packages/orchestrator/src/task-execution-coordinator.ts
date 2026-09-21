@@ -214,18 +214,38 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       heartbeat = await this.startHeartbeat(claim.id);
       const outcome = await executor.run();
       heartbeat.assertHealthy();
-      await this.releaseIfTerminal(task.id, claim, outcome);
+      const settled = await this.releaseIfTerminal(task.id, claim, outcome);
+      if (!settled) {
+        await heartbeat.stop().catch(() => {});
+        heartbeat = undefined;
+        return {
+          taskId: task.id,
+          outcome: undefined,
+          error: "execution lease expired or recovery acquired ownership before terminal settlement",
+          recoveryRequired: true,
+        };
+      }
       await heartbeat.stop();
       heartbeat = undefined;
       return { taskId: task.id, outcome };
     } catch (error) {
       let effectiveError = error;
+      let heartbeatFailed = false;
       if (heartbeat !== undefined) {
         try {
           await heartbeat.stop();
         } catch (heartbeatError) {
           effectiveError = heartbeatError;
+          heartbeatFailed = true;
         }
+      }
+      if (heartbeatFailed) {
+        return {
+          taskId: task.id,
+          outcome: undefined,
+          error: describeError(effectiveError),
+          recoveryRequired: true,
+        };
       }
       const recoveryRequired = await this.handleUnexpectedFailure(task, claim, effectiveError);
       return {
@@ -284,15 +304,15 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     taskId: TaskId,
     claim: ExecutionClaim,
     outcome: WorkflowTaskRunOutcome,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (outcome.kind === "pending-integration") {
-      return;
+      return true;
     }
     const task = await this.store.getTask(taskId);
     if (task === null || isParallelismActiveStatus(task.status)) {
-      return;
+      return true;
     }
-    await this.store.releaseTaskExecution(
+    return await this.store.releaseTaskExecution(
       claim.id,
       claimStatusForTask(task.status),
       this.clock(),

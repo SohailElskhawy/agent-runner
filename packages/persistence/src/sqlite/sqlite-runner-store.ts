@@ -413,7 +413,7 @@ export class SqliteRunnerStore implements RunnerStore {
     const result = db.prepare(
       `UPDATE execution_claims
        SET renewed_at = ?, lease_expires_at = ?
-       WHERE id = ? AND status = 'ACTIVE'`,
+       WHERE id = ? AND status = 'ACTIVE' AND recovery_owner_id IS NULL`,
     ).run(renewedAt, leaseExpiresAt, executionId);
     return Number(result.changes) === 1;
   }
@@ -463,7 +463,7 @@ export class SqliteRunnerStore implements RunnerStore {
     status: Exclude<ExecutionClaimStatus, "ACTIVE">,
     finishedAt: IsoTimestamp,
     failure?: { readonly message: string } | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!EXECUTION_CLAIM_STATUSES.includes(status)) {
       throw new PersistenceError("Execution claim release requires a terminal status");
     }
@@ -477,23 +477,24 @@ export class SqliteRunnerStore implements RunnerStore {
         .prepare(
           `UPDATE execution_claims
            SET status = ?, finished_at = ?, failure_json = ?
-           WHERE id = ? AND status = 'ACTIVE'`,
+           WHERE id = ? AND status = 'ACTIVE'
+             AND lease_expires_at > ?
+             AND recovery_owner_id IS NULL`,
         )
         .run(
           status,
           finishedAt,
           failure === undefined ? null : JSON.stringify(failure),
           executionId,
+          finishedAt,
         );
-      if (Number(result.changes) === 0) {
-        throw new PersistenceError(
-          `Cannot release execution claim "${executionId}": it is not active`,
+      if (Number(result.changes) === 1) {
+        db.prepare("DELETE FROM resource_locks WHERE execution_id = ?").run(
+          executionId,
         );
       }
-      db.prepare("DELETE FROM resource_locks WHERE execution_id = ?").run(
-        executionId,
-      );
       db.exec("COMMIT");
+      return Number(result.changes) === 1;
     } catch (error) {
       if (db.isTransaction) {
         db.exec("ROLLBACK");

@@ -130,6 +130,45 @@ describe("durable execution claims", () => {
     expect(await store.listResourceLocks({ executionId: "exec-stale" })).toEqual([]);
   });
 
+  it("rejects normal settlement when the execution lease has expired", async () => {
+    await claim(store, "M001", "exec-expired-settle", 2, ["resource-expired"]);
+    const settled = await store.releaseTaskExecution(
+      "exec-expired-settle",
+      "COMPLETED",
+      "2026-01-01T00:00:31.000Z",
+    );
+    expect(settled).toBe(false);
+    expect((await store.listExecutionClaims({ status: "ACTIVE" })).map((c) => c.id)).toContain("exec-expired-settle");
+    expect(await store.listResourceLocks({ executionId: "exec-expired-settle" })).toHaveLength(1);
+  });
+
+  it("rejects normal settlement when recovery owns the claim", async () => {
+    await claim(store, "M002", "exec-recovery-collision", 2, ["resource-collision"]);
+    expect(await store.claimExpiredExecutionRecovery(
+      "exec-recovery-collision",
+      "recovery-actor-b",
+      "2026-01-01T00:00:31.000Z",
+      "2026-01-01T00:01:00.000Z",
+    )).toBe(true);
+    const settled = await store.releaseTaskExecution(
+      "exec-recovery-collision",
+      "COMPLETED",
+      "2026-01-01T00:00:32.000Z",
+    );
+    expect(settled).toBe(false);
+    const claimRow = (await store.listExecutionClaims({ status: "ACTIVE" })).find((c) => c.id === "exec-recovery-collision");
+    expect(claimRow).toBeDefined();
+    expect(claimRow?.status).toBe("ACTIVE");
+    expect(await store.listResourceLocks({ executionId: "exec-recovery-collision" })).toHaveLength(1);
+    expect(await store.releaseRecoveredTaskExecution(
+      "exec-recovery-collision",
+      "recovery-actor-b",
+      "COMPLETED",
+      "2026-01-01T00:00:33.000Z",
+    )).toBe(true);
+    expect(await store.listResourceLocks({ executionId: "exec-recovery-collision" })).toEqual([]);
+  });
+
   it("upgrades a pre-claim database without losing locks or queue entries", async () => {
     await store.close();
     dbPath = join(directory, "upgrade-state.db");

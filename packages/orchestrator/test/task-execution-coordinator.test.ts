@@ -192,6 +192,96 @@ describe("task execution coordinator (M061b)", () => {
     await run;
     expect(await store.listExecutionClaims({ status: "ACTIVE" })).toEqual([]);
   });
+
+  it("rejects terminal settlement and retains claim/locks when lease expires before settlement", async () => {
+    await store.putTask(task("M013", "P0", "expired-resource", "src/expired/**"));
+    let currentTime = "2026-01-01T00:00:00.000Z";
+    const coord = createTaskExecutionCoordinator({
+      store,
+      agentCandidates: [candidate],
+      maxParallelism: 1,
+      leaseDurationMs: 10_000,
+      now: () => currentTime,
+      createExecutor: () => ({
+        async run(): Promise<WorkflowTaskRunOutcome> {
+          currentTime = "2026-01-01T00:00:15.000Z";
+          await store.setTaskStatus("M013", "DONE", currentTime);
+          return { kind: "completed", taskId: "M013", attemptId: "att", task: (await store.getTask("M013"))!, attempt: {} as never, branch: "branch", worktreePath: "worktree", integration: { kind: "fast-forward", revision: "revision" }, cleanup: undefined };
+        },
+      }),
+    });
+    const result = await coord.dispatchAvailable();
+    expect(result.executions[0]?.recoveryRequired).toBe(true);
+    const active = await store.listExecutionClaims({ status: "ACTIVE" });
+    expect(active).toHaveLength(1);
+    expect(active[0]?.taskId).toBe("M013");
+    expect(await store.listResourceLocks()).toHaveLength(1);
+  });
+
+  it("rejects normal settlement when recovery actor acquires ownership during execution", async () => {
+    await store.putTask(task("M014", "P0", "collision-resource", "src/collision/**"));
+    let currentTime = "2026-01-01T00:00:00.000Z";
+    const coord = createTaskExecutionCoordinator({
+      store,
+      agentCandidates: [candidate],
+      maxParallelism: 1,
+      leaseDurationMs: 10_000,
+      now: () => currentTime,
+      createExecutor: (_t, execId) => ({
+        async run(): Promise<WorkflowTaskRunOutcome> {
+          currentTime = "2026-01-01T00:00:15.000Z";
+          const acquired = await store.claimExpiredExecutionRecovery(
+            execId,
+            "recovery_actor_b",
+            currentTime,
+            "2026-01-01T00:01:00.000Z",
+          );
+          expect(acquired).toBe(true);
+          await store.setTaskStatus("M014", "DONE", currentTime);
+          return { kind: "completed", taskId: "M014", attemptId: "att", task: (await store.getTask("M014"))!, attempt: {} as never, branch: "branch", worktreePath: "worktree", integration: { kind: "fast-forward", revision: "revision" }, cleanup: undefined };
+        },
+      }),
+    });
+    const result = await coord.dispatchAvailable();
+    expect(result.executions[0]?.recoveryRequired).toBe(true);
+    const active = await store.listExecutionClaims({ status: "ACTIVE" });
+    expect(active).toHaveLength(1);
+    expect(await store.listResourceLocks()).toHaveLength(1);
+  });
+
+  it("retains claim/locks and rejects completion when heartbeat renewal fails", async () => {
+    await store.putTask(task("M015", "P0", "fail-renewal-resource", "src/fail-renewal/**"));
+    let releaseRun: (() => void) | undefined;
+    const runBlocker = new Promise<void>((resolve) => { releaseRun = resolve; });
+    const coord = createTaskExecutionCoordinator({
+      store,
+      agentCandidates: [candidate],
+      maxParallelism: 1,
+      leaseDurationMs: 30,
+      createExecutor: (_t, execId) => ({
+        async run(): Promise<WorkflowTaskRunOutcome> {
+          const acquired = await store.claimExpiredExecutionRecovery(
+            execId,
+            "competing_recovery",
+            new Date(Date.now() + 100_000).toISOString(),
+            new Date(Date.now() + 160_000).toISOString(),
+          );
+          expect(acquired).toBe(true);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          releaseRun?.();
+          await store.setTaskStatus("M015", "DONE", new Date().toISOString());
+          return { kind: "completed", taskId: "M015", attemptId: "att", task: (await store.getTask("M015"))!, attempt: {} as never, branch: "branch", worktreePath: "worktree", integration: { kind: "fast-forward", revision: "revision" }, cleanup: undefined };
+        },
+      }),
+    });
+    const dispatch = coord.dispatchAvailable();
+    await runBlocker;
+    const result = await dispatch;
+    expect(result.executions[0]?.recoveryRequired).toBe(true);
+    const active = await store.listExecutionClaims({ status: "ACTIVE" });
+    expect(active).toHaveLength(1);
+    expect(await store.listResourceLocks()).toHaveLength(1);
+  });
 });
 
 function coordinator(
