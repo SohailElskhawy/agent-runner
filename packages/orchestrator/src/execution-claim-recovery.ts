@@ -36,9 +36,10 @@ export function createExecutionClaimRecovery(options: {
           continue;
         }
         const recoveryNow = clock();
+        const recoveryOwnerId = `recovery_${randomUUID()}`;
         const owned = await options.store.claimExpiredExecutionRecovery(
           claim.id,
-          `recovery_${randomUUID()}`,
+          recoveryOwnerId,
           recoveryNow,
           addLease(recoveryNow, recoveryLeaseDurationMs),
         );
@@ -59,22 +60,22 @@ export function createExecutionClaimRecovery(options: {
           continue;
         }
         if (isTerminal(task.status)) {
-          await options.store.releaseTaskExecution(claim.id, claimStatus(task.status), clock());
-          outcomes.push({ kind: "terminal-settled", claim });
+          const settled = await settle(options.store, claim.id, recoveryOwnerId, claimStatus(task.status), clock());
+          outcomes.push(settled ? { kind: "terminal-settled", claim } : { kind: "human-recovery-required", claim });
           continue;
         }
         const recovered = await options.recovery.reconcileTask(task.id);
         if (recovered.kind === "safe-to-retry") {
-          await options.store.releaseTaskExecution(claim.id, "FAILED", clock(), {
+          const settled = await settle(options.store, claim.id, recoveryOwnerId, "FAILED", clock(), {
             message: "expired execution lease reconciled; task is ready for a bounded retry",
           });
-          outcomes.push({ kind: "safe-to-retry", claim });
+          outcomes.push(settled ? { kind: "safe-to-retry", claim } : { kind: "human-recovery-required", claim });
           continue;
         }
         const refreshed = await options.store.getTask(task.id);
         if (refreshed !== null && isTerminal(refreshed.status)) {
-          await options.store.releaseTaskExecution(claim.id, claimStatus(refreshed.status), clock());
-          outcomes.push({ kind: "terminal-settled", claim });
+          const settled = await settle(options.store, claim.id, recoveryOwnerId, claimStatus(refreshed.status), clock());
+          outcomes.push(settled ? { kind: "terminal-settled", claim } : { kind: "human-recovery-required", claim });
         } else {
           outcomes.push({ kind: "human-recovery-required", claim });
         }
@@ -82,6 +83,17 @@ export function createExecutionClaimRecovery(options: {
       return outcomes;
     },
   };
+}
+
+async function settle(
+  store: RunnerStore,
+  executionId: string,
+  recoveryOwnerId: string,
+  status: "COMPLETED" | "FAILED" | "CANCELLED",
+  finishedAt: IsoTimestamp,
+  failure?: { readonly message: string },
+): Promise<boolean> {
+  return await store.releaseRecoveredTaskExecution(executionId, recoveryOwnerId, status, finishedAt, failure);
 }
 
 function addLease(now: IsoTimestamp, durationMs: number): IsoTimestamp {

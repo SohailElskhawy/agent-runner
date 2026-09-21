@@ -112,6 +112,24 @@ describe("durable execution claims", () => {
     }
   });
 
+  it("rejects stale recovery settlement after ownership expires", async () => {
+    await claim(store, "M003", "exec-stale", 2, ["stale-resource"]);
+    expect(await store.claimExpiredExecutionRecovery(
+      "exec-stale", "recovery-a", "2026-01-01T00:01:00.000Z", "2026-01-01T00:01:01.000Z",
+    )).toBe(true);
+    expect(await store.claimExpiredExecutionRecovery(
+      "exec-stale", "recovery-b", "2026-01-01T00:01:02.000Z", "2026-01-01T00:02:00.000Z",
+    )).toBe(true);
+    expect(await store.releaseRecoveredTaskExecution(
+      "exec-stale", "recovery-a", "FAILED", "2026-01-01T00:01:02.000Z",
+    )).toBe(false);
+    expect(await store.listResourceLocks({ executionId: "exec-stale" })).toHaveLength(1);
+    expect(await store.releaseRecoveredTaskExecution(
+      "exec-stale", "recovery-b", "FAILED", "2026-01-01T00:01:03.000Z",
+    )).toBe(true);
+    expect(await store.listResourceLocks({ executionId: "exec-stale" })).toEqual([]);
+  });
+
   it("upgrades a pre-claim database without losing locks or queue entries", async () => {
     await store.close();
     dbPath = join(directory, "upgrade-state.db");

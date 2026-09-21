@@ -488,6 +488,34 @@ export class SqliteRunnerStore implements RunnerStore {
     }
   }
 
+  async releaseRecoveredTaskExecution(
+    executionId: ExecutionClaimId,
+    recoveryOwnerId: string,
+    status: Exclude<ExecutionClaimStatus, "ACTIVE">,
+    finishedAt: IsoTimestamp,
+    failure?: { readonly message: string } | undefined,
+  ): Promise<boolean> {
+    const db = this.requireDb("releaseRecoveredTaskExecution");
+    if (db.isTransaction) throw new PersistenceError("Nested transactions are not supported");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const settled = db.prepare(
+        `UPDATE execution_claims
+         SET status = ?, finished_at = ?, failure_json = ?
+         WHERE id = ? AND status = 'ACTIVE' AND recovery_owner_id = ?
+           AND recovery_expires_at > ?`,
+      ).run(status, finishedAt, failure === undefined ? null : JSON.stringify(failure), executionId, recoveryOwnerId, finishedAt);
+      if (Number(settled.changes) === 1) {
+        db.prepare("DELETE FROM resource_locks WHERE execution_id = ?").run(executionId);
+      }
+      db.exec("COMMIT");
+      return Number(settled.changes) === 1;
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw new PersistenceError("Recovered execution settlement failed", error);
+    }
+  }
+
   async putStageRun(stageRun: StageRun): Promise<void> {
     const db = this.requireDb("putStageRun");
     try {

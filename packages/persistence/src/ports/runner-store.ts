@@ -125,6 +125,15 @@ export interface RunnerStore {
     failure?: { readonly message: string } | undefined,
   ): Promise<void>;
 
+  /** Settles a recovered claim only while its bounded recovery owner is current. */
+  releaseRecoveredTaskExecution(
+    executionId: ExecutionClaimId,
+    recoveryOwnerId: string,
+    status: Exclude<ExecutionClaimStatus, "ACTIVE">,
+    finishedAt: IsoTimestamp,
+    failure?: { readonly message: string } | undefined,
+  ): Promise<boolean>;
+
   getTaskStatus(id: TaskId): Promise<Task["status"] | null>;
   setTaskStatus(
     id: TaskId,

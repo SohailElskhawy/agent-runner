@@ -208,20 +208,21 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     task: Task,
     claim: ExecutionClaim,
   ): Promise<TaskExecutionResult> {
-    let stopHeartbeat: (() => Promise<void>) | undefined;
+    let heartbeat: { readonly stop: () => Promise<void>; readonly assertHealthy: () => void } | undefined;
     try {
       const executor = await this.createExecutor(task, claim.id);
-      stopHeartbeat = await this.startHeartbeat(claim.id);
+      heartbeat = await this.startHeartbeat(claim.id);
       const outcome = await executor.run();
+      heartbeat.assertHealthy();
       await this.releaseIfTerminal(task.id, claim, outcome);
-      await stopHeartbeat();
-      stopHeartbeat = undefined;
+      await heartbeat.stop();
+      heartbeat = undefined;
       return { taskId: task.id, outcome };
     } catch (error) {
       let effectiveError = error;
-      if (stopHeartbeat !== undefined) {
+      if (heartbeat !== undefined) {
         try {
-          await stopHeartbeat();
+          await heartbeat.stop();
         } catch (heartbeatError) {
           effectiveError = heartbeatError;
         }
@@ -250,7 +251,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     }
   }
 
-  private async startHeartbeat(executionId: string): Promise<() => Promise<void>> {
+  private async startHeartbeat(executionId: string): Promise<{ readonly stop: () => Promise<void>; readonly assertHealthy: () => void }> {
     await this.renew(executionId);
     const cadenceMs = Math.max(1, Math.floor(this.leaseDurationMs / 3));
     let stopped = false;
@@ -265,11 +266,17 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       });
     };
     const timer = setInterval(beat, cadenceMs);
-    return async () => {
+    const stop = async (): Promise<void> => {
       stopped = true;
       clearInterval(timer);
       await inFlight;
       if (failure !== undefined) throw failure;
+    };
+    return {
+      stop,
+      assertHealthy: () => {
+        if (failure !== undefined) throw failure;
+      },
     };
   }
 

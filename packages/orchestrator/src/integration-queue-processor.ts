@@ -185,11 +185,9 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
             });
             continue;
           }
-          // The normal processor is reused only after classification. Its
-          // current-HEAD drift probe prevents a merge for ALREADY_INTEGRATED
-          // and verification evidence is recorded against the actual HEAD.
-          await this.store.requeueIntegrationQueueEntry(entry.id);
-          const outcome = await this.processRequeued(entry);
+          const outcome = classification === "NOT_INTEGRATED"
+            ? await this.requeueNotIntegrated(entry)
+            : await this.processRecoveredIntegrated(entry);
           outcomes.push(outcome);
         } catch (error) {
           outcomes.push({
@@ -205,6 +203,17 @@ class DurableIntegrationQueueProcessor implements IntegrationQueueProcessor {
     } finally {
       this.processing = false;
     }
+  }
+
+  private async requeueNotIntegrated(entry: IntegrationQueueEntry): Promise<IntegrationQueueProcessorOutcome> {
+    await this.store.requeueIntegrationQueueEntry(entry.id);
+    return await this.processRequeued(entry);
+  }
+
+  private async processRecoveredIntegrated(entry: IntegrationQueueEntry): Promise<IntegrationQueueProcessorOutcome> {
+    // Entry remains INTEGRATING: processClaimed's drift probe observes the
+    // actual HEAD as already integrated, so integration is never replayed.
+    return await this.processClaimed(entry);
   }
 
   private async classifyAbandoned(
