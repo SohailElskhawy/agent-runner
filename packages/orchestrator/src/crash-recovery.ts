@@ -60,6 +60,7 @@ export type CrashRecoveryOptions = {
 
 export interface CrashRecovery {
   reconcileTask(taskId: TaskId): Promise<RecoveryOutcome>;
+  reconcileTaskOwned?(taskId: TaskId, executionId: string, recoveryOwnerId: string): Promise<RecoveryOutcome>;
   reconcileUnfinished(skipTaskIds?: readonly TaskId[]): Promise<RecoveryOutcome[]>;
 }
 
@@ -88,6 +89,7 @@ class SequentialCrashRecovery implements CrashRecovery {
   private readonly worktreesDir: string;
   private readonly signal: AbortSignal | undefined;
   private readonly clock: () => IsoTimestamp;
+  private recoveryOwner: { readonly executionId: string; readonly ownerId: string } | undefined;
 
   constructor(options: CrashRecoveryOptions) {
     validateOptions(options);
@@ -154,6 +156,16 @@ class SequentialCrashRecovery implements CrashRecovery {
         return await this.reconcileVerifying(task, attempt);
       case "INTEGRATING":
         return await this.reconcileIntegrating(task, attempt);
+    }
+  }
+
+  async reconcileTaskOwned(taskId: TaskId, executionId: string, recoveryOwnerId: string): Promise<RecoveryOutcome> {
+    if (this.recoveryOwner !== undefined) throw new OrchestrationError("recovery ownership is already active");
+    this.recoveryOwner = { executionId, ownerId: recoveryOwnerId };
+    try {
+      return await this.reconcileTask(taskId);
+    } finally {
+      this.recoveryOwner = undefined;
     }
   }
 
@@ -658,7 +670,7 @@ class SequentialCrashRecovery implements CrashRecovery {
     );
     assertReconcileTaskStatus(task.status, "BLOCKED");
     assertReconcileTaskStatus("BLOCKED", "READY");
-    await this.store.transaction(async () => {
+    await this.recoveryTransaction(async () => {
       await this.store.putAttempt(interruptedAttempt);
       await this.store.setTaskStatus(task.id, "BLOCKED", occurredAt);
       await this.store.setTaskStatus(task.id, "READY", occurredAt);
@@ -706,7 +718,7 @@ class SequentialCrashRecovery implements CrashRecovery {
       occurredAt,
     );
     assertReconcileTaskStatus(task.status, "BLOCKED");
-    await this.store.transaction(async () => {
+    await this.recoveryTransaction(async () => {
       await this.store.putAttempt(interruptedAttempt);
       await this.store.setTaskStatus(task.id, "BLOCKED", occurredAt);
       await this.store.appendEvents([
@@ -738,7 +750,7 @@ class SequentialCrashRecovery implements CrashRecovery {
   ): Promise<RecoveryOutcome> {
     const occurredAt = this.clock();
     assertReconcileTaskStatus(task.status, "NEEDS_HUMAN");
-    await this.store.transaction(async () => {
+    await this.recoveryTransaction(async () => {
       if (attempt !== undefined) {
         await this.store.putAttempt(
           interruptedAttemptOf(
@@ -792,7 +804,7 @@ class SequentialCrashRecovery implements CrashRecovery {
     const occurredAt = this.clock();
     const succeededAttempt = succeededAttemptOf(attempt, occurredAt);
     assertReconcileTaskStatus(fromStatus, "DONE");
-    await this.store.transaction(async () => {
+    await this.recoveryTransaction(async () => {
       await this.store.putAttempt(succeededAttempt);
       await this.store.setTaskStatus(task.id, "DONE", occurredAt);
       const recordedIntegration = await this.latestIntegrationEvidence(
@@ -856,7 +868,7 @@ class SequentialCrashRecovery implements CrashRecovery {
       occurredAt,
     );
     assertReconcileTaskStatus(task.status, targetStatus);
-    await this.store.transaction(async () => {
+    await this.recoveryTransaction(async () => {
       await this.store.putAttempt(finishedAttempt);
       await this.store.setTaskStatus(task.id, targetStatus, occurredAt);
       await this.store.appendEvents([
@@ -899,7 +911,7 @@ class SequentialCrashRecovery implements CrashRecovery {
   ): Promise<void> {
     assertReconcileTaskStatus(from, to);
     const occurredAt = this.clock();
-    await this.store.transaction(async () => {
+    await this.recoveryTransaction(async () => {
       await this.store.setTaskStatus(taskId, to, occurredAt);
       await this.store.appendEvents([
         ...evidenceEvents,
@@ -1065,6 +1077,22 @@ class SequentialCrashRecovery implements CrashRecovery {
       throw new OrchestrationError(`task "${taskId}" is missing from the store`);
     }
     return task;
+  }
+
+  private async recoveryTransaction<T>(body: () => Promise<T>): Promise<T> {
+    return await this.store.transaction(async () => {
+      if (this.recoveryOwner !== undefined) {
+        if (this.store.assertRecoveredExecutionOwner === undefined) {
+          throw new OrchestrationError("store does not support recovery ownership checks");
+        }
+        await this.store.assertRecoveredExecutionOwner(
+          this.recoveryOwner.executionId,
+          this.recoveryOwner.ownerId,
+          this.clock(),
+        );
+      }
+      return await body();
+    });
   }
 }
 

@@ -442,6 +442,22 @@ export class SqliteRunnerStore implements RunnerStore {
     }
   }
 
+  async assertRecoveredExecutionOwner(
+    executionId: ExecutionClaimId,
+    recoveryOwnerId: string,
+    now: IsoTimestamp,
+  ): Promise<void> {
+    const db = this.requireDb("assertRecoveredExecutionOwner");
+    const row = getRow(db.prepare(
+      `SELECT id FROM execution_claims
+       WHERE id = ? AND status = 'ACTIVE' AND recovery_owner_id = ?
+         AND recovery_expires_at > ?`,
+    ), [executionId, recoveryOwnerId, now]);
+    if (row === undefined) {
+      throw new PersistenceError("Recovery ownership is no longer current");
+    }
+  }
+
   async releaseTaskExecution(
     executionId: ExecutionClaimId,
     status: Exclude<ExecutionClaimStatus, "ACTIVE">,

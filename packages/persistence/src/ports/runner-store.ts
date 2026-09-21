@@ -117,6 +117,13 @@ export interface RunnerStore {
     recoveryExpiresAt: IsoTimestamp,
   ): Promise<boolean>;
 
+  /** Must be called inside a write transaction before recovery-owned mutation. */
+  assertRecoveredExecutionOwner?(
+    executionId: ExecutionClaimId,
+    recoveryOwnerId: string,
+    now: IsoTimestamp,
+  ): Promise<void>;
+
   /** Completes/releases one execution claim and exactly its owned locks. */
   releaseTaskExecution(
     executionId: ExecutionClaimId,

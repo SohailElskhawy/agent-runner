@@ -64,7 +64,14 @@ export function createExecutionClaimRecovery(options: {
           outcomes.push(settled ? { kind: "terminal-settled", claim } : { kind: "human-recovery-required", claim });
           continue;
         }
-        const recovered = await options.recovery.reconcileTask(task.id);
+        if (options.recovery.reconcileTaskOwned === undefined) {
+          throw new Error("crash recovery does not support recovery ownership checks");
+        }
+        const recovered = await options.recovery.reconcileTaskOwned(
+          task.id,
+          claim.id,
+          recoveryOwnerId,
+        );
         if (recovered.kind === "safe-to-retry") {
           const settled = await settle(options.store, claim.id, recoveryOwnerId, "FAILED", clock(), {
             message: "expired execution lease reconciled; task is ready for a bounded retry",
