@@ -236,6 +236,31 @@ describe("integration queue processor (M047b)", () => {
     expect((await store.listIntegrationQueueEntries())[0]?.status).toBe("FAILED");
   });
 
+  it("recovers an already integrated entry without replaying Git integration", async () => {
+    await enqueue();
+    const claimed = await store.claimNextIntegrationQueueEntry(clock());
+    expect(claimed?.status).toBe("INTEGRATING");
+    let integrations = 0;
+    const drift: IntegrationDriftService = {
+      async reconcile(): Promise<IntegrationReconciliationOutcome> {
+        return { kind: "already-integrated", baseRevision: "base-revision", taskRevision: "task-revision", integrationHead: "integrated-head", detail: "already integrated" };
+      },
+      async evaluate(input): Promise<IntegrationDriftEvaluation> {
+        return { status: "CURRENT", baseRevision: input.baseRevision, taskRevision: input.taskRevision, integrationHead: input.baseRevision, detail: "current" };
+      },
+    };
+    const git = {
+      resolveHeadRevision: async () => "integrated-head",
+      isAncestor: async () => true,
+      integrateBranch: async () => { integrations += 1; throw new Error("must not integrate twice"); },
+      worktreeExists: async () => false,
+    } as unknown as GitManager;
+    const processor = createIntegrationQueueProcessor({ store, git, drift, verification: verificationEngine, verificationChecks: [{ name: "unit", executable: "node" }], projectRoot: "project-root", worktreesDir: join(directory, "worktrees"), now: clock });
+    expect((await processor.recoverAbandoned())[0]?.kind).toBe("processed");
+    expect(integrations).toBe(0);
+    expect((await store.getTask(task.id))?.status).toBe("DONE");
+  });
+
   async function enqueue(): Promise<void> {
     await store.putTask({ ...task, status: "INTEGRATING" });
       await store.enqueueIntegrationQueueEntry(queueRequest());

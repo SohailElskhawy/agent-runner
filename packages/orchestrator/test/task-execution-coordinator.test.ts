@@ -165,6 +165,33 @@ describe("task execution coordinator (M061b)", () => {
     expect(await store.listExecutionClaims({ status: "ACTIVE" })).toEqual([]);
     expect(await store.listResourceLocks()).toEqual([]);
   });
+
+  it("renews a live execution lease until normal settlement and clears its heartbeat", async () => {
+    await store.putTask(task("M012", "P0", "heartbeat-resource", "src/heartbeat/**"));
+    let release: (() => void) | undefined;
+    const running = new Promise<void>((resolve) => { release = resolve; });
+    const first = createTaskExecutionCoordinator({
+      store,
+      agentCandidates: [candidate],
+      maxParallelism: 1,
+      leaseDurationMs: 30,
+      createExecutor: () => ({
+        async run(): Promise<WorkflowTaskRunOutcome> {
+          await running;
+          await store.setTaskStatus("M012", "DONE", new Date().toISOString());
+          return { kind: "completed", taskId: "M012", attemptId: "att", task: (await store.getTask("M012"))!, attempt: {} as never, branch: "branch", worktreePath: "worktree", integration: { kind: "fast-forward", revision: "revision" }, cleanup: undefined };
+        },
+      }),
+    });
+    const run = first.dispatchAvailable();
+    await new Promise((resolve) => setTimeout(resolve, 55));
+    const active = await store.listExecutionClaims({ status: "ACTIVE" });
+    expect(active).toHaveLength(1);
+    expect(Date.parse(active[0]!.leaseExpiresAt)).toBeGreaterThan(Date.now() - 30);
+    release?.();
+    await run;
+    expect(await store.listExecutionClaims({ status: "ACTIVE" })).toEqual([]);
+  });
 });
 
 function coordinator(
