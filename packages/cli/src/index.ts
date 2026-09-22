@@ -24,12 +24,20 @@ export {
 export type {
   InitResult,
   RunResult,
+  UnattendedRunRequest,
   AgentStatusEntry,
   ProjectStatus,
+  SchedulerStatus,
+  ExecutionClaimStatusView,
+  IntegrationQueueStateSummary,
+  ParallelCapacityUsage,
   TaskStatusEntry,
   LatestAttemptSummary,
   TaskInspection,
   TaskInspectionAttempt,
+  TaskInspectionStage,
+  TaskInspectionVerification,
+  TaskInspectionQueueEntry,
   TaskInspectionEvent,
 } from "./application/ports.js";
 export {

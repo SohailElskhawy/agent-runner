@@ -328,6 +328,226 @@ describe("StoreBackedAppService", () => {
     expect(result.message).toContain("1 BLOCKED");
   });
 
+  it("status exposes the scheduler-aware project snapshot derived from persisted state", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "M001", status: "READY" }));
+    await store.putTask(createFixtureTask({ id: "M002", status: "FAILED" }));
+    await store.putTask(createFixtureTask({ id: "M003", status: "DONE" }));
+    await store.putTask(createFixtureTask({ id: "M004", status: "READY" }));
+    const claimed = await store.claimTaskExecution({
+      taskId: "M001",
+      executionId: "exec-1",
+      maxParallelism: 2,
+      resources: [],
+      claimedAt: "2026-01-01T00:00:00.000Z",
+      leaseExpiresAt: "2999-01-01T00:01:00.000Z",
+    });
+    expect(claimed.kind).toBe("claimed");
+    await store.putAttempt(
+      createFixtureAttempt({ id: "att_M003_1", taskId: "M003" }),
+    );
+    await store.enqueueIntegrationQueueEntry({
+      taskId: "M003",
+      attemptId: "att_M003_1",
+      taskRevision: "rev_M003",
+      branch: "task/M003/attempt-1",
+      baseRevision: "base",
+      enqueuedAt: "2026-01-01T00:00:02.000Z",
+    });
+    // Turn M004's completed claim into unresolved recovery-required state.
+    const recoveryClaim = await store.claimTaskExecution({
+      taskId: "M004",
+      executionId: "exec-2",
+      maxParallelism: 2,
+      resources: [],
+      claimedAt: "2026-01-01T00:00:00.000Z",
+      leaseExpiresAt: "2999-01-01T00:01:00.000Z",
+    });
+    expect(recoveryClaim.kind).toBe("claimed");
+    await store.setTaskStatus("M004", "NEEDS_HUMAN", "2026-01-01T00:00:03.000Z");
+    await store.releaseTaskExecution(
+      "exec-2",
+      "RECOVERY_REQUIRED",
+      "2026-01-01T00:00:03.000Z",
+    );
+
+    const status = await serviceWithOutcome(completedOutcome).status();
+    const scheduler = status.scheduler;
+
+    expect(scheduler.totalsByState.READY).toBe(1);
+    expect(scheduler.totalsByState.FAILED).toBe(1);
+    expect(scheduler.totalsByState.DONE).toBe(1);
+    expect(scheduler.totalsByState.NEEDS_HUMAN).toBe(1);
+    expect(scheduler.activeTaskIds).toEqual([]);
+    expect(scheduler.failedTaskIds).toEqual(["M002"]);
+    expect(scheduler.blockedTaskIds).toEqual([]);
+    expect(scheduler.recoveryRequiredTaskIds).toEqual(["M004"]);
+    expect(scheduler.activeClaims.map((claim) => claim.executionId)).toEqual(["exec-1"]);
+    expect(scheduler.activeClaims[0]?.taskId).toBe("M001");
+    expect(scheduler.recoveryRequiredClaims.map((claim) => claim.executionId)).toEqual(["exec-2"]);
+    expect(scheduler.integrationQueue.totalsByStatus.PENDING).toBe(1);
+    expect(scheduler.integrationQueue.pendingTaskIds).toEqual(["M003"]);
+    expect(scheduler.integrationQueue.integrating).toBeNull();
+    expect(scheduler.parallelCapacity).toEqual({
+      maxParallelism: 1,
+      activeExecutions: 1,
+      remainingSlots: 0,
+    });
+  });
+
+  it("reports capacity usage from active claims when no workflow status is active", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "M001", status: "READY" }));
+    const claimed = await store.claimTaskExecution({
+      taskId: "M001",
+      executionId: "exec-1",
+      maxParallelism: 2,
+      resources: [],
+      claimedAt: "2026-01-01T00:00:00.000Z",
+      leaseExpiresAt: "2999-01-01T00:01:00.000Z",
+    });
+    expect(claimed.kind).toBe("claimed");
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store,
+      orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
+      agents: stubAgents,
+      maxParallelism: 2,
+    });
+
+    const scheduler = (await service.status()).scheduler;
+
+    expect(scheduler.parallelCapacity).toEqual({
+      maxParallelism: 2,
+      activeExecutions: 1,
+      remainingSlots: 1,
+    });
+  });
+
+  it("inspect exposes stage runs, verification results, claims, and integration queue history", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "M001", status: "READY" }));
+    const claimed = await store.claimTaskExecution({
+      taskId: "M001",
+      executionId: "exec-1",
+      maxParallelism: 1,
+      resources: [],
+      claimedAt: "2026-01-01T00:00:00.000Z",
+      leaseExpiresAt: "2999-01-01T00:01:00.000Z",
+    });
+    expect(claimed.kind).toBe("claimed");
+    await store.setTaskStatus("M001", "INTEGRATING", "2026-01-01T00:00:00.000Z");
+    await store.putAttempt(
+      createFixtureAttempt({ id: "att_M001_1", taskId: "M001" }),
+    );
+    await store.putStageRun({
+      id: "stage_att_M001_1_VERIFY",
+      attemptId: "att_M001_1",
+      stage: "VERIFY",
+      status: "SUCCEEDED",
+      startedAt: "2026-01-01T00:00:01.000Z",
+      finishedAt: "2026-01-01T00:00:02.000Z",
+    });
+    await store.putStageRun({
+      id: "stage_att_M001_1_INTEGRATE",
+      attemptId: "att_M001_1",
+      stage: "INTEGRATE",
+      status: "PENDING",
+      startedAt: "2026-01-01T00:00:03.000Z",
+    });
+    await store.appendEvents([
+      {
+        type: "verification.completed",
+        taskId: "M001",
+        payload: {
+          attemptId: "att_M001_1",
+          status: "PASSED",
+          checks: [
+            {
+              id: "ver_1",
+              attemptId: "att_M001_1",
+              kind: "unit",
+              command: ["node"],
+              outcome: "PASSED",
+            },
+          ],
+        },
+        occurredAt: "2026-01-01T00:00:02.000Z",
+      },
+    ]);
+    await store.enqueueIntegrationQueueEntry({
+      taskId: "M001",
+      attemptId: "att_M001_1",
+      taskRevision: "rev_M001",
+      branch: "task/M001/attempt-1",
+      baseRevision: "base",
+      enqueuedAt: "2026-01-01T00:00:03.000Z",
+    });
+
+    const inspection = (await serviceWithOutcome(completedOutcome).inspect("M001"))!;
+
+    expect(inspection.attempts[0]?.stages.map((stage) => stage.stage)).toEqual([
+      "INTEGRATE",
+      "VERIFY",
+    ]);
+    expect(inspection.attempts[0]?.verification?.status).toBe("PASSED");
+    expect(inspection.attempts[0]?.verification?.checks).toEqual([
+      { kind: "unit", outcome: "PASSED", message: null },
+    ]);
+    expect(inspection.claims.map((claim) => claim.executionId)).toEqual(["exec-1"]);
+    expect(inspection.claims[0]?.status).toBe("ACTIVE");
+    expect(inspection.integrationQueue).toHaveLength(1);
+    expect(inspection.integrationQueue[0]?.status).toBe("PENDING");
+    expect(inspection.integrationQueue[0]?.taskRevision).toBe("rev_M001");
+    // Startup reconciliation records the live claim's liveness durably.
+    expect(inspection.recoveryEvents.map((event) => event.type)).toEqual([
+      "recovery.startup.execution-claim",
+    ]);
+    expect(inspection.recoveryEvents[0]?.payload).toEqual({ kind: "live" });
+  });
+
+  it("inspect surfaces recovery events and failure reasons when present", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "M001", status: "FAILED" }));
+    await store.putAttempt(
+      createFixtureAttempt({
+        id: "att_M001_1",
+        taskId: "M001",
+        status: "FAILED",
+      }),
+    );
+    await store.appendEvents([
+      {
+        type: "recovery.startup.execution-claim",
+        taskId: "M001",
+        payload: { kind: "safe-to-retry" },
+        occurredAt: "2026-01-01T00:00:01.000Z",
+      },
+      {
+        type: "task.transitioned",
+        taskId: "M001",
+        payload: {
+          from: "VERIFYING",
+          to: "FAILED",
+          failure: { kind: "verification_failed", message: "unit checks failed" },
+        },
+        occurredAt: "2026-01-01T00:00:02.000Z",
+      },
+    ]);
+
+    const inspection = (await serviceWithOutcome(completedOutcome).inspect("M001"))!;
+
+    expect(inspection.recoveryEvents).toHaveLength(1);
+    expect(inspection.recoveryEvents[0]?.type).toBe("recovery.startup.execution-claim");
+    expect(inspection.failureReason).toBe("unit checks failed");
+  });
+
   it("maps rejected orchestration outcomes to rejected run results", async () => {
     const service = serviceWithOutcome({
       kind: "rejected",

@@ -27,6 +27,7 @@ export async function createServices(
     worktreeRecovery: appServices.worktreeRecovery,
     agents: appServices.agents,
     scheduler: appServices.scheduler,
+    maxParallelism: appServices.maxParallelism,
   });
   return Promise.resolve(service);
 }

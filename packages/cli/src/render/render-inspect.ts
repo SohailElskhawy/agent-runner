@@ -1,5 +1,9 @@
 import type { CliIo } from "../io.js";
-import type { TaskInspection } from "../application/ports.js";
+import type {
+  TaskInspection,
+  TaskInspectionStage,
+  TaskInspectionVerification,
+} from "../application/ports.js";
 
 export function renderTaskInspection(
   io: CliIo,
@@ -13,6 +17,9 @@ export function renderTaskInspection(
   io.writeLine(`  status: ${task.status}`);
   io.writeLine(`  workflow: ${task.workflow}`);
   io.writeLine(`  updated: ${task.updatedAt}`);
+  if (inspection.failureReason !== null) {
+    io.writeLine(`  failure reason: ${inspection.failureReason}`);
+  }
 
   io.writeLine("attempts:");
   if (inspection.attempts.length === 0) {
@@ -31,6 +38,9 @@ export function renderTaskInspection(
         `    failure: ${attempt.failure.kind}${attempt.failure.message === null ? "" : `: ${attempt.failure.message}`}`,
       );
     }
+    renderStages(io, attempt.stages);
+    renderVerification(io, "verification", attempt.verification);
+    renderVerification(io, "integration verification", attempt.integrationVerification);
     if (attempt.commit !== null) {
       io.writeLine(`    commit: ${attempt.commit.revision} (${attempt.commit.message})`);
     }
@@ -41,6 +51,19 @@ export function renderTaskInspection(
     }
   }
 
+  renderClaims(io, inspection);
+  renderIntegrationQueue(io, inspection);
+
+  io.writeLine("recovery events:");
+  if (inspection.recoveryEvents.length === 0) {
+    io.writeLine("  (none)");
+  }
+  for (const event of inspection.recoveryEvents) {
+    io.writeLine(
+      `  #${event.sequence} ${event.type} @ ${event.occurredAt}`,
+    );
+  }
+
   io.writeLine("events:");
   if (inspection.events.length === 0) {
     io.writeLine("  (none)");
@@ -49,5 +72,74 @@ export function renderTaskInspection(
     io.writeLine(
       `  #${event.sequence} ${event.type} @ ${event.occurredAt}`,
     );
+  }
+}
+
+function renderStages(
+  io: CliIo,
+  stages: readonly TaskInspectionStage[],
+): void {
+  if (stages.length === 0) {
+    return;
+  }
+  io.writeLine("    stages:");
+  for (const stage of stages) {
+    const timing =
+      stage.startedAt === null
+        ? ""
+        : ` (${stage.startedAt} -> ${stage.finishedAt ?? "open"})`;
+    io.writeLine(`      ${stage.stage} [${stage.status}]${timing}`);
+    if (stage.failure !== null) {
+      io.writeLine(
+        `        failure: ${stage.failure.kind}${stage.failure.message === null ? "" : `: ${stage.failure.message}`}`,
+      );
+    }
+  }
+}
+
+function renderVerification(
+  io: CliIo,
+  label: string,
+  verification: TaskInspectionVerification | null,
+): void {
+  if (verification === null) {
+    return;
+  }
+  io.writeLine(`    ${label}: ${verification.status}`);
+  for (const check of verification.checks) {
+    io.writeLine(
+      `      ${check.kind} [${check.outcome}]${check.message === null ? "" : `: ${check.message}`}`,
+    );
+  }
+}
+
+function renderClaims(io: CliIo, inspection: TaskInspection): void {
+  io.writeLine("execution claims:");
+  if (inspection.claims.length === 0) {
+    io.writeLine("  (none)");
+  }
+  for (const claim of inspection.claims) {
+    io.writeLine(
+      `  ${claim.executionId} [${claim.status}] claimed ${claim.claimedAt}, lease until ${claim.leaseExpiresAt}`,
+    );
+  }
+}
+
+function renderIntegrationQueue(io: CliIo, inspection: TaskInspection): void {
+  io.writeLine("integration queue:");
+  if (inspection.integrationQueue.length === 0) {
+    io.writeLine("  (none)");
+  }
+  for (const entry of inspection.integrationQueue) {
+    io.writeLine(
+      `  #${entry.sequence} ${entry.id} [${entry.status}] ${entry.taskRevision} via ${entry.branch}`,
+    );
+    io.writeLine(`    enqueued: ${entry.enqueuedAt}`);
+    if (entry.finishedAt !== null) {
+      io.writeLine(`    finished: ${entry.finishedAt}`);
+    }
+    if (entry.failureMessage !== null) {
+      io.writeLine(`    failure: ${entry.failureMessage}`);
+    }
   }
 }

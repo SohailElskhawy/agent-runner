@@ -54,6 +54,8 @@ export type AppServices = {
   readonly scheduler: UnattendedScheduler | null;
   readonly integrationRecovery: ReturnType<typeof createIntegrationQueueProcessor>;
   readonly worktreeRecovery: ReturnType<typeof createWorktreeRecovery>;
+  /** The configured default unattended scheduling capacity. */
+  readonly maxParallelism: number;
 };
 
 export type AppServicesOverrides = {
@@ -183,7 +185,18 @@ export async function createAppServices(
           integration: integrationRecovery,
         })
       : null);
-  return { store, orchestrator, recovery, executionClaimRecovery, integrationRecovery, worktreeRecovery, agents, adapters, scheduler };
+  return {
+    store,
+    orchestrator,
+    recovery,
+    executionClaimRecovery,
+    integrationRecovery,
+    worktreeRecovery,
+    agents,
+    adapters,
+    scheduler,
+    maxParallelism: resolveMaxParallelism(options),
+  };
 }
 
 async function discoverAgentCandidates(

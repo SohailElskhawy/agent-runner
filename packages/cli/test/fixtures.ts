@@ -1,11 +1,12 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Attempt, Project, Task } from "@agentic-dev-runner/core";
+import type { Attempt, Project, Task, TaskStatus } from "@agentic-dev-runner/core";
 import type { AgentDescriptor, AgentExecutionResult, AgentInvocation, AgentRuntime } from "@agentic-dev-runner/agents";
 import type { VerificationEngine, VerificationRunInput, VerificationRunResult } from "@agentic-dev-runner/verification";
 import { createNodeProcessRunner, type ProcessRunner } from "@agentic-dev-runner/platform";
 import type { CliIo } from "../src/io.js";
+import type { SchedulerStatus } from "../src/application/ports.js";
 
 export function captureIo(): { io: CliIo; lines: string[]; errors: string[] } {
   const lines: string[] = [];
@@ -31,6 +32,61 @@ export function createFixtureProject(overrides?: { id?: string }): Project {
     rootPath: "fixtures/project",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+/**
+ * A scheduler-aware project status fixture with sensible idle output. Fields
+ * can be overridden to exercise specific scheduler states.
+ */
+export function createSchedulerStatus(overrides?: {
+  readonly totals?: Partial<Record<TaskStatus, number>>;
+  readonly activeTaskIds?: readonly string[];
+  readonly failedTaskIds?: readonly string[];
+  readonly blockedTaskIds?: readonly string[];
+  readonly recoveryRequiredTaskIds?: readonly string[];
+  readonly activeExecutions?: number;
+  readonly maxParallelism?: number;
+}): SchedulerStatus {
+  const totals: Record<TaskStatus, number> = {
+    BACKLOG: 0,
+    READY: 0,
+    PLANNING: 0,
+    PLAN_REVIEW: 0,
+    IMPLEMENTING: 0,
+    CODE_REVIEW: 0,
+    VERIFYING: 0,
+    INTEGRATING: 0,
+    DONE: 0,
+    BLOCKED: 0,
+    NEEDS_HUMAN: 0,
+    FAILED: 0,
+    CANCELLED: 0,
+    ...(overrides?.totals ?? {}),
+  };
+  return {
+    totalsByState: totals,
+    activeTaskIds: overrides?.activeTaskIds ?? [],
+    blockedTaskIds: overrides?.blockedTaskIds ?? [],
+    failedTaskIds: overrides?.failedTaskIds ?? [],
+    recoveryRequiredTaskIds: overrides?.recoveryRequiredTaskIds ?? [],
+    activeClaims: [],
+    recoveryRequiredClaims: [],
+    integrationQueue: {
+      totalsByStatus: {
+        PENDING: 0,
+        INTEGRATING: 0,
+        COMPLETED: 0,
+        FAILED: 0,
+      },
+      pendingTaskIds: [],
+      integrating: null,
+    },
+    parallelCapacity: {
+      maxParallelism: overrides?.maxParallelism ?? 1,
+      activeExecutions: overrides?.activeExecutions ?? 0,
+      remainingSlots: (overrides?.maxParallelism ?? 1) - (overrides?.activeExecutions ?? 0),
+    },
   };
 }
 

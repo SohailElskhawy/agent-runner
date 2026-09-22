@@ -10,7 +10,7 @@ import type {
   RunResult,
   TaskInspection,
 } from "../src/application/ports.js";
-import { captureIo, createFixtureProject, createFixtureTask } from "./fixtures.js";
+import { captureIo, createFixtureProject, createFixtureTask, createSchedulerStatus } from "./fixtures.js";
 
 type RunSpy = { calls: readonly TaskId[] };
 type UnattendedRunSpy = { calls: readonly { maxParallelism?: number | undefined }[] };
@@ -95,6 +95,7 @@ function recordingService(result: {
         result.status ?? {
           project: createFixtureProject(),
           tasks: [],
+          scheduler: createSchedulerStatus(),
         }
       );
     },
@@ -345,6 +346,11 @@ describe("runCli command dispatch", () => {
           },
         },
       ],
+      scheduler: createSchedulerStatus({
+        failedTaskIds: ["M001"],
+        totals: { FAILED: 1 },
+        activeExecutions: 0,
+      }),
     };
     const recording = recordingService({ status });
     const { io, lines } = captureIo();
@@ -359,6 +365,11 @@ describe("runCli command dispatch", () => {
     expect(output).toContain("proj-local");
     expect(output).toContain("[FAILED]");
     expect(output).toContain("verification failed");
+    expect(output).toContain("task totals: 1 FAILED");
+    expect(output).toContain("active tasks: (none)");
+    expect(output).toContain("recovery required: (none)");
+    expect(output).toContain("integration queue: 0 pending");
+    expect(output).toContain("parallel capacity: 1 configured, 0 active, 1 available");
 
     const inspection: TaskInspection = {
       task: createFixtureTask({ status: "FAILED" }),
@@ -375,6 +386,21 @@ describe("runCli command dispatch", () => {
           failure: { kind: "verification_failed", message: "typecheck failed" },
           commit: null,
           integration: null,
+          stages: [
+            {
+              stage: "VERIFY",
+              status: "FAILED",
+              startedAt: "2026-01-01T00:00:01.000Z",
+              finishedAt: "2026-01-01T00:00:04.000Z",
+              failure: { kind: "error", message: "typecheck failed" },
+            },
+          ],
+          verification: {
+            status: "FAILED",
+            revision: null,
+            checks: [{ kind: "typecheck", outcome: "FAILED", message: "typecheck failed" }],
+          },
+          integrationVerification: null,
         },
       ],
       events: [
@@ -385,6 +411,10 @@ describe("runCli command dispatch", () => {
           payload: { from: "READY", to: "IMPLEMENTING" },
         },
       ],
+      claims: [],
+      integrationQueue: [],
+      recoveryEvents: [],
+      failureReason: "typecheck failed",
     };
     const inspectRecording = recordingService({ inspection });
     const inspectCapture = captureIo();
@@ -400,6 +430,11 @@ describe("runCli command dispatch", () => {
     expect(inspectOutput).toContain("verification_failed");
     expect(inspectOutput).toContain("typecheck failed");
     expect(inspectOutput).toContain("task.transitioned");
+    expect(inspectOutput).toContain("failure reason: typecheck failed");
+    expect(inspectOutput).toContain("VERIFY [FAILED]");
+    expect(inspectOutput).toContain("execution claims:");
+    expect(inspectOutput).toContain("integration queue:");
+    expect(inspectOutput).toContain("recovery events:");
   });
 
   it("delegates init exactly once and exits zero", async () => {

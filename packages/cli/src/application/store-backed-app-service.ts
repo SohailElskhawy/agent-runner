@@ -1,5 +1,17 @@
 import { basename } from "node:path";
-import { buildTaskFromManualInput, validateManualTaskInput, type Project, type Task, type TaskId } from "@agentic-dev-runner/core";
+import {
+  buildTaskFromManualInput,
+  countParallelismActiveExecutions,
+  evaluateParallelismCapacity,
+  isParallelismActiveStatus,
+  TASK_STATUSES,
+  validateManualTaskInput,
+  type IntegrationQueueStatus,
+  type Project,
+  type Task,
+  type TaskId,
+  type ExecutionClaim,
+} from "@agentic-dev-runner/core";
 import { createExecutionClaimRecovery } from "@agentic-dev-runner/orchestrator";
 import type {
   CrashRecovery,
@@ -21,16 +33,19 @@ import type { RunnerAppService } from "./runner-app-service.js";
 import type {
   AddTaskResult,
   AgentStatusEntry,
+  ExecutionClaimStatusView,
   InitResult,
+  ParallelCapacityUsage,
   ProjectStatus,
   RunResult,
+  SchedulerStatus,
   TaskInspection,
   UnattendedRunRequest,
 } from "./ports.js";
 import { buildTaskInspection, toLatestAttemptSummary } from "./inspect-view.js";
 import type { TaskStatusEntry } from "./ports.js";
 import { readTaskFile } from "./task-file.js";
-import { DEFAULT_PROJECT_ID } from "./defaults.js";
+import { DEFAULT_MAX_PARALLELISM, DEFAULT_PROJECT_ID } from "./defaults.js";
 
 export type StoreBackedAppServiceOptions = {
   readonly storePath: string;
@@ -43,6 +58,8 @@ export type StoreBackedAppServiceOptions = {
   readonly worktreeRecovery?: WorktreeRecovery | undefined;
   readonly agents: AgentRegistry;
   readonly scheduler?: UnattendedScheduler | null | undefined;
+  /** The configured unattended scheduling capacity, for capacity reporting. */
+  readonly maxParallelism?: number | undefined;
 };
 
 export function createStoreBackedAppService(
@@ -62,6 +79,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly worktreeRecovery: WorktreeRecovery | undefined;
   private readonly agents: AgentRegistry;
   private readonly scheduler: UnattendedScheduler | null;
+  private readonly maxParallelism: number;
   private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
@@ -78,6 +96,7 @@ class StoreBackedAppService implements RunnerAppService {
     this.worktreeRecovery = options.worktreeRecovery;
     this.agents = options.agents;
     this.scheduler = options.scheduler ?? null;
+    this.maxParallelism = options.maxParallelism ?? DEFAULT_MAX_PARALLELISM;
   }
 
   async init(): Promise<InitResult> {
@@ -194,7 +213,8 @@ class StoreBackedAppService implements RunnerAppService {
         latestAttempt: toLatestAttemptSummary(attempts.at(-1)),
       });
     }
-    return { project, tasks: entries };
+    const scheduler = await this.buildSchedulerStatus(tasks);
+    return { project, tasks: entries, scheduler };
   }
 
   async inspect(taskId: TaskId): Promise<TaskInspection | null> {
@@ -205,7 +225,21 @@ class StoreBackedAppService implements RunnerAppService {
     }
     const attempts = await this.store.listAttempts({ taskId });
     const events = await this.store.listEvents({ taskId });
-    return buildTaskInspection({ task, attempts, events });
+    const stageRunBatches = await Promise.all(
+      attempts.map((attempt) => this.store.listStageRuns(attempt.id)),
+    );
+    const claims = await this.store.listExecutionClaims({ taskId });
+    const integrationQueue = await this.store.listIntegrationQueueEntries({
+      taskId,
+    });
+    return buildTaskInspection({
+      task,
+      attempts,
+      stageRuns: stageRunBatches.flat(),
+      events,
+      claims,
+      integrationQueue,
+    });
   }
 
   async listAgents(): Promise<readonly AgentStatusEntry[]> {
@@ -223,8 +257,83 @@ class StoreBackedAppService implements RunnerAppService {
     this.startupReconciliation = undefined;
   }
 
-  private startupReconcile(): Promise<void> {
-    this.startupReconciliation ??= (async () => {
+  /**
+   * Derives the scheduler-aware project snapshot from persisted authoritative
+   * state: task states, execution claims, integration queue entries, and the
+   * configured parallelism capacity. No CLI-only runtime state is involved.
+   */
+  private async buildSchedulerStatus(
+    tasks: readonly Task[],
+  ): Promise<SchedulerStatus> {
+    const totalsByState = Object.fromEntries(
+      TASK_STATUSES.map((status) => [status, 0]),
+    ) as Record<Task["status"], number>;
+    for (const task of tasks) {
+      totalsByState[task.status] += 1;
+    }
+    const activeClaims = await this.store.listExecutionClaims({
+      status: "ACTIVE",
+    });
+    const recoveryRequiredClaims = await this.store.listExecutionClaims({
+      status: "RECOVERY_REQUIRED",
+    });
+    const queueEntries = await this.store.listIntegrationQueueEntries();
+    const queueTotals = Object.fromEntries(
+      ["PENDING", "INTEGRATING", "COMPLETED", "FAILED"].map((status) => [
+        status,
+        0,
+      ]),
+    ) as Record<IntegrationQueueStatus, number>;
+    for (const entry of queueEntries) {
+      queueTotals[entry.status] += 1;
+    }
+    const activeExecutions = Math.max(
+      activeClaims.length,
+      countParallelismActiveExecutions(tasks.map((task) => task.status)),
+    );
+    const capacityDecision = evaluateParallelismCapacity({
+      maxParallelism: this.maxParallelism,
+      activeExecutions,
+    });
+    const capacity: ParallelCapacityUsage = {
+      maxParallelism: capacityDecision.maxParallelism,
+      activeExecutions: capacityDecision.activeExecutions,
+      remainingSlots: capacityDecision.remainingSlots,
+    };
+    const integrating = queueEntries.find(
+      (entry) => entry.status === "INTEGRATING",
+    );
+    return {
+      totalsByState,
+      activeTaskIds: tasks
+        .filter((task) => isParallelismActiveStatus(task.status))
+        .map((task) => task.id),
+      blockedTaskIds: tasks
+        .filter((task) => task.status === "BLOCKED")
+        .map((task) => task.id),
+      failedTaskIds: tasks
+        .filter((task) => task.status === "FAILED")
+        .map((task) => task.id),
+      recoveryRequiredTaskIds: tasks
+        .filter((task) => task.status === "NEEDS_HUMAN")
+        .map((task) => task.id),
+      activeClaims: activeClaims.map(toClaimView),
+      recoveryRequiredClaims: recoveryRequiredClaims.map(toClaimView),
+      integrationQueue: {
+        totalsByStatus: queueTotals,
+        pendingTaskIds: queueEntries
+          .filter((entry) => entry.status === "PENDING")
+          .map((entry) => entry.taskId),
+        integrating:
+          integrating === undefined
+            ? null
+            : { taskId: integrating.taskId, attemptId: integrating.attemptId },
+      },
+      parallelCapacity: capacity,
+    };
+  }
+
+  private startupReconcile(): Promise<void> {    this.startupReconciliation ??= (async () => {
       await this.store.initialize();
       const integration = await this.integrationRecovery?.recoverAbandoned() ?? [];
       const claims = await this.executionClaimRecovery.reconcileExpired();
@@ -263,6 +372,17 @@ class StoreBackedAppService implements RunnerAppService {
       })),
     ]);
   }
+}
+
+function toClaimView(claim: ExecutionClaim): ExecutionClaimStatusView {
+  return {
+    executionId: claim.id,
+    taskId: claim.taskId,
+    status: claim.status,
+    claimedAt: claim.claimedAt,
+    renewedAt: claim.renewedAt,
+    leaseExpiresAt: claim.leaseExpiresAt,
+  };
 }
 
 /**
