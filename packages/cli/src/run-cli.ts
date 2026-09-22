@@ -59,9 +59,11 @@ export async function runCli(
               case "init":
                 return await executeInitCommand(services, io);
               case "run":
-                return await executeRunCommand(command.taskId, services, io);
+                return command.taskId === undefined
+                  ? await executeUnattendedRunCommand(command.parallel, services, io)
+                  : await executeRunCommand(command.taskId, services, io);
               case "run-all":
-                return await executeUnattendedRunCommand(services, io);
+                return await executeUnattendedRunCommand(command.parallel, services, io);
               case "status":
                 return await executeStatusCommand(services, io);
               case "inspect":

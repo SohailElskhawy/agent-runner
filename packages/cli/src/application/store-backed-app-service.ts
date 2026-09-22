@@ -1,10 +1,5 @@
 import { basename } from "node:path";
-import {
-  buildTaskFromManualInput,
-  validateManualTaskInput,
-  type Project,
-  type TaskId,
-} from "@agentic-dev-runner/core";
+import { buildTaskFromManualInput, validateManualTaskInput, type Project, type Task, type TaskId } from "@agentic-dev-runner/core";
 import { createExecutionClaimRecovery } from "@agentic-dev-runner/orchestrator";
 import type {
   CrashRecovery,
@@ -30,6 +25,7 @@ import type {
   ProjectStatus,
   RunResult,
   TaskInspection,
+  UnattendedRunRequest,
 } from "./ports.js";
 import { buildTaskInspection, toLatestAttemptSummary } from "./inspect-view.js";
 import type { TaskStatusEntry } from "./ports.js";
@@ -152,7 +148,7 @@ class StoreBackedAppService implements RunnerAppService {
     return outcomeToRunResult(outcome);
   }
 
-  async runUnattended(): Promise<RunResult> {
+  async runUnattended(options: UnattendedRunRequest = {}): Promise<RunResult> {
     await this.startupReconcile();
     if (this.scheduler === null) {
       return {
@@ -160,15 +156,25 @@ class StoreBackedAppService implements RunnerAppService {
         message: "unattended scheduling is unavailable for this application composition",
       };
     }
-    const outcome = await this.scheduler.run();
+    const outcome = await this.scheduler.run({
+      ...(options.maxParallelism === undefined
+        ? {}
+        : { maxParallelism: options.maxParallelism }),
+    });
+    const tasks = await this.store.listTasks();
+    const summary = summarizeTaskStates(tasks);
     return outcome.kind === "quiescent"
       ? {
           kind: "completed",
-          message: `unattended run reached quiescence after ${String(outcome.cycles.length)} cycle(s)`,
+          message:
+            `unattended run reached quiescence after ${String(outcome.cycles.length)} cycle(s); ` +
+            summary,
         }
       : {
-          kind: "rejected",
-          message: `unattended run is blocked after ${String(outcome.cycles.length)} cycle(s)`,
+          kind: "failed",
+          message:
+            `unattended run is blocked after ${String(outcome.cycles.length)} cycle(s); ` +
+            summary,
         };
   }
 
@@ -257,4 +263,23 @@ class StoreBackedAppService implements RunnerAppService {
       })),
     ]);
   }
+}
+
+/**
+ * Deterministic summary of the final persisted task states for a completed
+ * run. A run containing failed or blocked tasks alongside successful
+ * independent progress is reported accurately instead of crashing.
+ */
+export function summarizeTaskStates(tasks: readonly Task[]): string {
+  const counts = new Map<Task["status"], number>();
+  for (const task of tasks) {
+    counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+  }
+  const ordered = [...counts.entries()].sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  const breakdown = ordered
+    .map(([status, count]) => `${count} ${status}`)
+    .join(", ");
+  return `final persisted task state: ${breakdown.length === 0 ? "no tasks" : breakdown}`;
 }

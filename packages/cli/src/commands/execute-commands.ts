@@ -41,10 +41,13 @@ export async function executeRunCommand(
 }
 
 export async function executeUnattendedRunCommand(
+  parallel: number | undefined,
   services: RunnerAppService,
   io: CliIo,
 ): Promise<number> {
-  const result = await services.runUnattended();
+  const result = await services.runUnattended(
+    parallel === undefined ? {} : { maxParallelism: parallel },
+  );
   renderRunResult(io, result);
   return result.kind === "completed" ? EXIT_SUCCESS : EXIT_FAILURE;
 }

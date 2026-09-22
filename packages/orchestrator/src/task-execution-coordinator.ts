@@ -63,8 +63,15 @@ export type TaskDispatchResult = {
   readonly activeClaims: readonly ExecutionClaim[];
 };
 
+/** Per-dispatch scheduling capacity; defaults to the configured capacity. */
+export type DispatchOptions = {
+  readonly maxParallelism?: number | undefined;
+};
+
 export interface TaskExecutionCoordinator {
-  dispatchAvailable(): Promise<TaskDispatchResult>;
+  /** The default configured parallelism capacity of this coordinator. */
+  readonly maxParallelism: number;
+  dispatchAvailable(options?: DispatchOptions): Promise<TaskDispatchResult>;
 }
 
 export function createTaskExecutionCoordinator(
@@ -76,7 +83,7 @@ export function createTaskExecutionCoordinator(
 class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
   private readonly store: RunnerStore;
   private readonly candidates: TaskExecutionCoordinatorOptions["agentCandidates"];
-  private readonly maxParallelism: number;
+  readonly maxParallelism: number;
   private readonly projectId: string | undefined;
   private readonly createExecutor: TaskExecutionCoordinatorOptions["createExecutor"];
   private readonly clock: () => IsoTimestamp;
@@ -99,7 +106,16 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     }
   }
 
-  async dispatchAvailable(): Promise<TaskDispatchResult> {
+  async dispatchAvailable(
+    options: DispatchOptions = {},
+  ): Promise<TaskDispatchResult> {
+    const maxParallelism = options.maxParallelism ?? this.maxParallelism;
+    if (
+      !Number.isInteger(maxParallelism) ||
+      maxParallelism <= 0
+    ) {
+      throw new Error("maxParallelism must be a positive integer");
+    }
     const tasks = await this.store.listTasks(
       this.projectId === undefined ? undefined : { projectId: this.projectId },
     );
@@ -139,7 +155,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
         continue;
       }
       const capacity = evaluateParallelismCapacity({
-        maxParallelism: this.maxParallelism,
+        maxParallelism,
         activeExecutions,
       });
       if (capacity.status === "exhausted") {
@@ -167,7 +183,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       const claim = await this.store.claimTaskExecution({
         taskId: task.id,
         executionId,
-        maxParallelism: this.maxParallelism,
+        maxParallelism,
         resources: task.definition.resources,
         claimedAt: this.clock(),
         leaseExpiresAt: addLease(this.clock(), this.leaseDurationMs),

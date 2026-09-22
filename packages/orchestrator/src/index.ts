@@ -125,6 +125,7 @@ export type {
 } from "./workflow-outcome.js";
 export {
   createTaskExecutionCoordinator,
+  type DispatchOptions,
   type TaskAdmission,
   type TaskExecutionCoordinator,
   type TaskExecutionCoordinatorOptions,
@@ -139,6 +140,7 @@ export {
 } from "./integration-queue-processor.js";
 export {
   createUnattendedScheduler,
+  type UnattendedRunOptions,
   type UnattendedScheduler,
   type UnattendedSchedulerCycle,
   type UnattendedSchedulerOptions,

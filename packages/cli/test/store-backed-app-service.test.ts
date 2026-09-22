@@ -68,6 +68,23 @@ class StubRecovery implements CrashRecovery {
   }
 }
 
+class StubUnattendedScheduler {
+  readonly runCalls: { maxParallelism?: number | undefined }[] = [];
+
+  constructor(private readonly kind: "quiescent" | "blocked") {}
+
+  async run(options: { maxParallelism?: number } = {}) {
+    this.runCalls.push(options);
+    const failedTaskIds = this.kind === "quiescent" ? [] : ["M002"];
+    return {
+      kind: this.kind,
+      cycles: [{ dispatch: null, integrations: [] }],
+      completedTaskIds: ["M001"],
+      failedTaskIds,
+    };
+  }
+}
+
 class RecordingAgentRegistry implements AgentRegistry {
   readonly discoverCalls: { count: number } = { count: 0 };
   constructor(private readonly agents: readonly AgentAvailability[] = []) {}
@@ -259,6 +276,56 @@ describe("StoreBackedAppService", () => {
     });
 
     expect(await service.inspect("M999")).toBeNull();
+  });
+
+  it("delegates unattended runs to the application scheduler with the requested capacity", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "M001", status: "DONE" }));
+    await store.putTask(createFixtureTask({ id: "M002", status: "READY" }));
+    const scheduler = new StubUnattendedScheduler("quiescent");
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store,
+      orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
+      agents: stubAgents,
+      scheduler: scheduler as unknown as never,
+    });
+
+    const result = await service.runUnattended({ maxParallelism: 3 });
+
+    expect(scheduler.runCalls).toEqual([{ maxParallelism: 3 }]);
+    expect(result.kind).toBe("completed");
+    expect(result.message).toContain("quiescence");
+    expect(result.message).toContain("1 DONE");
+    expect(result.message).toContain("1 READY");
+  });
+
+  it("reports a blocked unattended run as failed with the final persisted state", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "M001", status: "DONE" }));
+    await store.putTask(createFixtureTask({ id: "M002", status: "BLOCKED" }));
+    const scheduler = new StubUnattendedScheduler("blocked");
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store,
+      orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
+      agents: stubAgents,
+      scheduler: scheduler as unknown as never,
+    });
+
+    const result = await service.runUnattended();
+
+    expect(scheduler.runCalls).toEqual([{}]);
+    expect(result.kind).toBe("failed");
+    expect(result.message).toContain("blocked");
+    expect(result.message).toContain("1 DONE");
+    expect(result.message).toContain("1 BLOCKED");
   });
 
   it("maps rejected orchestration outcomes to rejected run results", async () => {

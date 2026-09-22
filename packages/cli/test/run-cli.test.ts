@@ -13,12 +13,14 @@ import type {
 import { captureIo, createFixtureProject, createFixtureTask } from "./fixtures.js";
 
 type RunSpy = { calls: readonly TaskId[] };
+type UnattendedRunSpy = { calls: readonly { maxParallelism?: number | undefined }[] };
 
 function recordingService(result: {
   init?: InitResult;
   add?: AddTaskResult;
   addFailure?: Error;
   run?: RunResult;
+  unattended?: RunResult;
   status?: ProjectStatus;
   inspection?: TaskInspection | null;
   agents?: readonly AgentStatusEntry[];
@@ -26,11 +28,13 @@ function recordingService(result: {
 }): {
   service: RunnerAppService;
   runCalls: RunSpy;
+  unattendedCalls: UnattendedRunSpy;
   initCalls: { count: number };
   addCalls: { calls: string[] };
   listAgentsCalls: { count: number };
 } {
   const runCalls: string[] = [];
+  const unattendedCalls: { maxParallelism?: number | undefined }[] = [];
   const addCalls: string[] = [];
   let initCount = 0;
   let listAgentsCount = 0;
@@ -74,8 +78,17 @@ function recordingService(result: {
         }
       );
     },
-    async runUnattended() {
-      return { kind: "completed", message: "unattended completed" };
+    async runUnattended(options) {
+      unattendedCalls.push(options ?? {});
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return (
+        result.unattended ?? {
+          kind: "completed",
+          message: "unattended completed",
+        }
+      );
     },
     async status() {
       return (
@@ -106,6 +119,7 @@ function recordingService(result: {
   return {
     service,
     runCalls: { calls: runCalls },
+    unattendedCalls: { calls: unattendedCalls },
     addCalls: { calls: addCalls },
     initCalls: {
       get count() {
@@ -137,9 +151,9 @@ describe("runCli command dispatch", () => {
     expect(lines.join("\n")).toContain('task "M001" completed');
   });
 
-  it("delegates unattended execution to the application service", async () => {
+  it("delegates unattended execution to the application service on run-all", async () => {
     const recording = recordingService({
-      run: { kind: "completed", message: "unattended completed" },
+      unattended: { kind: "completed", message: "unattended completed" },
     });
     const { io, lines } = captureIo();
 
@@ -149,7 +163,80 @@ describe("runCli command dispatch", () => {
     });
 
     expect(exitCode).toBe(0);
+    expect(recording.unattendedCalls.calls).toEqual([{}]);
+    expect(recording.runCalls.calls).toEqual([]);
     expect(lines.join("\n")).toContain("unattended completed");
+  });
+
+  it("starts unattended DAG execution when run has no task id", async () => {
+    const recording = recordingService({
+      unattended: { kind: "completed", message: "unattended completed" },
+    });
+    const { io } = captureIo();
+
+    const exitCode = await runCli(["run"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(recording.unattendedCalls.calls).toEqual([{}]);
+    expect(recording.runCalls.calls).toEqual([]);
+  });
+
+  it("passes the parallel capacity option to the unattended application service", async () => {
+    for (const [value, expected] of [
+      ["1", 1],
+      ["3", 3],
+    ] as const) {
+      const recording = recordingService({
+        unattended: { kind: "completed", message: "unattended completed" },
+      });
+      const { io } = captureIo();
+
+      const exitCode = await runCli(["run", "--parallel", value], {
+        io,
+        servicesFactory: async () => recording.service,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(recording.unattendedCalls.calls).toEqual([{ maxParallelism: expected }]);
+    }
+  });
+
+  it("rejects invalid parallel values with usage code 2", async () => {
+    for (const value of ["0", "-1", "abc", "2.5"]) {
+      const recording = recordingService({});
+      const { io, errors } = captureIo();
+
+      const exitCode = await runCli(["run", "--parallel", value], {
+        io,
+        servicesFactory: async () => recording.service,
+      });
+
+      expect(exitCode).toBe(2);
+      expect(recording.unattendedCalls.calls).toEqual([]);
+      expect(errors.join("\n")).toContain("positive integer");
+    }
+  });
+
+  it("exits non-zero for blocked unattended runs while reporting persisted state", async () => {
+    const recording = recordingService({
+      unattended: {
+        kind: "failed",
+        message:
+          'unattended run reached quiescence after 2 cycle(s); final persisted task state: 1 DONE, 1 FAILED',
+      },
+    });
+    const { io, errors } = captureIo();
+
+    const exitCode = await runCli(["run"], {
+      io,
+      servicesFactory: async () => recording.service,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("final persisted task state: 1 DONE, 1 FAILED");
   });
 
   it("exits non-zero for failed, cancelled, and rejected run outcomes", async () => {
@@ -213,7 +300,7 @@ describe("runCli command dispatch", () => {
     expect(errors.join("\n")).toContain("unknown command");
 
     const { io: io2, errors: errors2 } = captureIo();
-    const missingTaskId = await runCli(["run"], { io: io2 });
+    const missingTaskId = await runCli(["inspect"], { io: io2 });
     expect(missingTaskId).toBe(2);
     expect(errors2.join("\n")).toContain("requires a <task-id>");
   });

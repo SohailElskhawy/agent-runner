@@ -10,13 +10,14 @@ import type {
   ProjectStatus,
   RunResult,
   TaskInspection,
+  UnattendedRunRequest,
 } from "./ports.js";
 
 export interface RunnerAppService {
   init(): Promise<InitResult>;
   addTask(taskFilePath: string): Promise<AddTaskResult>;
   run(taskId: TaskId): Promise<RunResult>;
-  runUnattended(): Promise<RunResult>;
+  runUnattended(options?: UnattendedRunRequest): Promise<RunResult>;
   status(): Promise<ProjectStatus>;
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
   listAgents(): Promise<readonly AgentStatusEntry[]>;

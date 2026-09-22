@@ -18,6 +18,11 @@ export type UnattendedSchedulerCycle = {
   readonly integrations: readonly IntegrationQueueProcessorOutcome[];
 };
 
+/** Per-run scheduling capacity; defaults to the configured coordinator capacity. */
+export type UnattendedRunOptions = {
+  readonly maxParallelism?: number | undefined;
+};
+
 export type UnattendedSchedulerResult = {
   readonly kind: "quiescent" | "blocked";
   readonly cycles: readonly UnattendedSchedulerCycle[];
@@ -27,7 +32,7 @@ export type UnattendedSchedulerResult = {
 
 export interface UnattendedScheduler {
   /** Runs until no dispatchable work or queue progress remains. */
-  run(): Promise<UnattendedSchedulerResult>;
+  run(options?: UnattendedRunOptions): Promise<UnattendedSchedulerResult>;
 }
 
 export function createUnattendedScheduler(
@@ -46,18 +51,22 @@ class DurableUnattendedScheduler implements UnattendedScheduler {
     this.integration = options.integration;
   }
 
-  async run(): Promise<UnattendedSchedulerResult> {
+  async run(
+    options: UnattendedRunOptions = {},
+  ): Promise<UnattendedSchedulerResult> {
     if (this.running) {
       throw new Error("unattended scheduler is already running");
     }
     this.running = true;
     try {
+      const maxParallelism = options.maxParallelism ?? this.coordinator.maxParallelism;
+      validateMaxParallelism(maxParallelism);
       const cycles: UnattendedSchedulerCycle[] = [];
       const completedTaskIds: TaskId[] = [];
       const failedTaskIds: TaskId[] = [];
 
       while (true) {
-        const dispatch = await this.coordinator.dispatchAvailable();
+        const dispatch = await this.coordinator.dispatchAvailable({ maxParallelism });
         const integrations: IntegrationQueueProcessorOutcome[] = [];
         for (;;) {
           const outcome = await this.integration.processNext();
@@ -122,6 +131,14 @@ class DurableUnattendedScheduler implements UnattendedScheduler {
     } finally {
       this.running = false;
     }
+  }
+}
+
+function validateMaxParallelism(maxParallelism: number): void {
+  if (!Number.isInteger(maxParallelism) || maxParallelism <= 0) {
+    throw new Error(
+      "unattended run maxParallelism must be a positive integer; invalid values are not normalized",
+    );
   }
 }
 

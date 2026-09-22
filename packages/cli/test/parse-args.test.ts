@@ -15,6 +15,32 @@ describe("CLI argument parsing", () => {
     expect(parseArgs(["run-all"])).toEqual({ name: "run-all" });
   });
 
+  it("parses unattended run with no task id", () => {
+    expect(parseArgs(["run"])).toEqual({ name: "run" });
+  });
+
+  it("parses unattended run with a parallel option", () => {
+    expect(parseArgs(["run", "--parallel", "3"])).toEqual({
+      name: "run",
+      parallel: 3,
+    });
+    expect(parseArgs(["run-all", "--parallel", "1"])).toEqual({
+      name: "run-all",
+      parallel: 1,
+    });
+  });
+
+  it("rejects invalid parallel values", () => {
+    for (const value of ["0", "-1", "abc", "2.5", ""]) {
+      expect(() => parseArgs(["run", "--parallel", value])).toThrow(CliError);
+    }
+    expect(() => parseArgs(["run", "--parallel"])).toThrow(CliError);
+  });
+
+  it("rejects parallel combined with a task id", () => {
+    expect(() => parseArgs(["run", "M001", "--parallel", "2"])).toThrow(CliError);
+  });
+
   it("parses task ids containing spaces", () => {
     expect(parseArgs(["run", "task 42 — fix header"])).toEqual({
       name: "run",
@@ -53,7 +79,6 @@ describe("CLI argument parsing", () => {
   });
 
   it("rejects missing task ids", () => {
-    expect(() => parseArgs(["run"])).toThrow(CliError);
     expect(() => parseArgs(["inspect"])).toThrow(CliError);
   });
 

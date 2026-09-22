@@ -2,8 +2,8 @@ import { CliError } from "./errors.js";
 
 export type ParsedCommand =
   | { readonly name: "init" }
-  | { readonly name: "run"; readonly taskId: string }
-  | { readonly name: "run-all" }
+  | { readonly name: "run"; readonly taskId?: string; readonly parallel?: number }
+  | { readonly name: "run-all"; readonly parallel?: number }
   | { readonly name: "status" }
   | { readonly name: "inspect"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
@@ -33,10 +33,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       requireNoExtraArguments(command, rest);
       return { name: "init" };
     case "run":
-      return { name: "run", taskId: requireTaskId(command, rest) };
+      return parseRunCommand(rest);
     case "run-all":
-      requireNoExtraArguments(command, rest);
-      return { name: "run-all" };
+      return { name: "run-all", ...parseParallelOption("run-all", rest) };
     case "status":
       requireNoExtraArguments(command, rest);
       return { name: "status" };
@@ -80,6 +79,93 @@ function requireTaskId(
   return taskId;
 }
 
+const PARALLEL_FLAG = "--parallel";
+
+/**
+ * Parses an optional `--parallel <n>` option. `n` must be a positive integer
+ * (>= 1); invalid values are rejected deterministically and never normalized.
+ */
+function parseParallelOption(
+  command: string,
+  rest: readonly string[],
+): { readonly parallel?: number } {
+  const index = rest.indexOf(PARALLEL_FLAG);
+  if (index < 0) {
+    return {};
+  }
+  const value = rest[index + 1];
+  if (value === undefined) {
+    throw new CliError(
+      `command "${command}" requires a value for ${PARALLEL_FLAG} (a positive integer)`,
+    );
+  }
+  const remaining = [...rest.slice(0, index), ...rest.slice(index + 2)];
+  const parallel = parseParallelValue(command, value);
+  if (remaining.length > 0) {
+    throw new CliError(
+      `command "${command}" accepts at most ${PARALLEL_FLAG} <n> as an option`,
+    );
+  }
+  return { parallel };
+}
+
+function parseParallelValue(command: string, value: string): number {
+  const parsed = Number(value);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1 ||
+    value.trim().length === 0
+  ) {
+    throw new CliError(
+      `command "${command}" requires ${PARALLEL_FLAG} to be a positive integer (>= 1), received "${value}"`,
+    );
+  }
+  return parsed;
+}
+
+function parseRunCommand(rest: readonly string[]): ParsedCommand {
+  const parallelIndex = rest.indexOf(PARALLEL_FLAG);
+  if (parallelIndex < 0) {
+    return parseRunTaskId(rest, undefined);
+  }
+  const value = rest[parallelIndex + 1];
+  if (value === undefined) {
+    throw new CliError(
+      `command "run" requires a value for ${PARALLEL_FLAG} (a positive integer)`,
+    );
+  }
+  const parallel = parseParallelValue("run", value);
+  const withoutOption = [
+    ...rest.slice(0, parallelIndex),
+    ...rest.slice(parallelIndex + 2),
+  ];
+  if (withoutOption.length > 0) {
+    return parseRunTaskId(withoutOption, parallel);
+  }
+  return { name: "run", parallel };
+}
+
+function parseRunTaskId(rest: readonly string[], parallel: number | undefined): ParsedCommand {
+  const [taskId, ...extra] = rest;
+  if (taskId === undefined) {
+    return parallel === undefined ? { name: "run" } : { name: "run", parallel };
+  }
+  if (taskId.trim().length === 0) {
+    throw new CliError('command "run" does not accept an empty <task-id>');
+  }
+  if (extra.length > 0) {
+    throw new CliError(
+      'command "run" accepts at most one <task-id> argument',
+    );
+  }
+  if (parallel !== undefined) {
+    throw new CliError(
+      `command "run" does not accept ${PARALLEL_FLAG} with a <task-id>; single-task execution is sequential and "${PARALLEL_FLAG}" only configures unattended scheduling`,
+    );
+  }
+  return { name: "run", taskId };
+}
+
 const TASKS_SUBCOMMANDS = ["add"] as const;
 
 function parseTasksCommand(rest: readonly string[]): ParsedCommand {
@@ -117,13 +203,20 @@ function requireNoExtraArguments(
 export const USAGE = `Usage:
   agentic init
   agentic run <task-id>
-  agentic run-all
+  agentic run [--parallel <n>]
+  agentic run-all [--parallel <n>]
   agentic status
   agentic inspect <task-id>
   agentic tasks add <task-file>
   agentic agents
   agentic help
   agentic version
+
+"run <task-id>" executes one task through the intentional single-task path.
+"run" with no task id starts unattended DAG execution of every runnable task.
+"--parallel <n>" configures how many tasks the unattended scheduler may run
+concurrently for that run (a positive integer, default 1). "run-all" is a
+compatibility alias for unattended "run".
 
 "agents" reports which built-in coding-agent CLIs are locally available.
 "tasks add" parses one JSON task file written in the documented task schema
