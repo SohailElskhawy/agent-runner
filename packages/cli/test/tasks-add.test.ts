@@ -639,6 +639,9 @@ describe("agentic tasks add", () => {
       async status() {
         throw new Error("status must not be called");
       },
+      async listTaskSummaries() {
+        throw new Error("listTaskSummaries must not be called");
+      },
       async inspect() {
         throw new Error("inspect must not be called");
       },
@@ -663,17 +666,6 @@ describe("agentic tasks add", () => {
   });
 
   it("rejects malformed command lines with usage output", async () => {
-    const missingSubcommand = captureIo();
-    expect(
-      await runCli(["tasks"], {
-        io: missingSubcommand.io,
-        servicesFactory: () => wiredServices(),
-      }),
-    ).toBe(2);
-    expect(missingSubcommand.errors.join("\n")).toContain(
-      'command "tasks" requires a subcommand',
-    );
-
     const unknownSubcommand = captureIo();
     expect(
       await runCli(["tasks", "edit", "file.json"], {
@@ -682,7 +674,7 @@ describe("agentic tasks add", () => {
       }),
     ).toBe(2);
     expect(unknownSubcommand.errors.join("\n")).toContain(
-      'unknown tasks subcommand "edit"',
+      'unknown tasks subcommand "edit"; supported subcommands: add (or no subcommand to list tasks)',
     );
 
     const missingTaskFile = captureIo();

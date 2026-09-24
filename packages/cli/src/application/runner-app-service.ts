@@ -13,6 +13,7 @@ import type {
   RetryCommandResult,
   RunResult,
   TaskInspection,
+  TaskListEntry,
   UnattendedRunRequest,
 } from "./ports.js";
 
@@ -33,6 +34,7 @@ export interface RunnerAppService {
   run(taskId: TaskId): Promise<RunResult>;
   runUnattended(options?: UnattendedRunRequest): Promise<RunResult>;
   status(): Promise<ProjectStatus>;
+  listTaskSummaries(): Promise<readonly TaskListEntry[]>;
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
   listAgents(): Promise<readonly AgentStatusEntry[]>;
   close(): Promise<void>;

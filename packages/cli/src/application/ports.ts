@@ -109,6 +109,18 @@ export type TaskStatusEntry = {
     | undefined;
 };
 
+export type TaskListEntry = {
+  readonly id: string;
+  readonly title: string;
+  readonly status: Task["status"];
+  readonly priority: string;
+  readonly milestone: string;
+  readonly dependsOn: readonly string[];
+  readonly attemptCount: number;
+  readonly approvalRequired: boolean;
+  readonly approvalGranted: boolean;
+};
+
 export type LatestAttemptSummary = {
   readonly id: string;
   readonly number: number;

@@ -133,6 +133,12 @@ function recordingService(result: {
         }
       );
     },
+    async listTaskSummaries() {
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return [];
+    },
     async inspect() {
       return result.inspection ?? null;
     },

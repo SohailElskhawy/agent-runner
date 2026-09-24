@@ -40,6 +40,7 @@ import type {
   RunResult,
   SchedulerStatus,
   TaskInspection,
+  TaskListEntry,
   UnattendedRunRequest,
 } from "./ports.js";
 import { buildTaskInspection, toLatestAttemptSummary } from "./inspect-view.js";
@@ -361,6 +362,27 @@ class StoreBackedAppService implements RunnerAppService {
     }
     const scheduler = await this.buildSchedulerStatus(tasks);
     return { project, tasks: entries, scheduler };
+  }
+
+  async listTaskSummaries(): Promise<readonly TaskListEntry[]> {
+    await this.startupReconcile();
+    const tasks = await this.store.listTasks();
+    const entries: TaskListEntry[] = [];
+    for (const task of tasks) {
+      const attempts = await this.store.listAttempts({ taskId: task.id });
+      entries.push({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        milestone: task.milestone,
+        dependsOn: task.dependsOn,
+        attemptCount: attempts.length,
+        approvalRequired: task.definition.approval.required,
+        approvalGranted: task.approvalGrantedAt !== undefined,
+      });
+    }
+    return entries;
   }
 
   async inspect(taskId: TaskId): Promise<TaskInspection | null> {

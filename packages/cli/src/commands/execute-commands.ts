@@ -5,6 +5,7 @@ import { renderProjectStatus } from "../render/render-status.js";
 import { renderRunResult } from "../render/render-run.js";
 import { renderTaskInspection } from "../render/render-inspect.js";
 import { renderTaskAddResult } from "../render/render-tasks-add.js";
+import { renderTasksList } from "../render/render-tasks-list.js";
 import { renderAgentsReport } from "../render/render-agents.js";
 import type { RunnerAppService } from "../application/runner-app-service.js";
 
@@ -27,6 +28,15 @@ export async function executeAddTaskCommand(
 ): Promise<number> {
   const result = await services.addTask(taskFile);
   renderTaskAddResult(io, result);
+  return EXIT_SUCCESS;
+}
+
+export async function executeTasksListCommand(
+  services: RunnerAppService,
+  io: CliIo,
+): Promise<number> {
+  const tasks = await services.listTaskSummaries();
+  renderTasksList(io, tasks);
   return EXIT_SUCCESS;
 }
 

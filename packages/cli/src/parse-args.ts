@@ -8,6 +8,7 @@ export type ParsedCommand =
   | { readonly name: "inspect"; readonly taskId: string }
   | { readonly name: "approve"; readonly taskId: string }
   | { readonly name: "retry"; readonly taskId: string }
+  | { readonly name: "tasks"; readonly action: "list" }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
   | { readonly name: "agents" }
   | { readonly name: "help" }
@@ -178,14 +179,12 @@ const TASKS_SUBCOMMANDS = ["add"] as const;
 
 function parseTasksCommand(rest: readonly string[]): ParsedCommand {
   const [subcommand, taskFile, ...extra] = rest;
-  if (subcommand === undefined || subcommand.trim().length === 0) {
-    throw new CliError(
-      `command "tasks" requires a subcommand; usage: agentic tasks add <task-file>`,
-    );
+  if (subcommand === undefined) {
+    return { name: "tasks", action: "list" };
   }
   if (!(TASKS_SUBCOMMANDS as readonly string[]).includes(subcommand)) {
     throw new CliError(
-      `unknown tasks subcommand "${subcommand}"; supported subcommands: ${TASKS_SUBCOMMANDS.join(", ")}`,
+      `unknown tasks subcommand "${subcommand}"; supported subcommands: ${TASKS_SUBCOMMANDS.join(", ")} (or no subcommand to list tasks)`,
     );
   }
   if (taskFile === undefined || taskFile.trim().length === 0) {
@@ -217,7 +216,7 @@ export const USAGE = `Usage:
   agentic inspect <task-id>
   agentic approve <task-id>
   agentic retry <task-id>
-  agentic tasks add <task-file>
+  agentic tasks [add <task-file>]
   agentic agents
   agentic help
   agentic version
@@ -229,6 +228,8 @@ concurrently for that run (a positive integer, default 1). "run-all" is a
 compatibility alias for unattended "run".
 
 "agents" reports which built-in coding-agent CLIs are locally available.
+"tasks" with no subcommand lists the persisted tasks with their status,
+priority, milestone, dependencies, attempt count, and approval state.
 "tasks add" parses one JSON task file written in the documented task schema
 format (docs/TASK_SCHEMA.md), normalizes it to the runner task contract,
 validates it, and persists it into local runner state. Manual task ingestion

@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
@@ -27,6 +27,35 @@ const EXPLICIT_VERIFICATION_CHECKS = [
   { name: "typecheck", executable: "node", args: ["--version"] },
   { name: "unit", executable: "node", args: ["--version"] },
 ] as const;
+
+function manualTaskInput(
+  id: string,
+  overrides?: {
+    readonly approvalRequired?: boolean;
+    readonly dependsOn?: readonly string[];
+  },
+): Record<string, unknown> {
+  return {
+    id,
+    title: `Task ${id}`,
+    milestone: "cli-product-experience",
+    status: "ready",
+    priority: "P1",
+    risk: "low",
+    type: "implementation",
+    objective: `Exercise ${id} through the manual task path.`,
+    acceptance_criteria: ["The task is persisted and listed."],
+    depends_on: overrides?.dependsOn ?? [],
+    provenance: { kind: "user_request", source: "manual" },
+    scope: { allowed_paths: ["packages/cli/**"], forbidden_paths: ["docs/**"] },
+    resources: [],
+    workflow: "default",
+    routing: { complexity: "small", capabilities: ["typescript"] },
+    verification: { required: ["typecheck", "unit"] },
+    limits: { max_attempts: 3, max_review_cycles: 2 },
+    approval: { required: overrides?.approvalRequired ?? false },
+  };
+}
 
 describe("CLI end-to-end over a repository with spaces in its path", () => {
   let directory: string;
@@ -102,6 +131,27 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     return seeded;
   }
 
+  async function addTaskViaCli(
+    id: string,
+    overrides?: {
+      readonly approvalRequired?: boolean;
+      readonly dependsOn?: readonly string[];
+    },
+  ): Promise<void> {
+    const taskFile = join(directory, `task-${id}.json`);
+    writeFileSync(
+      taskFile,
+      JSON.stringify(manualTaskInput(id, overrides), null, 2),
+      "utf8",
+    );
+    const { io, errors } = captureIo();
+    const exit = await runCli(["tasks", "add", taskFile], {
+      io,
+      servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()),
+    });
+    expect(exit, `tasks add ${id} failed: ${errors.join("\n")}`).toBe(0);
+  }
+
   it("init persists runner state idempotently", async () => {
     const { io, lines } = captureIo();
     const first = await runCli(["init"], { io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
@@ -115,6 +165,35 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     const projects = await store.listProjects();
     expect(projects).toHaveLength(1);
     expect(projects[0]?.rootPath).toBe(repositoryPath);
+  });
+
+  it("lists persisted tasks with status, attempts, and approval state", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    await addTaskViaCli("T1");
+    await addTaskViaCli("T2", { approvalRequired: true, dependsOn: ["T1"] });
+
+    const { io, lines, errors } = captureIo();
+    expect(await runCli(["tasks"], { io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) })).toBe(0);
+    expect(errors).toHaveLength(0);
+    const output = lines.join("\n");
+    expect(output).toContain("[READY] T1 (P1, cli-product-experience) Task T1 — attempts: 0");
+    expect(output).toContain("[READY] T2 (P1, cli-product-experience) Task T2 — attempts: 0, depends on: T1, approval: required");
+  });
+
+  it("reports an empty task list with guidance", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    const { io, lines, errors } = captureIo();
+    expect(await runCli(["tasks"], { io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) })).toBe(0);
+    expect(errors).toHaveLength(0);
+    expect(lines.join("\n")).toContain(
+      'no tasks are persisted; add one with "agentic tasks add <task-file>"',
+    );
   });
 
   it("runs a manually seeded task to completion and shows persisted evidence", async () => {

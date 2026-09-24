@@ -10,6 +10,7 @@ import {
   executeInspectCommand,
   executeRetryCommand,
   executeRunCommand,
+  executeTasksListCommand,
   executeUnattendedRunCommand,
   executeStatusCommand,
   EXIT_FAILURE,
@@ -77,11 +78,9 @@ export async function runCli(
               case "retry":
                 return await executeRetryCommand(command.taskId, services, io);
               case "tasks":
-                return await executeAddTaskCommand(
-                  command.taskFile,
-                  services,
-                  io,
-                );
+                return command.action === "add"
+                  ? await executeAddTaskCommand(command.taskFile, services, io)
+                  : await executeTasksListCommand(services, io);
               case "agents":
                 return await executeAgentsCommand(services, io);
             }

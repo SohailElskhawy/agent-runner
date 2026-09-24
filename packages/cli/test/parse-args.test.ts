@@ -56,6 +56,18 @@ describe("CLI argument parsing", () => {
     expect(parseArgs(["agents"])).toEqual({ name: "agents" });
   });
 
+  it("parses bare tasks as a list command", () => {
+    expect(parseArgs(["tasks"])).toEqual({ name: "tasks", action: "list" });
+  });
+
+  it("parses tasks add with a task file", () => {
+    expect(parseArgs(["tasks", "add", "./tasks/T1.json"])).toEqual({
+      name: "tasks",
+      action: "add",
+      taskFile: "./tasks/T1.json",
+    });
+  });
+
   it("parses inspect with a task id", () => {
     expect(parseArgs(["inspect", "M001"])).toEqual({
       name: "inspect",
