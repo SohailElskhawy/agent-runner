@@ -9,6 +9,7 @@ import type {
   ApprovalCommandResult,
   InitResult,
   ProjectStatus,
+  RetryCommandResult,
   RunResult,
   TaskInspection,
   UnattendedRunRequest,
@@ -18,6 +19,7 @@ export interface RunnerAppService {
   init(): Promise<InitResult>;
   addTask(taskFilePath: string): Promise<AddTaskResult>;
   approve(taskId: TaskId): Promise<ApprovalCommandResult>;
+  retry(taskId: TaskId): Promise<RetryCommandResult>;
   run(taskId: TaskId): Promise<RunResult>;
   runUnattended(options?: UnattendedRunRequest): Promise<RunResult>;
   status(): Promise<ProjectStatus>;

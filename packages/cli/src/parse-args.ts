@@ -7,6 +7,7 @@ export type ParsedCommand =
   | { readonly name: "status" }
   | { readonly name: "inspect"; readonly taskId: string }
   | { readonly name: "approve"; readonly taskId: string }
+  | { readonly name: "retry"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
   | { readonly name: "agents" }
   | { readonly name: "help" }
@@ -19,6 +20,7 @@ export const KNOWN_COMMANDS = [
   "status",
   "inspect",
   "approve",
+  "retry",
   "tasks",
   "agents",
   "help",
@@ -45,6 +47,8 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return { name: "inspect", taskId: requireTaskId(command, rest) };
     case "approve":
       return { name: "approve", taskId: requireTaskId(command, rest) };
+    case "retry":
+      return { name: "retry", taskId: requireTaskId(command, rest) };
     case "tasks":
       return parseTasksCommand(rest);
     case "agents":
@@ -212,6 +216,7 @@ export const USAGE = `Usage:
   agentic status
   agentic inspect <task-id>
   agentic approve <task-id>
+  agentic retry <task-id>
   agentic tasks add <task-file>
   agentic agents
   agentic help
@@ -230,6 +235,12 @@ validates it, and persists it into local runner state. Manual task ingestion
 only.
 
 "approve" records human approval for a task that declares approval.required: true.
+
+"retry" returns a FAILED, NEEDS_HUMAN, or BLOCKED task to READY so the runner may
+execute it again. Retry respects the task attempt budget (limits.max_attempts);
+tasks that exhausted their budget must raise limits.max_attempts and be re-added.
+Tasks that declare approval.required: true must be approved with "agentic approve"
+first. Previous dirty worktrees are retained for inspection.
 
 Local runner state (SQLite database and task worktrees) lives outside the
 repository, per machine, keyed to the normalized repository path. Moving or

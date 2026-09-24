@@ -38,6 +38,7 @@ import type {
   InitResult,
   ParallelCapacityUsage,
   ProjectStatus,
+  RetryCommandResult,
   RunResult,
   SchedulerStatus,
   TaskInspection,
@@ -214,6 +215,69 @@ class StoreBackedAppService implements RunnerAppService {
           taskId,
           message: `task "${taskId}" was already approved`,
         };
+  }
+
+  async retry(taskId: TaskId): Promise<RetryCommandResult> {
+    await this.startupReconcile();
+    const task = await this.store.getTask(taskId);
+    if (task === null) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" was not found in runner state`,
+      };
+    }
+    if (
+      task.status !== "FAILED" &&
+      task.status !== "NEEDS_HUMAN" &&
+      task.status !== "BLOCKED"
+    ) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" is ${task.status}; only FAILED, NEEDS_HUMAN, or BLOCKED tasks can be retried`,
+      };
+    }
+    const attempts = await this.store.listAttempts({ taskId });
+    const maxAttempts = task.definition.limits.maxAttempts;
+    if (attempts.length >= maxAttempts) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" exhausted its attempt budget (${String(attempts.length)}/${String(maxAttempts)}); raise limits.max_attempts and re-add the task to allow another attempt`,
+      };
+    }
+    if (task.definition.approval.required && task.approvalGrantedAt === undefined) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" requires human approval; run "agentic approve ${taskId}" first`,
+      };
+    }
+    const occurredAt = new Date().toISOString();
+    const previousStatus = task.status;
+    await this.store.transaction(async () => {
+      await this.store.setTaskStatus(taskId, "READY", occurredAt);
+      await this.store.appendEvents([
+        {
+          type: "task.retry.requested",
+          taskId,
+          payload: { previousStatus, attempts: attempts.length },
+          occurredAt,
+        },
+        {
+          type: "task.transitioned",
+          taskId,
+          payload: { from: previousStatus, to: "READY" },
+          occurredAt,
+        },
+      ]);
+    });
+    return {
+      kind: "accepted",
+      taskId,
+      message: `task "${taskId}" returned to READY`,
+    };
   }
 
   async run(taskId: TaskId): Promise<RunResult> {

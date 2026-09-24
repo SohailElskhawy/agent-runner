@@ -9,7 +9,9 @@ import type { TaskStatus } from "./task-status.js";
  * not contain (for example PLANNING → IMPLEMENTING when no PLAN_REVIEW stage
  * exists). Review/fix loops are legal through the reverse review transitions
  * (PLAN_REVIEW → PLANNING, CODE_REVIEW → IMPLEMENTING). Every active state can
- * escalate to BLOCKED, FAILED, or CANCELLED.
+ * escalate to BLOCKED, FAILED, or CANCELLED. The runner may return BLOCKED,
+ * NEEDS_HUMAN, or FAILED tasks to READY through an explicit retry, bounded by
+ * the task attempt budget and approval state.
  */
 export const TASK_STATUS_TRANSITIONS: Readonly<
   Record<TaskStatus, readonly TaskStatus[]>
@@ -24,8 +26,8 @@ export const TASK_STATUS_TRANSITIONS: Readonly<
   INTEGRATING: ["DONE", "BLOCKED", "FAILED", "CANCELLED"],
   DONE: [],
   BLOCKED: ["READY"],
-  NEEDS_HUMAN: [],
-  FAILED: [],
+  NEEDS_HUMAN: ["READY"],
+  FAILED: ["READY"],
   CANCELLED: [],
 };
 

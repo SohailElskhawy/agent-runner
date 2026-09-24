@@ -627,6 +627,9 @@ describe("agentic tasks add", () => {
       async approve() {
         throw new Error("approve must not be called");
       },
+      async retry() {
+        throw new Error("retry must not be called");
+      },
       async run() {
         throw new Error("run must not be called");
       },

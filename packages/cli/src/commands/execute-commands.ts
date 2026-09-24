@@ -44,6 +44,20 @@ export async function executeApproveCommand(
   return EXIT_SUCCESS;
 }
 
+export async function executeRetryCommand(
+  taskId: TaskId,
+  services: RunnerAppService,
+  io: CliIo,
+): Promise<number> {
+  const result = await services.retry(taskId);
+  if (result.kind === "rejected") {
+    io.writeError(result.message);
+    return EXIT_FAILURE;
+  }
+  io.writeLine(result.message);
+  return EXIT_SUCCESS;
+}
+
 export async function executeRunCommand(
   taskId: TaskId,
   services: RunnerAppService,

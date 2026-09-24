@@ -8,6 +8,7 @@ import type {
   ApprovalCommandResult,
   InitResult,
   ProjectStatus,
+  RetryCommandResult,
   RunResult,
   TaskInspection,
 } from "../src/application/ports.js";
@@ -21,6 +22,7 @@ function recordingService(result: {
   add?: AddTaskResult;
   addFailure?: Error;
   approve?: ApprovalCommandResult;
+  retry?: RetryCommandResult;
   run?: RunResult;
   unattended?: RunResult;
   status?: ProjectStatus;
@@ -32,6 +34,7 @@ function recordingService(result: {
   runCalls: RunSpy;
   unattendedCalls: UnattendedRunSpy;
   approveCalls: { calls: readonly TaskId[] };
+  retryCalls: { calls: readonly TaskId[] };
   initCalls: { count: number };
   addCalls: { calls: string[] };
   listAgentsCalls: { count: number };
@@ -40,6 +43,7 @@ function recordingService(result: {
   const unattendedCalls: { maxParallelism?: number | undefined }[] = [];
   const addCalls: string[] = [];
   const approveCalls: string[] = [];
+  const retryCalls: string[] = [];
   let initCount = 0;
   let listAgentsCount = 0;
   const service: RunnerAppService = {
@@ -95,6 +99,19 @@ function recordingService(result: {
         }
       );
     },
+    async retry(taskId: TaskId) {
+      retryCalls.push(taskId);
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return (
+        result.retry ?? {
+          kind: "accepted",
+          taskId,
+          message: `task "${taskId}" returned to READY`,
+        }
+      );
+    },
     async runUnattended(options) {
       unattendedCalls.push(options ?? {});
       if (result.failure !== undefined) {
@@ -139,6 +156,7 @@ function recordingService(result: {
     runCalls: { calls: runCalls },
     unattendedCalls: { calls: unattendedCalls },
     approveCalls: { calls: approveCalls },
+    retryCalls: { calls: retryCalls },
     addCalls: { calls: addCalls },
     initCalls: {
       get count() {
@@ -217,6 +235,39 @@ describe("runCli command dispatch", () => {
 
     expect(rejectedExit).toBe(1);
     expect(rejectedCapture.errors.join("\n")).toContain("does not require human approval");
+  });
+
+  it("retries through the application service and maps accepted and rejected results to exit codes", async () => {
+    const accepted = recordingService({});
+    const { io, lines, errors } = captureIo();
+
+    const acceptedExit = await runCli(["retry", "M001"], {
+      io,
+      servicesFactory: async () => accepted.service,
+    });
+
+    expect(acceptedExit).toBe(0);
+    expect(accepted.retryCalls.calls).toEqual(["M001"]);
+    expect(lines.join("\n")).toContain('task "M001" returned to READY');
+    expect(errors).toHaveLength(0);
+
+    const rejected = recordingService({
+      retry: {
+        kind: "rejected",
+        taskId: "M001",
+        message:
+          'task "M001" exhausted its attempt budget (3/3); raise limits.max_attempts and re-add the task to allow another attempt',
+      },
+    });
+    const rejectedCapture = captureIo();
+
+    const rejectedExit = await runCli(["retry", "M001"], {
+      io: rejectedCapture.io,
+      servicesFactory: async () => rejected.service,
+    });
+
+    expect(rejectedExit).toBe(1);
+    expect(rejectedCapture.errors.join("\n")).toContain("attempt budget");
   });
 
   it("delegates unattended execution to the application service on run-all", async () => {

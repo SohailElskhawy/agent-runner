@@ -32,6 +32,12 @@ export type ApprovalCommandResult = {
   readonly message: string;
 };
 
+export type RetryCommandResult = {
+  readonly kind: "accepted" | "rejected";
+  readonly taskId: string;
+  readonly message: string;
+};
+
 /** Per-run unattended scheduling request. */
 export type UnattendedRunRequest = {
   readonly maxParallelism?: number | undefined;

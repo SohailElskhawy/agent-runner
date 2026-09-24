@@ -8,6 +8,7 @@ import {
   executeApproveCommand,
   executeInitCommand,
   executeInspectCommand,
+  executeRetryCommand,
   executeRunCommand,
   executeUnattendedRunCommand,
   executeStatusCommand,
@@ -53,6 +54,7 @@ export async function runCli(
       case "status":
       case "inspect":
       case "approve":
+      case "retry":
       case "tasks":
       case "agents":
         return await withServices(options.servicesFactory, async (services) => {
@@ -72,6 +74,8 @@ export async function runCli(
                 return await executeInspectCommand(command.taskId, services, io);
               case "approve":
                 return await executeApproveCommand(command.taskId, services, io);
+              case "retry":
+                return await executeRetryCommand(command.taskId, services, io);
               case "tasks":
                 return await executeAddTaskCommand(
                   command.taskFile,

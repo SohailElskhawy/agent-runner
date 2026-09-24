@@ -221,6 +221,87 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     expect(errors.join("\n")).toContain('task "M001" does not require human approval');
   });
 
+  it("returns a failed task to READY through agentic retry and records the retry events", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ projectId: "proj-local", status: "FAILED" }));
+    await store.putAttempt(createFixtureAttempt({ status: "FAILED" }));
+    await store.close();
+    store = undefined;
+
+    const { io: retryIo, lines: retryLines, errors: retryErrors } = captureIo();
+    const retryExit = await runCli(["retry", "M001"], { io: retryIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(retryExit).toBe(0);
+    expect(retryLines.join("\n")).toContain('task "M001" returned to READY');
+    expect(retryErrors).toHaveLength(0);
+
+    const { io: statusIo, lines: statusLines } = captureIo();
+    const statusExit = await runCli(["status"], { io: statusIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(statusExit).toBe(0);
+    expect(statusLines.join("\n")).toContain("M001 [READY]");
+
+    store = await openRepositoryStore();
+    expect((await store.getTask("M001"))?.status).toBe("READY");
+    const events = await store.listEvents({ taskId: "M001" });
+    expect(events.map((event) => event.type)).toContain("task.retry.requested");
+    expect(
+      events.find((event) => event.type === "task.retry.requested")?.payload,
+    ).toEqual({ previousStatus: "FAILED", attempts: 1 });
+    expect(
+      events.find((event) => event.type === "task.transitioned")?.payload,
+    ).toEqual({ from: "FAILED", to: "READY" });
+    await store.close();
+    store = undefined;
+  });
+
+  it("rejects retry for budget-exhausted and unapproved tasks", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ projectId: "proj-local", status: "FAILED" }));
+    for (const number of [1, 2, 3] as const) {
+      await store.putAttempt(
+        createFixtureAttempt({
+          id: `att_M001_${String(number)}`,
+          taskId: "M001",
+          number,
+          status: "FAILED",
+        }),
+      );
+    }
+    await store.putTask(
+      createFixtureTask({
+        id: "M002",
+        projectId: "proj-local",
+        status: "FAILED",
+        approvalRequired: true,
+      }),
+    );
+    await store.close();
+    store = undefined;
+
+    const exhausted = captureIo();
+    const exhaustedExit = await runCli(["retry", "M001"], { io: exhausted.io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(exhaustedExit).toBe(1);
+    expect(exhausted.errors.join("\n")).toContain("attempt budget");
+
+    const unapproved = captureIo();
+    const unapprovedExit = await runCli(["retry", "M002"], { io: unapproved.io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(unapprovedExit).toBe(1);
+    expect(unapproved.errors.join("\n")).toContain("agentic approve");
+
+    store = await openRepositoryStore();
+    expect((await store.getTask("M001"))?.status).toBe("FAILED");
+    expect((await store.getTask("M002"))?.status).toBe("FAILED");
+    await store.close();
+    store = undefined;
+  });
+
   it("reconciles an interrupted task on startup so status and inspect observe reconciled state", async () => {
     const { io: initIo } = captureIo();
     const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });

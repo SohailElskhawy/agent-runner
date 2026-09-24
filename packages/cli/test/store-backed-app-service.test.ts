@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import type { TaskId } from "@agentic-dev-runner/core";
+import type { Task, TaskId } from "@agentic-dev-runner/core";
 import {
   OrchestrationError,
   type CrashRecovery,
@@ -21,7 +21,7 @@ import {
   createFixtureTask,
   temporaryDirectory,
 } from "./fixtures.js";
-import { executeInitCommand, executeRunCommand, executeStatusCommand, executeInspectCommand } from "../src/commands/execute-commands.js";
+import { executeInitCommand, executeRunCommand, executeRetryCommand, executeStatusCommand, executeInspectCommand } from "../src/commands/execute-commands.js";
 
 class StubOrchestrator implements SingleTaskOrchestrator {
   readonly calls: TaskId[] = [];
@@ -138,6 +138,40 @@ describe("StoreBackedAppService", () => {
       recovery: new StubRecovery(),
       agents: stubAgents,
     });
+  }
+
+  async function retryFixture(
+    options: {
+      readonly status?: Task["status"];
+      readonly attemptCount?: number;
+      readonly approvalRequired?: boolean;
+      readonly approvalGrantedAt?: string;
+    } = {},
+  ) {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(
+      createFixtureTask({
+        id: "T1",
+        status: options.status ?? "FAILED",
+        approvalRequired: options.approvalRequired ?? false,
+        ...(options.approvalGrantedAt === undefined
+          ? {}
+          : { approvalGrantedAt: options.approvalGrantedAt }),
+      }),
+    );
+    const attemptCount = options.attemptCount ?? 1;
+    for (let number = 1; number <= attemptCount; number += 1) {
+      await store.putAttempt(
+        createFixtureAttempt({
+          id: `att_T1_${String(number)}`,
+          taskId: "T1",
+          number,
+          status: "FAILED",
+        }),
+      );
+    }
+    return { service: serviceWithOutcome(completedOutcome), store };
   }
 
   it("delegates run exactly once to the orchestrator and maps the outcome", async () => {
@@ -277,6 +311,122 @@ describe("StoreBackedAppService", () => {
       granted: true,
     });
     expect(status.tasks.find((task) => task.id === "T2")?.approval).toBeUndefined();
+  });
+
+  it("returns a failed task to READY and records retry events", async () => {
+    const { service, store } = await retryFixture();
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("accepted");
+    expect(result.message).toBe('task "T1" returned to READY');
+    expect((await store.getTask("T1"))?.status).toBe("READY");
+    const events = await store.listEvents({ taskId: "T1" });
+    expect(events.some((event) => event.type === "task.retry.requested")).toBe(true);
+    expect(
+      events.find((event) => event.type === "task.retry.requested")?.payload,
+    ).toEqual({ previousStatus: "FAILED", attempts: 1 });
+    expect(
+      events.find((event) => event.type === "task.transitioned")?.payload,
+    ).toEqual({ from: "FAILED", to: "READY" });
+  });
+
+  it("returns a needs-human task to READY", async () => {
+    const { service, store } = await retryFixture({ status: "NEEDS_HUMAN" });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("accepted");
+    expect((await store.getTask("T1"))?.status).toBe("READY");
+  });
+
+  it("returns a blocked task to READY", async () => {
+    const { service, store } = await retryFixture({ status: "BLOCKED" });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("accepted");
+    expect((await store.getTask("T1"))?.status).toBe("READY");
+  });
+
+  it("refuses to retry when the attempt budget is exhausted", async () => {
+    const { service, store } = await retryFixture({ attemptCount: 3 });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("rejected");
+    expect(result.message).toMatch(/attempt budget/);
+    expect(result.message).toContain("3/3");
+    expect((await store.getTask("T1"))?.status).toBe("FAILED");
+  });
+
+  it("refuses to retry an approval-required task before approval", async () => {
+    const { service, store } = await retryFixture({ approvalRequired: true });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("rejected");
+    expect(result.message).toMatch(/agentic approve/);
+    expect((await store.getTask("T1"))?.status).toBe("FAILED");
+  });
+
+  it("returns an approved approval-required task to READY without clearing the grant", async () => {
+    const grantedAt = "2026-01-02T00:00:00.000Z";
+    const { service, store } = await retryFixture({
+      approvalRequired: true,
+      approvalGrantedAt: grantedAt,
+    });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("accepted");
+    const task = await store.getTask("T1");
+    expect(task?.status).toBe("READY");
+    expect(task?.approvalGrantedAt).toBe(grantedAt);
+  });
+
+  it("refuses to retry a task whose status is not retryable", async () => {
+    const { service, store } = await retryFixture({ status: "READY" });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("rejected");
+    expect(result.message).toContain(
+      "only FAILED, NEEDS_HUMAN, or BLOCKED tasks can be retried",
+    );
+    expect((await store.getTask("T1"))?.status).toBe("READY");
+  });
+
+  it("refuses to retry an unknown task", async () => {
+    await store.initialize();
+    const service = serviceWithOutcome(completedOutcome);
+
+    const result = await service.retry("T9");
+
+    expect(result).toEqual({
+      kind: "rejected",
+      taskId: "T9",
+      message: 'task "T9" was not found in runner state',
+    });
+  });
+
+  it("renders retry results through the command layer with correct exit codes", async () => {
+    const { service } = await retryFixture();
+    const acceptedCapture = captureIo();
+
+    const acceptedExit = await executeRetryCommand("T1", service, acceptedCapture.io);
+
+    expect(acceptedExit).toBe(0);
+    expect(acceptedCapture.lines.join("\n")).toContain('task "T1" returned to READY');
+    expect(acceptedCapture.errors).toHaveLength(0);
+
+    const exhausted = await retryFixture({ attemptCount: 3 });
+    const rejectedCapture = captureIo();
+
+    const rejectedExit = await executeRetryCommand("T1", exhausted.service, rejectedCapture.io);
+
+    expect(rejectedExit).toBe(1);
+    expect(rejectedCapture.errors.join("\n")).toContain("attempt budget");
   });
 
   it("inspects persisted attempts, events, and failure information without reconstructing state", async () => {

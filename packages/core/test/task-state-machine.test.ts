@@ -30,7 +30,7 @@ const STAGE_ACTIVE_STATES = [
   "INTEGRATING",
 ] as const;
 
-const TERMINAL_STATES = ["DONE", "FAILED", "CANCELLED", "NEEDS_HUMAN"] as const;
+const TERMINAL_STATES = ["DONE", "CANCELLED"] as const;
 
 const UNSUPPORTED_STATES = ["BACKLOG"] as const;
 
@@ -77,10 +77,10 @@ describe("explicit transition table", () => {
       "DONE",
       ...ESCALATION_STATES,
     ]);
-    expect([...getTaskStatusTransitions("NEEDS_HUMAN")]).toEqual([]);
+    expect([...getTaskStatusTransitions("NEEDS_HUMAN")]).toEqual(["READY"]);
     expect([...getTaskStatusTransitions("BLOCKED")]).toEqual(["READY"]);
     expect([...getTaskStatusTransitions("DONE")]).toEqual([]);
-    expect([...getTaskStatusTransitions("FAILED")]).toEqual([]);
+    expect([...getTaskStatusTransitions("FAILED")]).toEqual(["READY"]);
     expect([...getTaskStatusTransitions("CANCELLED")]).toEqual([]);
   });
 });
@@ -129,6 +129,14 @@ describe("valid transitions", () => {
 
   it("allows an unblocked task to return to READY", () => {
     expect(canTransitionTaskStatus("BLOCKED", "READY")).toBe(true);
+  });
+
+  it("allows the runner to retry failed and needs-human tasks", () => {
+    expect(canTransitionTaskStatus("FAILED", "READY")).toBe(true);
+    expect(canTransitionTaskStatus("NEEDS_HUMAN", "READY")).toBe(true);
+    expect(canTransitionTaskStatus("BLOCKED", "READY")).toBe(true);
+    expect(canTransitionTaskStatus("DONE", "READY")).toBe(false);
+    expect(canTransitionTaskStatus("CANCELLED", "READY")).toBe(false);
   });
 
   it("returns ok results carrying the transition for valid moves", () => {
@@ -235,10 +243,11 @@ describe("recovery transition table", () => {
     expect(canReconcileTaskStatus("READY", "NEEDS_HUMAN")).toBe(false);
   });
 
-  it("allows crash recovery to converge an integrated task persisted as FAILED to DONE only", () => {
+  it("allows crash recovery to converge an integrated task persisted as FAILED to DONE, plus the normal retry transition", () => {
     expect(canReconcileTaskStatus("FAILED", "DONE")).toBe(true);
+    expect(canReconcileTaskStatus("FAILED", "READY")).toBe(true);
     for (const to of TASK_STATUSES) {
-      if (to === "DONE") {
+      if (to === "DONE" || to === "READY") {
         continue;
       }
       expect(canReconcileTaskStatus("FAILED", to)).toBe(false);
@@ -334,16 +343,16 @@ describe("assertReconcileTaskStatus", () => {
     expect(() =>
       assertReconcileTaskStatus("BLOCKED", "READY"),
     ).not.toThrow();
+    expect(() =>
+      assertReconcileTaskStatus("FAILED", "READY"),
+    ).not.toThrow();
+    expect(() =>
+      assertReconcileTaskStatus("NEEDS_HUMAN", "READY"),
+    ).not.toThrow();
   });
 
   it("throws for transitions outside both tables", () => {
     expect(() => assertReconcileTaskStatus("DONE", "READY")).toThrow(
-      TaskTransitionError,
-    );
-    expect(() => assertReconcileTaskStatus("FAILED", "READY")).toThrow(
-      TaskTransitionError,
-    );
-    expect(() => assertReconcileTaskStatus("NEEDS_HUMAN", "READY")).toThrow(
       TaskTransitionError,
     );
     expect(() => assertReconcileTaskStatus("READY", "NEEDS_HUMAN")).toThrow(

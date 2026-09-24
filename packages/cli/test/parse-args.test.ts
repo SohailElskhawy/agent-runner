@@ -71,6 +71,14 @@ describe("CLI argument parsing", () => {
     expect(() => parseArgs(["approve"])).toThrow(/requires a <task-id> argument/);
   });
 
+  it("parses the retry command with an explicit task id", () => {
+    expect(parseArgs(["retry", "T1"])).toEqual({ name: "retry", taskId: "T1" });
+  });
+
+  it("rejects retry without a task id", () => {
+    expect(() => parseArgs(["retry"])).toThrow(/requires a <task-id> argument/);
+  });
+
   it("parses help and version aliases", () => {
     expect(parseArgs([])).toEqual({ name: "help" });
     expect(parseArgs(["--help"])).toEqual({ name: "help" });
