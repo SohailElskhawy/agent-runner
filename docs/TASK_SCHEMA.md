@@ -95,6 +95,8 @@ Runtime state is authoritative after execution begins.
 
 Supported task states are defined by the orchestration state machine.
 
+`agentic approve` and `agentic retry` are runner-controlled transitions; agents cannot perform them. Retry is legal from `FAILED`, `NEEDS_HUMAN`, and `BLOCKED` only.
+
 ## Objective
 
 The objective should describe one capability.
@@ -271,14 +273,7 @@ verification:
     - auth-integration
 ```
 
-When E2E is intentionally unnecessary:
-
-```yaml
-verification:
-  e2e:
-    required: false
-    reason: No user-observable workflow changed.
-```
+Checks that are not listed in `verification.required` are not run. Waiving a check is expressed by omission; v0.1 has no per-check opt-out syntax.
 
 ## Limits
 
@@ -294,6 +289,8 @@ limits:
 
 Additional runtime limits may be inherited from project configuration.
 
+Attempt budget: `agentic retry` refuses to return a task to READY when the recorded attempts reached `limits.max_attempts`.
+
 ## Human Approval
 
 Tasks may explicitly require human approval:
@@ -306,7 +303,16 @@ approval:
 
 Project policy may also impose approval regardless of task configuration.
 
+V0.1 approval semantics:
+
+- `agentic approve <task-id>` records a durable approval grant for the task.
+- Approval-required tasks stay unrunnable by the unattended scheduler until the grant exists; `agentic retry` is refused for them until then.
+- The grant survives failure and retry; it is not cleared when a task fails or returns to `READY`.
+- An explicit `agentic run <task-id>` is the human's direct instruction and is not blocked by `approval.required`; the approval gate applies to scheduler selection.
+
 ## Oversized Task Detection
+
+Status: v0.2 — not implemented in v0.1; `SPLIT_REQUIRED` is not produced yet.
 
 A task should be flagged for decomposition when it contains signals such as:
 
