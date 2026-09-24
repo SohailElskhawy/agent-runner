@@ -1,0 +1,37 @@
+{
+  "name": "agentic-dev-runner",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Local-first orchestration engine for reliable autonomous software development with interchangeable coding agents.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SohailElskhawy/agent-runner.git",
+    "directory": "packages/agentic-dev-runner"
+  },
+  "homepage": "https://github.com/SohailElskhawy/agent-runner#readme",
+  "bugs": "https://github.com/SohailElskhawy/agent-runner/issues",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "agentic": "./bundle/main.js"
+  },
+  "files": [
+    "bundle",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "bundle": "node scripts/bundle.mjs",
+    "prepack": "node scripts/stage-docs.mjs",
+    "typecheck": "node --check scripts/bundle.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "vitest": "^5.0.0"
+  }
+}

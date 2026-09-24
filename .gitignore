@@ -6,3 +6,6 @@ coverage/
 .DS_Store
 Thumbs.db
 .serena/
+packages/agentic-dev-runner/bundle/
+packages/agentic-dev-runner/README.md
+packages/agentic-dev-runner/LICENSE
