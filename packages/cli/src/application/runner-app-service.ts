@@ -2,6 +2,7 @@ import type { TaskId } from "@agentic-dev-runner/core";
 import type {
   RecoveryOutcome,
   SingleTaskRunOutcome,
+  WorkflowTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type {
   AddTaskResult,
@@ -14,6 +15,15 @@ import type {
   TaskInspection,
   UnattendedRunRequest,
 } from "./ports.js";
+
+/**
+ * The single-task run seam consumed by the CLI application services. Both the
+ * routed workflow path and the injected single-task orchestrator satisfy it by
+ * covariance, so overrides keep working without an adapter.
+ */
+export interface TaskRunner {
+  run(taskId: TaskId): Promise<WorkflowTaskRunOutcome>;
+}
 
 export interface RunnerAppService {
   init(): Promise<InitResult>;
@@ -64,7 +74,7 @@ export function recoveryOutcomeToRunResult(
 }
 
 export function outcomeToRunResult(
-  outcome: SingleTaskRunOutcome,
+  outcome: WorkflowTaskRunOutcome | SingleTaskRunOutcome,
 ): RunResult {
   switch (outcome.kind) {
     case "completed":
@@ -81,6 +91,16 @@ export function outcomeToRunResult(
       return {
         kind: "cancelled",
         message: `task "${outcome.taskId}" was cancelled: ${outcome.reason}`,
+      };
+    case "blocked":
+      return {
+        kind: "blocked",
+        message: `task "${outcome.taskId}" was blocked: ${outcome.reason}`,
+      };
+    case "pending-integration":
+      return {
+        kind: "rejected",
+        message: `task "${outcome.taskId}" was queued for integration during a single-task run; this is a wiring error`,
       };
     case "rejected":
       return {

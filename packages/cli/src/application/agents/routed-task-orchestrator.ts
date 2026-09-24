@@ -1,60 +1,64 @@
 /**
  * Application-level orchestrator facade that selects the executing agent
- * deterministically before delegating to the provider-independent single-task
- * orchestrator.
+ * deterministically and runs the task's resolved workflow through the
+ * workflow task executor.
  *
  * Routing order per task:
- * 1. read the task and its `routing.capabilities`
+ * 1. read the task and resolve its `workflow` definition
  * 2. join configured agent profiles with discovered adapter availability
  * 3. select a profile with the pure core router
- * 4. resolve the selected adapter and hand it to a fresh single-task
- *    orchestrator through the existing `AgentRuntime` injection
+ * 4. resolve the selected adapter and hand it, the task, and the resolved
+ *    workflow to a fresh `WorkflowTaskExecutor`
  *
- * When no profile can route the task, the facade returns a runner-controlled
- * rejected outcome with routing diagnostics and never invokes the orchestrator,
- * so no attempt is created and no agent process starts.
+ * When the task is missing, its workflow id is unknown, or no profile can
+ * route it, the facade returns a runner-controlled rejected outcome with
+ * diagnostics and never invokes the executor, so no attempt is created and no
+ * agent process starts.
  */
 
-import type {
-  AgentDescriptor,
-  AgentExecutionResult,
-  AgentRegistry,
-  AgentRuntime,
-} from "@agentic-dev-runner/agents";
-import type { AgentProfile } from "@agentic-dev-runner/core";
+import type { AgentRegistry, AgentRuntime } from "@agentic-dev-runner/agents";
+import type { AgentProfile, Task, TaskId, WorkflowDefinition } from "@agentic-dev-runner/core";
+import { resolveWorkflow } from "@agentic-dev-runner/core";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "@agentic-dev-runner/orchestrator";
 import type {
-  SingleTaskOrchestrator,
-  SingleTaskRunOutcome,
+  WorkflowTaskExecutor,
+  WorkflowTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type { AgentAdapterRegistry } from "./agent-adapter-registry.js";
 import { resolveRoutedAgent } from "./agent-routing.js";
+
+export interface RoutedTaskOrchestrator {
+  run(taskId: TaskId): Promise<WorkflowTaskRunOutcome>;
+}
 
 export type RoutedTaskOrchestratorOptions = {
   readonly store: RunnerStore;
   readonly agentProfiles: readonly AgentProfile[];
   readonly agents: AgentRegistry;
   readonly adapters: AgentAdapterRegistry;
-  readonly createAgentBackedOrchestrator: (
-    agent: AgentRuntime,
-  ) => SingleTaskOrchestrator;
+  readonly createWorkflowExecutor: (input: {
+    readonly agent: AgentRuntime;
+    readonly task: Task;
+    readonly workflow: WorkflowDefinition;
+  }) => WorkflowTaskExecutor;
 };
 
 export function createRoutedTaskOrchestrator(
   options: RoutedTaskOrchestratorOptions,
-): SingleTaskOrchestrator {
-  return new RoutedTaskOrchestrator(options);
+): RoutedTaskOrchestrator {
+  return new RoutedTaskOrchestratorImpl(options);
 }
 
-class RoutedTaskOrchestrator implements SingleTaskOrchestrator {
+type CreateWorkflowExecutor =
+  RoutedTaskOrchestratorOptions["createWorkflowExecutor"];
+
+class RoutedTaskOrchestratorImpl implements RoutedTaskOrchestrator {
   private readonly store: RunnerStore;
   private readonly agentProfiles: readonly AgentProfile[];
   private readonly agents: AgentRegistry;
   private readonly adapters: AgentAdapterRegistry;
-  private readonly createAgentBackedOrchestrator: (
-    agent: AgentRuntime,
-  ) => SingleTaskOrchestrator;
+  private readonly createWorkflowExecutor: CreateWorkflowExecutor;
   private running = false;
 
   constructor(options: RoutedTaskOrchestratorOptions) {
@@ -62,10 +66,10 @@ class RoutedTaskOrchestrator implements SingleTaskOrchestrator {
     this.agentProfiles = [...options.agentProfiles];
     this.agents = options.agents;
     this.adapters = options.adapters;
-    this.createAgentBackedOrchestrator = options.createAgentBackedOrchestrator;
+    this.createWorkflowExecutor = options.createWorkflowExecutor;
   }
 
-  async run(taskId: string): Promise<SingleTaskRunOutcome> {
+  async run(taskId: TaskId): Promise<WorkflowTaskRunOutcome> {
     if (this.running) {
       throw new OrchestrationError(
         "A task is already executing in this orchestrator; single-task orchestration is strictly sequential",
@@ -79,13 +83,19 @@ class RoutedTaskOrchestrator implements SingleTaskOrchestrator {
     }
   }
 
-  private async routeAndRun(taskId: string): Promise<SingleTaskRunOutcome> {
+  private async routeAndRun(taskId: TaskId): Promise<WorkflowTaskRunOutcome> {
     const task = await this.store.getTask(taskId);
     if (task === null) {
-      // Routing requirements are unknown for a missing task; delegate so the
-      // orchestrator reports it. The unrouted runtime is never invoked because
-      // the orchestrator rejects before any agent invocation.
-      return await this.agentBacked(unroutedAgentRuntime()).run(taskId);
+      return { kind: "rejected", taskId, reason: `task "${taskId}" not found` };
+    }
+    const resolution = resolveWorkflow(task.workflow);
+    if (!resolution.resolved) {
+      return {
+        kind: "rejected",
+        taskId,
+        reason: `unknown workflow "${task.workflow}" for task "${taskId}"`,
+        taskStatus: task.status,
+      };
     }
     const selection = await resolveRoutedAgent({
       requiredCapabilities: task.routing.capabilities,
@@ -101,28 +111,10 @@ class RoutedTaskOrchestrator implements SingleTaskOrchestrator {
         taskStatus: task.status,
       };
     }
-    return await this.agentBacked(selection.runtime).run(taskId);
+    return await this.createWorkflowExecutor({
+      agent: selection.runtime,
+      task,
+      workflow: resolution.workflow,
+    }).run();
   }
-
-  private agentBacked(agent: AgentRuntime): SingleTaskOrchestrator {
-    return this.createAgentBackedOrchestrator(agent);
-  }
-}
-
-/**
- * Placeholder runtime for paths that never reach an agent invocation
- * (a missing task). Invoking it is a wiring violation, not a fallback.
- */
-class UnroutedAgentRuntime implements AgentRuntime {
-  readonly descriptor: AgentDescriptor = { id: "unrouted" };
-
-  async invoke(): Promise<AgentExecutionResult> {
-    throw new Error(
-      "no agent runtime was selected; routing must select an agent before the orchestrator can invoke it",
-    );
-  }
-}
-
-function unroutedAgentRuntime(): AgentRuntime {
-  return new UnroutedAgentRuntime();
 }

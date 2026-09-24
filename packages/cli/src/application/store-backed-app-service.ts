@@ -18,8 +18,6 @@ import type {
   ExecutionClaimRecovery,
   IntegrationQueueProcessor,
   WorktreeRecovery,
-  SingleTaskOrchestrator,
-  SingleTaskRunOutcome,
   UnattendedScheduler,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
@@ -29,7 +27,7 @@ import {
   outcomeToRunResult,
   recoveryOutcomeToRunResult,
 } from "./runner-app-service.js";
-import type { RunnerAppService } from "./runner-app-service.js";
+import type { RunnerAppService, TaskRunner } from "./runner-app-service.js";
 import type {
   AddTaskResult,
   AgentStatusEntry,
@@ -53,7 +51,7 @@ export type StoreBackedAppServiceOptions = {
   readonly storePath: string;
   readonly projectRoot: string;
   readonly store: RunnerStore;
-  readonly orchestrator: SingleTaskOrchestrator;
+  readonly orchestrator: TaskRunner;
   readonly recovery: CrashRecovery;
   readonly executionClaimRecovery?: ExecutionClaimRecovery | undefined;
   readonly integrationRecovery?: IntegrationQueueProcessor | undefined;
@@ -74,7 +72,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly storePath: string;
   private readonly projectRoot: string;
   private readonly store: RunnerStore;
-  private readonly orchestrator: SingleTaskOrchestrator;
+  private readonly orchestrator: TaskRunner;
   private readonly recovery: CrashRecovery;
   private readonly executionClaimRecovery: ExecutionClaimRecovery;
   private readonly integrationRecovery: IntegrationQueueProcessor | undefined;
@@ -303,7 +301,7 @@ class StoreBackedAppService implements RunnerAppService {
     if (recoveryResult !== null) {
       return recoveryResult;
     }
-    const outcome: SingleTaskRunOutcome = await this.orchestrator.run(taskId);
+    const outcome = await this.orchestrator.run(taskId);
     return outcomeToRunResult(outcome);
   }
 

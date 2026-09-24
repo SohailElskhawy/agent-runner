@@ -24,6 +24,7 @@ export type RunResult =
   | { readonly kind: "completed"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "cancelled"; readonly message: string }
+  | { readonly kind: "blocked"; readonly message: string }
   | { readonly kind: "rejected"; readonly message: string };
 
 export type ApprovalCommandResult = {

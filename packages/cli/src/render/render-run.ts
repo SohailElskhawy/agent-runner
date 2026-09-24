@@ -8,6 +8,7 @@ export function renderRunResult(io: CliIo, result: RunResult): void {
       break;
     case "failed":
     case "cancelled":
+    case "blocked":
     case "rejected":
       io.writeError(result.message);
       break;

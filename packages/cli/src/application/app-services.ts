@@ -27,6 +27,7 @@ import type {
   UnattendedScheduler,
 } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
+import type { TaskRunner } from "./runner-app-service.js";
 import { createAgentAdapterRegistry } from "./agents/agent-adapter-registry.js";
 import type { AgentAdapterRegistry } from "./agents/agent-adapter-registry.js";
 import { createRoutedTaskOrchestrator } from "./agents/routed-task-orchestrator.js";
@@ -46,7 +47,7 @@ import { resolveRoutedAgent } from "./agents/agent-routing.js";
 
 export type AppServices = {
   readonly store: RunnerStore;
-  readonly orchestrator: SingleTaskOrchestrator;
+  readonly orchestrator: TaskRunner;
   readonly recovery: CrashRecovery;
   readonly executionClaimRecovery: ReturnType<typeof createExecutionClaimRecovery>;
   readonly agents: AgentRegistry;
@@ -124,10 +125,13 @@ export async function createAppServices(
         agentProfiles,
         agents,
         adapters,
-        createAgentBackedOrchestrator: (agent) =>
-          createSingleTaskOrchestrator({
+        createWorkflowExecutor: ({ agent, task, workflow }) =>
+          createWorkflowTaskExecutor({
             ...orchestratorBaseOptions,
             agent,
+            task,
+            workflow,
+            integrationMode: "immediate",
           }),
       }));
   const recovery = overrides.recovery ?? createCrashRecovery({

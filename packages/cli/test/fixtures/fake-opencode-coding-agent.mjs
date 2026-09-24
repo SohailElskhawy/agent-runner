@@ -17,6 +17,23 @@ try {
   process.exit(3);
 }
 
+// Workflow stages invoke the same agent with an explicit stage instruction;
+// the legacy single-task invocation carries none. Review stages must not
+// mutate the worktree and the PLAN stage must produce plan text only.
+if (
+  prompt.includes("STAGE PLAN_REVIEW —") ||
+  prompt.includes("STAGE CODE_REVIEW —")
+) {
+  process.stdout.write(JSON.stringify({ decision: "APPROVED" }));
+  process.exit(0);
+}
+if (prompt.includes("STAGE PLAN —")) {
+  process.stdout.write(
+    "1. Create src/math/clamp.cjs with input validation.\n2. Add test/math/clamp.test.cjs covering the range behavior.\n",
+  );
+  process.exit(0);
+}
+
 const cwd = process.cwd();
 const fixtureFiles = {
   "src/math/clamp.cjs": `function clamp(value, min, max) {

@@ -6,6 +6,7 @@ import type {
   ResourceLock,
   StageRun,
   Task,
+  WorkflowDefinition,
 } from "@agentic-dev-runner/core";
 import type {
   StoredEvent,
@@ -16,8 +17,8 @@ import type {
 } from "@agentic-dev-runner/persistence";
 import { OrchestrationError } from "@agentic-dev-runner/orchestrator";
 import type {
-  SingleTaskOrchestrator,
-  SingleTaskRunOutcome,
+  WorkflowTaskExecutor,
+  WorkflowTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type {
   AgentDescriptor,
@@ -26,7 +27,10 @@ import type {
   AgentRuntime,
 } from "@agentic-dev-runner/agents";
 import type { AgentProfile } from "@agentic-dev-runner/core";
-import { createRoutedTaskOrchestrator } from "../src/application/agents/routed-task-orchestrator.js";
+import {
+  createRoutedTaskOrchestrator,
+  type RoutedTaskOrchestrator,
+} from "../src/application/agents/routed-task-orchestrator.js";
 import { createAgentAdapterRegistry } from "../src/application/agents/agent-adapter-registry.js";
 import { createFixtureTask } from "./fixtures.js";
 
@@ -146,7 +150,7 @@ const opencodeProfile: AgentProfile = {
   capabilities: ["typescript", "javascript"],
 };
 
-const rejectedOutcome: SingleTaskRunOutcome = {
+const rejectedOutcome: WorkflowTaskRunOutcome = {
   kind: "rejected",
   taskId: "M001",
   reason: "task is not runnable",
@@ -163,17 +167,23 @@ function registryWith(
 }
 
 describe("createRoutedTaskOrchestrator", () => {
+  type ExecutorCall = {
+    readonly agent: AgentRuntime;
+    readonly task: Task;
+    readonly workflow: WorkflowDefinition;
+  };
+
   function routedOrchestrator(input: {
     profiles: readonly AgentProfile[];
     availability: readonly { id: string; available: boolean }[];
     adapters?: readonly AgentRuntime[];
     store: RunnerStore;
-    outcome?: SingleTaskRunOutcome;
+    outcome?: WorkflowTaskRunOutcome;
   }): {
-    orchestrator: SingleTaskOrchestrator;
-    baseCalls: { agent: AgentRuntime }[];
+    orchestrator: RoutedTaskOrchestrator;
+    executorCalls: ExecutorCall[];
   } {
-    const baseCalls: { agent: AgentRuntime }[] = [];
+    const executorCalls: ExecutorCall[] = [];
     const orchestrator = createRoutedTaskOrchestrator({
       store: input.store,
       agentProfiles: input.profiles,
@@ -184,69 +194,77 @@ describe("createRoutedTaskOrchestrator", () => {
           new StubAgentRuntime({ id: "codex" }),
         ],
       ),
-      createAgentBackedOrchestrator: (agent) => {
-        baseCalls.push({ agent });
-        return {
-          async run(): Promise<SingleTaskRunOutcome> {
+      createWorkflowExecutor: (call) => {
+        executorCalls.push(call);
+        const executor: WorkflowTaskExecutor = {
+          async run(): Promise<WorkflowTaskRunOutcome> {
             return input.outcome ?? rejectedOutcome;
           },
         };
+        return executor;
       },
     });
-    return { orchestrator, baseCalls };
+    return { orchestrator, executorCalls };
   }
 
-  function seededStore(capabilities: readonly string[]): RecordingStore {
+  function seededStore(
+    capabilities: readonly string[],
+    workflow = "default",
+  ): RecordingStore {
     const store = new RecordingStore();
     const task = createFixtureTask();
     store.putTask({
       ...task,
+      workflow,
       routing: { complexity: task.routing.complexity, capabilities },
     });
     return store;
   }
 
-  it("delegates to the orchestrator with the selected adapter and its profile model", async () => {
-    const { orchestrator, baseCalls } = routedOrchestrator({
+  it("delegates to the workflow executor with the selected agent and resolved workflow", async () => {
+    const completedOutcome: WorkflowTaskRunOutcome = {
+      kind: "completed",
+      taskId: "M001",
+      attemptId: "att_M001_1",
+      task: createFixtureTask(),
+      attempt: {
+        id: "att_M001_1",
+        taskId: "M001",
+        number: 1,
+        status: "SUCCEEDED",
+        agent: "codex",
+        baseRevision: "base",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:05.000Z",
+      },
+      branch: "task/M001/attempt-1",
+      worktreePath: "fixture/worktrees/M001/attempt-1",
+      integration: { kind: "fast-forward", revision: "abc1234" },
+    };
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [codexProfile, opencodeProfile],
       availability: [
         { id: "codex", available: true },
         { id: "opencode", available: true },
       ],
       store: seededStore(["typescript"]),
-      outcome: {
-        kind: "completed",
-        taskId: "M001",
-        attemptId: "att_M001_1",
-        task: createFixtureTask(),
-        attempt: {
-          id: "att_M001_1",
-          taskId: "M001",
-          number: 1,
-          status: "SUCCEEDED",
-          agent: "codex",
-          baseRevision: "base",
-          startedAt: "2026-01-01T00:00:00.000Z",
-          finishedAt: "2026-01-01T00:00:05.000Z",
-        },
-        branch: "task/M001/attempt-1",
-        worktreePath: "fixture/worktrees/M001/attempt-1",
-        integration: { kind: "fast-forward", revision: "abc1234" },
-      },
+      outcome: completedOutcome,
     });
 
     const outcome = await orchestrator.run("M001");
 
-    expect(outcome.kind).toBe("completed");
-    expect(baseCalls).toHaveLength(1);
-    expect(baseCalls[0]?.agent.descriptor).toEqual({
+    expect(outcome).toBe(completedOutcome);
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]?.agent.descriptor).toEqual({
       id: "codex",
       model: "gpt-5-codex",
     });
+    expect(executorCalls[0]?.task.id).toBe("M001");
+    expect(executorCalls[0]?.workflow.id).toBe("default");
   });
 
   it("selects the first eligible configured profile deterministically", async () => {
-    const { orchestrator, baseCalls } = routedOrchestrator({
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [codexProfile, opencodeProfile],
       availability: [
         { id: "codex", available: true },
@@ -257,13 +275,13 @@ describe("createRoutedTaskOrchestrator", () => {
 
     await orchestrator.run("M001");
 
-    expect(baseCalls).toHaveLength(1);
-    expect(baseCalls[0]?.agent.descriptor.id).toBe("codex");
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]?.agent.descriptor.id).toBe("codex");
   });
 
   it("returns a runner-controlled rejected outcome with routing diagnostics when no profile can route", async () => {
     const store = seededStore(["rust"]);
-    const { orchestrator, baseCalls } = routedOrchestrator({
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [opencodeProfile, codexProfile],
       availability: [
         { id: "opencode", available: true },
@@ -281,7 +299,7 @@ describe("createRoutedTaskOrchestrator", () => {
       'no agent profile can route task "M001": no eligible agent profile: profile "opencode-profile" is missing required capabilities: rust; profile "codex-profile" is missing required capabilities: rust',
     );
     expect(outcome.taskStatus).toBe("READY");
-    expect(baseCalls).toHaveLength(0);
+    expect(executorCalls).toHaveLength(0);
     expect(store.attempts).toHaveLength(0);
     expect(store.events).toHaveLength(0);
   });
@@ -294,7 +312,7 @@ describe("createRoutedTaskOrchestrator", () => {
         throw new Error("agent must not start when routing fails");
       },
     };
-    const { orchestrator } = routedOrchestrator({
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [opencodeProfile],
       availability: [{ id: "opencode", available: true }],
       adapters: [recordingRuntime],
@@ -304,12 +322,13 @@ describe("createRoutedTaskOrchestrator", () => {
     const outcome = await orchestrator.run("M001");
 
     expect(outcome.kind).toBe("rejected");
+    expect(executorCalls).toHaveLength(0);
     expect(store.attempts).toHaveLength(0);
   });
 
   it("rejects clearly when no agent profiles are configured", async () => {
     const store = seededStore(["typescript"]);
-    const { orchestrator, baseCalls } = routedOrchestrator({
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [],
       availability: [{ id: "opencode", available: true }],
       store,
@@ -320,13 +339,13 @@ describe("createRoutedTaskOrchestrator", () => {
     expect(outcome.kind).toBe("rejected");
     if (outcome.kind !== "rejected") return;
     expect(outcome.reason).toContain("no agent profiles are configured");
-    expect(baseCalls).toHaveLength(0);
+    expect(executorCalls).toHaveLength(0);
     expect(store.attempts).toHaveLength(0);
   });
 
   it("treats profiles referencing unknown adapters as unavailable without crashing or falling back", async () => {
     const store = seededStore(["typescript"]);
-    const { orchestrator, baseCalls } = routedOrchestrator({
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [
         { id: "unknown-profile", adapterId: "claude", capabilities: ["typescript"] },
       ],
@@ -341,11 +360,11 @@ describe("createRoutedTaskOrchestrator", () => {
     expect(outcome.reason).toContain(
       'references unknown adapter "claude" with no discovery result',
     );
-    expect(baseCalls).toHaveLength(0);
+    expect(executorCalls).toHaveLength(0);
   });
 
   it("routes to the next available eligible profile when the first is unavailable", async () => {
-    const { orchestrator, baseCalls } = routedOrchestrator({
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [opencodeProfile, codexProfile],
       availability: [
         { id: "opencode", available: false },
@@ -357,29 +376,51 @@ describe("createRoutedTaskOrchestrator", () => {
 
     await orchestrator.run("M001");
 
-    expect(baseCalls).toHaveLength(1);
-    expect(baseCalls[0]?.agent.descriptor.id).toBe("codex");
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]?.agent.descriptor.id).toBe("codex");
   });
 
-  it("delegates unknown tasks to the orchestrator so it reports the missing task", async () => {
-    const { orchestrator, baseCalls } = routedOrchestrator({
+  it("rejects a missing task without invoking the executor", async () => {
+    const store = new RecordingStore();
+    const { orchestrator, executorCalls } = routedOrchestrator({
       profiles: [codexProfile],
       availability: [{ id: "codex", available: true }],
-      store: new RecordingStore(),
+      store,
     });
 
     const outcome = await orchestrator.run("M999");
 
     expect(outcome.kind).toBe("rejected");
-    expect(outcome).toBe(rejectedOutcome);
-    expect(baseCalls).toHaveLength(1);
-    expect(baseCalls[0]?.agent.descriptor.id).toBe("unrouted");
+    if (outcome.kind !== "rejected") return;
+    expect(outcome.reason).toBe('task "M999" not found');
+    expect(executorCalls).toHaveLength(0);
+    expect(store.attempts).toHaveLength(0);
+  });
+
+  it("rejects an unknown workflow id without invoking the executor", async () => {
+    const store = seededStore(["typescript"], "custom-unknown");
+    const { orchestrator, executorCalls } = routedOrchestrator({
+      profiles: [codexProfile],
+      availability: [{ id: "codex", available: true }],
+      store,
+    });
+
+    const outcome = await orchestrator.run("M001");
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind !== "rejected") return;
+    expect(outcome.reason).toBe(
+      'unknown workflow "custom-unknown" for task "M001"',
+    );
+    expect(outcome.taskStatus).toBe("READY");
+    expect(executorCalls).toHaveLength(0);
+    expect(store.attempts).toHaveLength(0);
   });
 
   it("rejects a second run while one is still executing", async () => {
     const store = seededStore(["typescript"]);
-    let release!: (outcome: SingleTaskRunOutcome) => void;
-    const gate = new Promise<SingleTaskRunOutcome>((resolve) => {
+    let release!: (outcome: WorkflowTaskRunOutcome) => void;
+    const gate = new Promise<WorkflowTaskRunOutcome>((resolve) => {
       release = resolve;
     });
     const orchestrator = createRoutedTaskOrchestrator({
@@ -387,8 +428,8 @@ describe("createRoutedTaskOrchestrator", () => {
       agentProfiles: [codexProfile],
       agents: registryWith([{ id: "codex", available: true }]),
       adapters: createAgentAdapterRegistry([new StubAgentRuntime({ id: "codex" })]),
-      createAgentBackedOrchestrator: () => ({
-        async run(): Promise<SingleTaskRunOutcome> {
+      createWorkflowExecutor: () => ({
+        async run(): Promise<WorkflowTaskRunOutcome> {
           return await gate;
         },
       }),
@@ -410,18 +451,23 @@ describe("createRoutedTaskOrchestrator", () => {
         throw new Error("discovery exploded");
       },
     };
+    const executorCalls: ExecutorCall[] = [];
     const orchestrator = createRoutedTaskOrchestrator({
       store: seededStore(["typescript"]),
       agentProfiles: [codexProfile],
       agents: failingRegistry,
       adapters: createAgentAdapterRegistry([new StubAgentRuntime({ id: "codex" })]),
-      createAgentBackedOrchestrator: () => ({
-        async run(): Promise<SingleTaskRunOutcome> {
-          return rejectedOutcome;
-        },
-      }),
+      createWorkflowExecutor: (call) => {
+        executorCalls.push(call);
+        return {
+          async run(): Promise<WorkflowTaskRunOutcome> {
+            return rejectedOutcome;
+          },
+        };
+      },
     });
 
     await expect(orchestrator.run("M001")).rejects.toThrow("discovery exploded");
+    expect(executorCalls).toHaveLength(0);
   });
 });
