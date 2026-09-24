@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import crossSpawn from "cross-spawn";
 import { performance } from "node:perf_hooks";
 import { Buffer } from "node:buffer";
 import type {
@@ -165,9 +166,10 @@ type SpawnAttempt =
 
 function trySpawn(spec: ProcessSpec): SpawnAttempt {
   try {
+    const spawnImpl = process.platform === "win32" ? crossSpawn : spawn;
     return {
       ok: true,
-      child: spawn(spec.executable, [...(spec.args ?? [])], {
+      child: spawnImpl(spec.executable, [...(spec.args ?? [])], {
         cwd: spec.cwd,
         env: spec.env,
         windowsHide: true,

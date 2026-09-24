@@ -335,6 +335,21 @@ describe("OpenCodeAdapter", () => {
       expect(result.failure.kind).toBe("adapter");
     }
   });
+
+  it.skipIf(process.platform !== "win32")(
+    "probes availability through a .cmd launcher shim on Windows",
+    async () => {
+      const adapter = new OpenCodeAdapter(runner, {
+        executable: fixturePath("fake-opencode.cmd"),
+      });
+
+      expect(await adapter.probeAvailability()).toEqual({
+        available: true,
+        version: "fake opencode 1.0.0",
+        reason: null,
+      });
+    },
+  );
 });
 
 const SMOKE_ENABLED = process.env.AGENTIC_OPENCODE_SMOKE === "1";

@@ -1,6 +1,6 @@
 import { copyFileSync, linkSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -249,4 +249,25 @@ describe("NodeProcessRunner", () => {
     expect(first.outcome).toEqual({ kind: "completed", code: 0 });
     expect(second.outcome).toEqual({ kind: "completed", code: 2 });
   });
+});
+
+const windowsOnly = it.skipIf(process.platform !== "win32");
+
+windowsOnly("spawns .cmd shims on PATH with argument fidelity", async () => {
+  const fixtureDir = fileURLToPath(new URL("./fixtures", import.meta.url));
+  const runner = createNodeProcessRunner();
+  const args = [
+    "plain",
+    "with space",
+    'with "quotes"',
+    "ampersand & pipe | char",
+    "caret ^ and parens ( )",
+  ];
+  const result = await runner.run({
+    executable: "shim-args.cmd",
+    args,
+    env: { ...process.env, PATH: `${fixtureDir}${delimiter}${process.env.PATH ?? ""}` },
+  });
+  expect(result.outcome).toEqual({ kind: "completed", code: 0 });
+  expect(JSON.parse(result.stdout)).toEqual(args);
 });

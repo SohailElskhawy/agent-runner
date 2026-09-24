@@ -18,8 +18,12 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^26.5.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6"
   }
 }
