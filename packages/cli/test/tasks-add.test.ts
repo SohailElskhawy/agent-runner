@@ -648,6 +648,9 @@ describe("agentic tasks add", () => {
       async listAgents() {
         throw new Error("listAgents must not be called");
       },
+      async doctor() {
+        throw new Error("doctor must not be called");
+      },
       async close() {
         return;
       },

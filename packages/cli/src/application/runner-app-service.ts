@@ -4,6 +4,7 @@ import type {
   SingleTaskRunOutcome,
   WorkflowTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
+import type { DoctorReport } from "./doctor.js";
 import type {
   AddTaskResult,
   AgentStatusEntry,
@@ -37,6 +38,7 @@ export interface RunnerAppService {
   listTaskSummaries(): Promise<readonly TaskListEntry[]>;
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
   listAgents(): Promise<readonly AgentStatusEntry[]>;
+  doctor(): Promise<DoctorReport>;
   close(): Promise<void>;
 }
 

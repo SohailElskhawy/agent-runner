@@ -1,4 +1,7 @@
-import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
+import {
+  createNodeProcessRunner,
+  type ProcessRunner,
+} from "@agentic-dev-runner/platform";
 import { createGitManager } from "@agentic-dev-runner/git";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { createVerificationEngine, toVerificationCheckSpecs } from "@agentic-dev-runner/verification";
@@ -57,6 +60,10 @@ export type AppServices = {
   readonly worktreeRecovery: ReturnType<typeof createWorktreeRecovery>;
   /** The configured default unattended scheduling capacity. */
   readonly maxParallelism: number;
+  /** Process execution seam shared by git, verification, and agent adapters. */
+  readonly runner: ProcessRunner;
+  /** The project configuration loaded at composition time, if any. */
+  readonly configuration: ProjectConfiguration | null;
 };
 
 export type AppServicesOverrides = {
@@ -200,6 +207,8 @@ export async function createAppServices(
     adapters,
     scheduler,
     maxParallelism: resolveMaxParallelism(options),
+    runner,
+    configuration,
   };
 }
 

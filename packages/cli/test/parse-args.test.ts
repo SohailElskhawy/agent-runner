@@ -56,6 +56,10 @@ describe("CLI argument parsing", () => {
     expect(parseArgs(["agents"])).toEqual({ name: "agents" });
   });
 
+  it("parses doctor", () => {
+    expect(parseArgs(["doctor"])).toEqual({ name: "doctor" });
+  });
+
   it("parses bare tasks as a list command", () => {
     expect(parseArgs(["tasks"])).toEqual({ name: "tasks", action: "list" });
   });
@@ -118,6 +122,7 @@ describe("CLI argument parsing", () => {
     expect(() => parseArgs(["init", "extra"])).toThrow(CliError);
     expect(() => parseArgs(["status", "extra"])).toThrow(CliError);
     expect(() => parseArgs(["agents", "extra"])).toThrow(CliError);
+    expect(() => parseArgs(["doctor", "extra"])).toThrow(CliError);
   });
 
   it("rejects unknown commands", () => {

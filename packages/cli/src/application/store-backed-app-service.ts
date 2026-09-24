@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { basename } from "node:path";
 import {
   buildTaskFromManualInput,
@@ -8,10 +9,15 @@ import {
   validateManualTaskInput,
   type IntegrationQueueStatus,
   type Project,
+  type ProjectConfiguration,
   type Task,
   type TaskId,
   type ExecutionClaim,
 } from "@agentic-dev-runner/core";
+import {
+  createNodeProcessRunner,
+  type ProcessRunner,
+} from "@agentic-dev-runner/platform";
 import { createExecutionClaimRecovery } from "@agentic-dev-runner/orchestrator";
 import type {
   CrashRecovery,
@@ -23,6 +29,7 @@ import type {
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
 import type { AgentRegistry } from "@agentic-dev-runner/agents";
 import { CliError } from "../errors.js";
+import { describeError } from "../io.js";
 import {
   outcomeToRunResult,
   recoveryOutcomeToRunResult,
@@ -46,7 +53,12 @@ import type {
 import { buildTaskInspection, toLatestAttemptSummary } from "./inspect-view.js";
 import type { TaskStatusEntry } from "./ports.js";
 import { readTaskFile } from "./task-file.js";
-import { DEFAULT_MAX_PARALLELISM, DEFAULT_PROJECT_ID } from "./defaults.js";
+import { runDoctorChecks, type DoctorReport } from "./doctor.js";
+import {
+  DEFAULT_MAX_PARALLELISM,
+  DEFAULT_PROJECT_ID,
+  resolveWorktreesDir,
+} from "./defaults.js";
 
 export type StoreBackedAppServiceOptions = {
   readonly storePath: string;
@@ -61,6 +73,12 @@ export type StoreBackedAppServiceOptions = {
   readonly scheduler?: UnattendedScheduler | null | undefined;
   /** The configured unattended scheduling capacity, for capacity reporting. */
   readonly maxParallelism?: number | undefined;
+  /** Process execution seam used by preflight checks to probe external tools. */
+  readonly runner?: ProcessRunner | undefined;
+  /** Task worktrees directory reported by `doctor`; defaults to the state dir layout. */
+  readonly worktreesDir?: string | undefined;
+  /** The configuration loaded at composition time, if any. */
+  readonly configuration?: ProjectConfiguration | null | undefined;
 };
 
 export function createStoreBackedAppService(
@@ -81,6 +99,9 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly agents: AgentRegistry;
   private readonly scheduler: UnattendedScheduler | null;
   private readonly maxParallelism: number;
+  private readonly runner: ProcessRunner;
+  private readonly worktreesDir: string;
+  private readonly configuration: ProjectConfiguration | null;
   private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
@@ -98,6 +119,10 @@ class StoreBackedAppService implements RunnerAppService {
     this.agents = options.agents;
     this.scheduler = options.scheduler ?? null;
     this.maxParallelism = options.maxParallelism ?? DEFAULT_MAX_PARALLELISM;
+    this.runner = options.runner ?? createNodeProcessRunner();
+    this.worktreesDir =
+      options.worktreesDir ?? resolveWorktreesDir({ projectRoot: options.projectRoot });
+    this.configuration = options.configuration ?? null;
   }
 
   async init(): Promise<InitResult> {
@@ -418,6 +443,45 @@ class StoreBackedAppService implements RunnerAppService {
       version: agent.version,
       reason: agent.reason,
     }));
+  }
+
+  async doctor(): Promise<DoctorReport> {
+    try {
+      await this.store.initialize();
+    } catch (error) {
+      throw new CliError(`runner state could not be opened: ${describeError(error)}`);
+    }
+    return await runDoctorChecks({
+      nodeVersion: process.versions.node,
+      projectRoot: this.projectRoot,
+      storePath: this.storePath,
+      worktreesDir: this.worktreesDir,
+      configuration: this.configuration,
+      configurationError: null,
+      projects: await this.store.listProjects(),
+      agents: await this.listAgents(),
+      runGitVersion: async () => {
+        const result = await this.runner.run({
+          executable: "git",
+          args: ["--version"],
+        });
+        return result.outcome.kind === "completed" && result.outcome.code === 0
+          ? { ok: true, detail: result.stdout.trim() }
+          : {
+              ok: false,
+              detail:
+                "git could not be executed; install Git and ensure it is on PATH",
+            };
+      },
+      ensureWorktreesDir: async () => {
+        try {
+          await mkdir(this.worktreesDir, { recursive: true });
+          return { ok: true, detail: "writable" };
+        } catch (error) {
+          return { ok: false, detail: describeError(error) };
+        }
+      },
+    });
   }
 
   async close(): Promise<void> {

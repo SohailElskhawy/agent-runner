@@ -7,6 +7,7 @@ import { renderTaskInspection } from "../render/render-inspect.js";
 import { renderTaskAddResult } from "../render/render-tasks-add.js";
 import { renderTasksList } from "../render/render-tasks-list.js";
 import { renderAgentsReport } from "../render/render-agents.js";
+import { renderDoctorReport } from "../render/render-doctor.js";
 import type { RunnerAppService } from "../application/runner-app-service.js";
 
 export const EXIT_SUCCESS = 0;
@@ -120,4 +121,13 @@ export async function executeAgentsCommand(
   const agents = await services.listAgents();
   renderAgentsReport(io, agents);
   return EXIT_SUCCESS;
+}
+
+export async function executeDoctorCommand(
+  services: RunnerAppService,
+  io: CliIo,
+): Promise<number> {
+  const report = await services.doctor();
+  renderDoctorReport(io, report);
+  return report.ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

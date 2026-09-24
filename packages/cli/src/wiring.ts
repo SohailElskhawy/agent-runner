@@ -4,6 +4,7 @@ import {
   defaultStateDir,
   resolveProjectRoot,
   resolveStorePath,
+  resolveWorktreesDir,
 } from "./application/defaults.js";
 import type { RunnerAppService } from "./application/runner-app-service.js";
 
@@ -28,6 +29,9 @@ export async function createServices(
     agents: appServices.agents,
     scheduler: appServices.scheduler,
     maxParallelism: appServices.maxParallelism,
+    runner: appServices.runner,
+    worktreesDir: resolveWorktreesDir({ projectRoot: root, stateDir }),
+    configuration: appServices.configuration,
   });
   return Promise.resolve(service);
 }

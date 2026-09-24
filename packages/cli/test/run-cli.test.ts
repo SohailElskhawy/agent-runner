@@ -153,6 +153,12 @@ function recordingService(result: {
         ]
       );
     },
+    async doctor() {
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return { checks: [], ok: true };
+    },
     async close() {
       return;
     },

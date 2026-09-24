@@ -10,6 +10,7 @@ export type ParsedCommand =
   | { readonly name: "retry"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "list" }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
+  | { readonly name: "doctor" }
   | { readonly name: "agents" }
   | { readonly name: "help" }
   | { readonly name: "version" };
@@ -23,6 +24,7 @@ export const KNOWN_COMMANDS = [
   "approve",
   "retry",
   "tasks",
+  "doctor",
   "agents",
   "help",
   "version",
@@ -52,6 +54,9 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return { name: "retry", taskId: requireTaskId(command, rest) };
     case "tasks":
       return parseTasksCommand(rest);
+    case "doctor":
+      requireNoExtraArguments(command, rest);
+      return { name: "doctor" };
     case "agents":
       requireNoExtraArguments(command, rest);
       return { name: "agents" };
@@ -217,6 +222,7 @@ export const USAGE = `Usage:
   agentic approve <task-id>
   agentic retry <task-id>
   agentic tasks [add <task-file>]
+  agentic doctor
   agentic agents
   agentic help
   agentic version
@@ -228,6 +234,9 @@ concurrently for that run (a positive integer, default 1). "run-all" is a
 compatibility alias for unattended "run".
 
 "agents" reports which built-in coding-agent CLIs are locally available.
+"doctor" runs local preflight checks (Node, Git, project state, configuration,
+coding agents, and the worktrees directory), reports PASS/WARN/FAIL per check,
+and exits non-zero when any check fails.
 "tasks" with no subcommand lists the persisted tasks with their status,
 priority, milestone, dependencies, attempt count, and approval state.
 "tasks add" parses one JSON task file written in the documented task schema
