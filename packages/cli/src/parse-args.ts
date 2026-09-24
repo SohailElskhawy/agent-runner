@@ -227,7 +227,9 @@ export const USAGE = `Usage:
   agentic help
   agentic version
 
-"run <task-id>" executes one task through the intentional single-task path.
+"run <task-id>" executes the task's resolved workflow (default: PLAN ->
+PLAN_REVIEW -> IMPLEMENT -> CODE_REVIEW -> VERIFY -> INTEGRATE) with
+integration verification before DONE.
 "run" with no task id starts unattended DAG execution of every runnable task.
 "--parallel <n>" configures how many tasks the unattended scheduler may run
 concurrently for that run (a positive integer, default 1). "run-all" is a

@@ -40,7 +40,7 @@ await build({
 import { createRequire as __createRequire } from "node:module";
 const require = __createRequire(import.meta.url);`,
   },
-  legalComments: "none",
+  legalComments: "eof",
   sourcemap: false,
   logLevel: "info",
 });
