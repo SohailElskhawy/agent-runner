@@ -13,6 +13,15 @@ export class ProjectConfigurationUnavailableError extends Error {
   }
 }
 
+/**
+ * The non-throwing load outcome used only by the `doctor` preflight. An absent
+ * `agentic.yaml` is a legitimate pre-init state (`configurationError: null`);
+ * unreadable or invalid configuration carries the failure message.
+ */
+export type ToleratedProjectConfigurationResult =
+  | { readonly ok: true; readonly configuration: ProjectConfiguration }
+  | { readonly ok: false; readonly configurationError: string | null };
+
 export async function loadStrictProjectConfiguration(
   projectRoot: string,
 ): Promise<ProjectConfiguration> {
@@ -21,8 +30,31 @@ export async function loadStrictProjectConfiguration(
     return result.config;
   }
   throw new ProjectConfigurationUnavailableError(
-    `project configuration could not be loaded for project root "${projectRoot}": ${describeProjectConfigurationFailure(result)}`,
+    configurationFailureMessage(projectRoot, result),
   );
+}
+
+export async function loadToleratedProjectConfiguration(
+  projectRoot: string,
+): Promise<ToleratedProjectConfigurationResult> {
+  const result = await loadProjectConfiguration(projectRoot);
+  if (result.ok) {
+    return { ok: true, configuration: result.config };
+  }
+  if (result.reason === "ABSENT") {
+    return { ok: false, configurationError: null };
+  }
+  return {
+    ok: false,
+    configurationError: configurationFailureMessage(projectRoot, result),
+  };
+}
+
+function configurationFailureMessage(
+  projectRoot: string,
+  result: Exclude<ProjectConfigurationResult, { ok: true }>,
+): string {
+  return `project configuration could not be loaded for project root "${projectRoot}": ${describeProjectConfigurationFailure(result)}`;
 }
 
 function describeProjectConfigurationFailure(

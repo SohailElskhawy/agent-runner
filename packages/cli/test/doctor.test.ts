@@ -1,9 +1,10 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runDoctorChecks } from "../src/application/doctor.js";
 import type { DoctorReport } from "../src/application/doctor.js";
 import type { RunnerAppService } from "../src/application/runner-app-service.js";
+import { defaultStateDir, WORKTREES_DIR_NAME } from "../src/application/defaults.js";
 import { runCli } from "../src/run-cli.js";
 import { createServices } from "../src/wiring.js";
 import {
@@ -137,6 +138,47 @@ describe("agentic doctor", () => {
       expect(output).toContain("[PASS] node");
       expect(output).toContain("[PASS] git");
       expect(output).toContain("[PASS] worktrees");
+
+      const worktreesDir = join(
+        defaultStateDir(repositoryPath),
+        WORKTREES_DIR_NAME,
+      );
+      expect(
+        readdirSync(worktreesDir).filter((entry) =>
+          entry.startsWith(".agentic-doctor-"),
+        ),
+      ).toEqual([]);
+    } finally {
+      restoreHome();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("fails the worktrees check when the worktrees path is not a directory", async () => {
+    const directory = temporaryDirectory("agentic-cli-doctor-worktrees");
+    const repositoryPath = join(directory, "repo");
+    const restoreHome = overrideHome(join(directory, "home"));
+    try {
+      await createFixtureRepository(repositoryPath, "# Fixture rules\n");
+      writeProjectConfiguration(repositoryPath);
+      const stateDir = defaultStateDir(repositoryPath);
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        join(stateDir, WORKTREES_DIR_NAME),
+        "a regular file occupies the worktrees path\n",
+        "utf8",
+      );
+      const { io, lines } = captureIo();
+
+      const exitCode = await runCli(["doctor"], {
+        io,
+        servicesFactory: () => createServices(repositoryPath),
+      });
+
+      const output = lines.join("\n");
+      expect(exitCode).toBe(1);
+      expect(output).toContain("[FAIL] worktrees");
+      expect(output).toContain("[PASS] configuration");
     } finally {
       restoreHome();
       rmSync(directory, { recursive: true, force: true });
@@ -168,4 +210,82 @@ describe("agentic doctor", () => {
     expect(exitCode).toBe(2);
     expect(errors.join("\n")).toContain("does not accept extra arguments");
   });
+});
+
+describe("agentic doctor configuration tolerance", () => {
+  it("reports [FAIL] configuration for invalid YAML and still reports the other checks", async () => {
+    const directory = temporaryDirectory("agentic-cli-doctor-invalid-config");
+    const repositoryPath = join(directory, "repo");
+    const restoreHome = overrideHome(join(directory, "home"));
+    try {
+      await createFixtureRepository(repositoryPath, "# Fixture rules\n");
+      writeProjectConfiguration(repositoryPath, "verification: [unclosed\n");
+      const { io, lines } = captureIo();
+
+      const exitCode = await runCli(["doctor"], {
+        io,
+        servicesFactory: (request) => createServices(repositoryPath, request),
+      });
+
+      const output = lines.join("\n");
+      expect(exitCode).toBe(1);
+      expect(output).toContain("[FAIL] configuration");
+      expect(output).toContain("[PASS] node");
+      expect(output).toContain("[PASS] git");
+      expect(output).toContain("[WARN] project");
+    } finally {
+      restoreHome();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("warns about an absent agentic.yaml and still exits zero", async () => {
+    const directory = temporaryDirectory("agentic-cli-doctor-absent-config");
+    const repositoryPath = join(directory, "repo");
+    const restoreHome = overrideHome(join(directory, "home"));
+    try {
+      await createFixtureRepository(repositoryPath, "# Fixture rules\n");
+      const { io, lines } = captureIo();
+
+      const exitCode = await runCli(["doctor"], {
+        io,
+        servicesFactory: () =>
+          createServices(repositoryPath, {
+            tolerateInvalidConfiguration: true,
+          }),
+      });
+
+      const output = lines.join("\n");
+      expect(exitCode).toBe(0);
+      expect(output).toContain("[WARN] configuration");
+      expect(output).not.toContain("[FAIL]");
+    } finally {
+      restoreHome();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("still fails fast for commands other than doctor", async () => {
+    const directory = temporaryDirectory("agentic-cli-doctor-fail-fast");
+    const repositoryPath = join(directory, "repo");
+    const restoreHome = overrideHome(join(directory, "home"));
+    try {
+      await createFixtureRepository(repositoryPath, "# Fixture rules\n");
+      writeProjectConfiguration(repositoryPath, "verification: [unclosed\n");
+      const { io, errors } = captureIo();
+
+      const exitCode = await runCli(["status"], {
+        io,
+        servicesFactory: (request) => createServices(repositoryPath, request),
+      });
+
+      expect(exitCode).toBe(1);
+      expect(errors.join("\n")).toContain(
+        "project configuration could not be loaded",
+      );
+    } finally {
+      restoreHome();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

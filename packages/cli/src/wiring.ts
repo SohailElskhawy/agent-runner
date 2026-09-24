@@ -5,18 +5,24 @@ import {
   resolveProjectRoot,
   resolveStorePath,
   resolveWorktreesDir,
+  type AppServicesRequest,
 } from "./application/defaults.js";
 import type { RunnerAppService } from "./application/runner-app-service.js";
 
 export async function createServices(
   projectRoot?: string,
+  request: AppServicesRequest = {},
 ): Promise<RunnerAppService> {
   const root = resolveProjectRoot(projectRoot ?? process.cwd());
   const stateDir = defaultStateDir(root);
-  const appServices = await createAppServices({
-    projectRoot: root,
-    stateDir,
-  });
+  const appServices = await createAppServices(
+    {
+      projectRoot: root,
+      stateDir,
+    },
+    {},
+    request,
+  );
   const service = createStoreBackedAppService({
     storePath: resolveStorePath({ projectRoot: root, stateDir }),
     projectRoot: root,
@@ -32,6 +38,7 @@ export async function createServices(
     runner: appServices.runner,
     worktreesDir: resolveWorktreesDir({ projectRoot: root, stateDir }),
     configuration: appServices.configuration,
+    configurationError: appServices.configurationError,
   });
   return Promise.resolve(service);
 }

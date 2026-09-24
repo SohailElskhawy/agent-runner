@@ -1,5 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { basename } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import {
   buildTaskFromManualInput,
   countParallelismActiveExecutions,
@@ -79,6 +79,8 @@ export type StoreBackedAppServiceOptions = {
   readonly worktreesDir?: string | undefined;
   /** The configuration loaded at composition time, if any. */
   readonly configuration?: ProjectConfiguration | null | undefined;
+  /** A tolerated configuration load failure, reported by `doctor`. */
+  readonly configurationError?: string | null | undefined;
 };
 
 export function createStoreBackedAppService(
@@ -102,6 +104,7 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly runner: ProcessRunner;
   private readonly worktreesDir: string;
   private readonly configuration: ProjectConfiguration | null;
+  private readonly configurationError: string | null;
   private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
@@ -123,6 +126,7 @@ class StoreBackedAppService implements RunnerAppService {
     this.worktreesDir =
       options.worktreesDir ?? resolveWorktreesDir({ projectRoot: options.projectRoot });
     this.configuration = options.configuration ?? null;
+    this.configurationError = options.configurationError ?? null;
   }
 
   async init(): Promise<InitResult> {
@@ -457,14 +461,18 @@ class StoreBackedAppService implements RunnerAppService {
       storePath: this.storePath,
       worktreesDir: this.worktreesDir,
       configuration: this.configuration,
-      configurationError: null,
+      configurationError: this.configurationError ?? null,
       projects: await this.store.listProjects(),
       agents: await this.listAgents(),
       runGitVersion: async () => {
         const result = await this.runner.run({
           executable: "git",
           args: ["--version"],
+          timeoutMs: 10_000,
         });
+        if (result.outcome.kind === "timeout") {
+          return { ok: false, detail: "git --version timed out after 10000 ms" };
+        }
         return result.outcome.kind === "completed" && result.outcome.code === 0
           ? { ok: true, detail: result.stdout.trim() }
           : {
@@ -476,6 +484,12 @@ class StoreBackedAppService implements RunnerAppService {
       ensureWorktreesDir: async () => {
         try {
           await mkdir(this.worktreesDir, { recursive: true });
+          const probe = join(
+            this.worktreesDir,
+            `.agentic-doctor-${String(process.pid)}-${String(Date.now())}`,
+          );
+          await writeFile(probe, "", "utf8");
+          await rm(probe, { force: true });
           return { ok: true, detail: "writable" };
         } catch (error) {
           return { ok: false, detail: describeError(error) };

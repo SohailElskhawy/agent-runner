@@ -13,6 +13,16 @@ export type AppServicesOptions = {
   readonly maxParallelism?: number | undefined;
 };
 
+/**
+ * Per-composition request. `tolerateInvalidConfiguration` is reserved for the
+ * read-only `doctor` preflight, which must report configuration problems instead
+ * of failing before a service exists. Every other command keeps fail-fast
+ * construction.
+ */
+export type AppServicesRequest = {
+  readonly tolerateInvalidConfiguration?: boolean | undefined;
+};
+
 export const STATE_ROOT_SEGMENT = join(".agentic", "projects");
 export const STATE_DB_FILE_NAME = "state.db";
 export const WORKTREES_DIR_NAME = "worktrees";

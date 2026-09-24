@@ -2,6 +2,7 @@ import { CliError } from "./errors.js";
 import { consoleIo, describeError, type CliIo } from "./io.js";
 import { parseArgs, USAGE } from "./parse-args.js";
 import type { ParsedCommand } from "./parse-args.js";
+import type { AppServicesRequest } from "./application/defaults.js";
 import {
   executeAddTaskCommand,
   executeAgentsCommand,
@@ -20,9 +21,16 @@ import type { RunnerAppService } from "./application/runner-app-service.js";
 
 export const EXIT_USAGE = 2;
 
-export type CliServicesFactory = () =>
-  | RunnerAppService
-  | Promise<RunnerAppService>;
+/**
+ * A per-command composition request. Only `doctor` asks for tolerant
+ * construction so it can report configuration problems instead of failing
+ * before a service exists; every other command resolves as before.
+ */
+export type CliServicesRequest = AppServicesRequest | undefined;
+
+export type CliServicesFactory = (
+  request?: CliServicesRequest,
+) => RunnerAppService | Promise<RunnerAppService>;
 
 export type RunCliOptions = {
   readonly io?: CliIo | undefined;
@@ -60,38 +68,44 @@ export async function runCli(
       case "tasks":
       case "doctor":
       case "agents":
-        return await withServices(options.servicesFactory, async (services) => {
-          try {
-            switch (command.name) {
-              case "init":
-                return await executeInitCommand(services, io);
-              case "run":
-                return command.taskId === undefined
-                  ? await executeUnattendedRunCommand(command.parallel, services, io)
-                  : await executeRunCommand(command.taskId, services, io);
-              case "run-all":
-                return await executeUnattendedRunCommand(command.parallel, services, io);
-              case "status":
-                return await executeStatusCommand(services, io);
-              case "inspect":
-                return await executeInspectCommand(command.taskId, services, io);
-              case "approve":
-                return await executeApproveCommand(command.taskId, services, io);
-              case "retry":
-                return await executeRetryCommand(command.taskId, services, io);
-              case "tasks":
-                return command.action === "add"
-                  ? await executeAddTaskCommand(command.taskFile, services, io)
-                  : await executeTasksListCommand(services, io);
-              case "doctor":
-                return await executeDoctorCommand(services, io);
-              case "agents":
-                return await executeAgentsCommand(services, io);
+        return await withServices(
+          options.servicesFactory,
+          command.name === "doctor"
+            ? { tolerateInvalidConfiguration: true }
+            : undefined,
+          async (services) => {
+            try {
+              switch (command.name) {
+                case "init":
+                  return await executeInitCommand(services, io);
+                case "run":
+                  return command.taskId === undefined
+                    ? await executeUnattendedRunCommand(command.parallel, services, io)
+                    : await executeRunCommand(command.taskId, services, io);
+                case "run-all":
+                  return await executeUnattendedRunCommand(command.parallel, services, io);
+                case "status":
+                  return await executeStatusCommand(services, io);
+                case "inspect":
+                  return await executeInspectCommand(command.taskId, services, io);
+                case "approve":
+                  return await executeApproveCommand(command.taskId, services, io);
+                case "retry":
+                  return await executeRetryCommand(command.taskId, services, io);
+                case "tasks":
+                  return command.action === "add"
+                    ? await executeAddTaskCommand(command.taskFile, services, io)
+                    : await executeTasksListCommand(services, io);
+                case "doctor":
+                  return await executeDoctorCommand(services, io);
+                case "agents":
+                  return await executeAgentsCommand(services, io);
+              }
+            } finally {
+              await closeServices(services, io);
             }
-          } finally {
-            await closeServices(services, io);
-          }
-        });
+          },
+        );
     }
   } catch (error) {
     io.writeError(`error: ${describeError(error)}`);
@@ -101,9 +115,10 @@ export async function runCli(
 
 async function withServices<T>(
   servicesFactory: CliServicesFactory | undefined,
+  request: CliServicesRequest,
   body: (services: RunnerAppService) => Promise<T>,
 ): Promise<T> {
-  const services = await resolveServices(servicesFactory);
+  const services = await resolveServices(servicesFactory, request);
   return body(services);
 }
 
@@ -120,11 +135,12 @@ async function closeServices(
 
 function resolveServices(
   servicesFactory: CliServicesFactory | undefined,
+  request: CliServicesRequest,
 ): Promise<RunnerAppService> {
   if (servicesFactory === undefined) {
     throw new CliError(
       "no application services are wired; provide a services factory",
     );
   }
-  return Promise.resolve(servicesFactory());
+  return Promise.resolve(servicesFactory(request));
 }

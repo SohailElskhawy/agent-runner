@@ -37,7 +37,7 @@ import { createRoutedTaskOrchestrator } from "./agents/routed-task-orchestrator.
 import { resolveWorkflow, type ProjectConfiguration } from "@agentic-dev-runner/core";
 import {
   loadStrictProjectConfiguration,
-  ProjectConfigurationUnavailableError,
+  loadToleratedProjectConfiguration,
 } from "./project-configuration.js";
 import {
   resolveAgentTimeoutMs,
@@ -45,6 +45,7 @@ import {
   resolveStorePath,
   resolveWorktreesDir,
   type AppServicesOptions,
+  type AppServicesRequest,
 } from "./defaults.js";
 import { resolveRoutedAgent } from "./agents/agent-routing.js";
 
@@ -64,6 +65,11 @@ export type AppServices = {
   readonly runner: ProcessRunner;
   /** The project configuration loaded at composition time, if any. */
   readonly configuration: ProjectConfiguration | null;
+  /**
+   * The configuration load failure tolerated by a `doctor` composition, or
+   * `null` when configuration loaded or was intentionally not loaded.
+   */
+  readonly configurationError: string | null;
 };
 
 export type AppServicesOverrides = {
@@ -80,23 +86,34 @@ export type AppServicesOverrides = {
 export async function createAppServices(
   options: AppServicesOptions,
   overrides: AppServicesOverrides = {},
+  request: AppServicesRequest = {},
 ): Promise<AppServices> {
   // Explicit orchestrator/agent overrides keep lower-level injection paths
   // working; production runs always route through configured agent profiles.
   const routed = overrides.orchestrator === undefined && overrides.agent === undefined;
-  const configuration =
-    routed || options.verificationChecks === undefined
-      ? await loadStrictProjectConfiguration(options.projectRoot)
-      : null;
+  let configuration: ProjectConfiguration | null = null;
+  let configurationError: string | null = null;
+  if (routed || options.verificationChecks === undefined) {
+    if (request.tolerateInvalidConfiguration === true) {
+      const tolerated = await loadToleratedProjectConfiguration(
+        options.projectRoot,
+      );
+      if (tolerated.ok) {
+        configuration = tolerated.configuration;
+      } else {
+        configurationError = tolerated.configurationError;
+      }
+    } else {
+      configuration = await loadStrictProjectConfiguration(options.projectRoot);
+    }
+  }
   const verificationChecks =
     options.verificationChecks !== undefined
       ? [...options.verificationChecks]
-      : toVerificationCheckSpecs(
-          requireConfiguration(configuration).verificationChecks,
-        );
-  const agentProfiles = routed
-    ? requireConfiguration(configuration).agentProfiles
-    : [];
+      : configuration === null
+        ? []
+        : toVerificationCheckSpecs(configuration.verificationChecks);
+  const agentProfiles = routed ? (configuration?.agentProfiles ?? []) : [];
   const store = overrides.store ?? createSqliteRunnerStore({
     path: resolveStorePath(options),
   });
@@ -209,6 +226,7 @@ export async function createAppServices(
     maxParallelism: resolveMaxParallelism(options),
     runner,
     configuration,
+    configurationError,
   };
 }
 
@@ -227,15 +245,4 @@ async function discoverAgentCandidates(
       available: availableById.get(profile.adapterId) === true,
     },
   }));
-}
-
-function requireConfiguration(
-  configuration: ProjectConfiguration | null,
-): ProjectConfiguration {
-  if (configuration === null) {
-    throw new ProjectConfigurationUnavailableError(
-      "project configuration is required for this run but was not loaded",
-    );
-  }
-  return configuration;
 }

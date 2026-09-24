@@ -4,6 +4,6 @@ import { runCli } from "./run-cli.js";
 import { createServices } from "./wiring.js";
 
 const exitCode = await runCli(process.argv.slice(2), {
-  servicesFactory: createServices,
+  servicesFactory: (request) => createServices(process.cwd(), request),
 });
 process.exitCode = exitCode;
