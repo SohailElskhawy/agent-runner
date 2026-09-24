@@ -13,6 +13,7 @@ function makeTask(overrides?: {
   priority?: Task["priority"];
   dependsOn?: readonly string[];
   approvalRequired?: boolean;
+  approvalGrantedAt?: string;
   capabilities?: readonly string[];
   maxAttempts?: number;
 }): Task {
@@ -49,6 +50,9 @@ function makeTask(overrides?: {
     workflow: "default",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    ...(overrides?.approvalGrantedAt === undefined
+      ? {}
+      : { approvalGrantedAt: overrides.approvalGrantedAt }),
   };
 }
 
@@ -386,5 +390,29 @@ describe("selectRunnableTasks", () => {
     expect(result.runnable[0]).toBe(runnableTask);
     runnableTask.status = "DONE";
     expect(result.runnable[0]?.status).toBe("DONE");
+  });
+
+  it("treats an approval-required task as runnable once approval is granted", () => {
+    const task = makeTask({
+      approvalRequired: true,
+      approvalGrantedAt: "2026-09-24T10:00:00.000Z",
+    });
+    const result = selection({ tasks: [task] });
+
+    expect(result.runnable.map((entry) => entry.id)).toEqual([task.id]);
+    expect(result.ineligible).toEqual([]);
+  });
+
+  it("keeps an approval-required task ineligible while approval is pending", () => {
+    const task = makeTask({ approvalRequired: true });
+    const result = selection({ tasks: [task] });
+
+    expect(result.runnable).toEqual([]);
+    expect(result.ineligible).toEqual([
+      {
+        taskId: task.id,
+        ineligibility: { reason: "approval-required" },
+      },
+    ]);
   });
 });

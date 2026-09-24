@@ -27,6 +27,7 @@ export type Task = {
   workflow: string;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
+  approvalGrantedAt?: IsoTimestamp;
 };
 
 export type { TaskApproval };

@@ -9,7 +9,7 @@ import {
   SCHEMA_MIGRATIONS,
   SCHEMA_VERSION,
 } from "@agentic-dev-runner/persistence";
-import { createAttempt, createProject, createTask } from "./fixtures.js";
+import { createAttempt, createProject, createTask, insertTaskRow } from "./fixtures.js";
 
 describe("durable execution claims", () => {
   let directory: string;
@@ -179,7 +179,7 @@ describe("durable execution claims", () => {
     const legacyAttempt = createAttempt({ id: "att_M001_1", taskId: "M001" });
     await legacy.initialize();
     await legacy.putProject(createProject());
-    await legacy.putTask(createTask({ id: "M001", status: "READY" }));
+    insertTaskRow(dbPath, createTask({ id: "M001", status: "READY" }));
     await legacy.putAttempt(legacyAttempt);
     await legacy.acquireResourceLocks([
       {
@@ -212,7 +212,7 @@ describe("durable execution claims", () => {
 
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
-    expect(SCHEMA_VERSION).toBe(9);
+    expect(SCHEMA_VERSION).toBe(10);
     const oldLock = (await store.listResourceLocks())[0];
     expect(oldLock).toMatchObject({
       resource: "legacy-resource",

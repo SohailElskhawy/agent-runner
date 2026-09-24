@@ -225,6 +225,14 @@ export function applyExecutionRecoveryOwnershipSchema(db: SchemaMigrationDatabas
   for (const statement of SCHEMA_V9_STATEMENTS) db.exec(statement);
 }
 
+const SCHEMA_V10_STATEMENTS = [
+  `ALTER TABLE tasks ADD COLUMN approval_granted_at TEXT`,
+];
+
+export function applyTaskApprovalSchema(db: SchemaMigrationDatabase): void {
+  for (const statement of SCHEMA_V10_STATEMENTS) db.exec(statement);
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -270,6 +278,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 9,
     name: "add-execution-recovery-ownership",
     up: applyExecutionRecoveryOwnershipSchema,
+  },
+  {
+    version: 10,
+    name: "add-task-approval-state",
+    up: applyTaskApprovalSchema,
   },
 ];
 

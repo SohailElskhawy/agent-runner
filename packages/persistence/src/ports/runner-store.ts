@@ -88,6 +88,13 @@ export interface RunnerStore {
   listTasks(filter?: TaskFilter): Promise<Task[]>;
   putTask(task: Task): Promise<void>;
 
+  /**
+   * Records a human approval grant for a task exactly once. Returns true when
+   * the grant was recorded by this call, false when the task was already
+   * granted. Callers must validate task existence and status beforehand.
+   */
+  approveTask(id: TaskId, grantedAt: IsoTimestamp): Promise<boolean>;
+
   getAttempt(id: AttemptId): Promise<Attempt | null>;
   listAttempts(filter?: AttemptFilter): Promise<Attempt[]>;
   putAttempt(attempt: Attempt): Promise<void>;

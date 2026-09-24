@@ -1,9 +1,41 @@
+import { DatabaseSync } from "node:sqlite";
 import type {
   Attempt,
   Project,
   StageRun,
   Task,
 } from "@agentic-dev-runner/core";
+
+export function insertTaskRow(dbPath: string, task: Task): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(
+      `INSERT INTO tasks (
+         id, project_id, title, milestone, status, type, priority, risk,
+         definition_json, routing_json, provenance_json, depends_on_json,
+         workflow, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      task.id,
+      task.projectId,
+      task.title,
+      task.milestone,
+      task.status,
+      task.type,
+      task.priority,
+      task.risk,
+      JSON.stringify(task.definition),
+      JSON.stringify(task.routing),
+      JSON.stringify(task.provenance),
+      JSON.stringify(task.dependsOn),
+      task.workflow,
+      task.createdAt,
+      task.updatedAt,
+    );
+  } finally {
+    db.close();
+  }
+}
 
 export function createProject(overrides?: {
   id?: string;
@@ -22,6 +54,7 @@ export function createTask(overrides?: {
   id?: string;
   projectId?: string;
   status?: Task["status"];
+  approvalGrantedAt?: string;
 }): Task {
   return {
     id: overrides?.id ?? "M001",
@@ -53,6 +86,9 @@ export function createTask(overrides?: {
     workflow: "default",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    ...(overrides?.approvalGrantedAt === undefined
+      ? {}
+      : { approvalGrantedAt: overrides.approvalGrantedAt }),
   };
 }
 

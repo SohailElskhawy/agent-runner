@@ -93,6 +93,9 @@ class RecordingStore implements RunnerStore {
     return null;
   }
   async setTaskStatus(): Promise<void> {}
+  async approveTask(): Promise<boolean> {
+    return false;
+  }
   async putStageRun(): Promise<void> {}
   async listStageRuns(): Promise<StageRun[]> {
     return [];

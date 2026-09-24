@@ -362,4 +362,45 @@ describe("SqliteRunnerStore", () => {
     await expect(store.getTask("M001")).rejects.toThrow("store is closed");
     await store.close();
   });
+
+  it("persists approval grants durably and only once", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    await store.putTask(createTask());
+
+    const first = await store.approveTask("M001", "2026-09-24T10:00:00.000Z");
+    const second = await store.approveTask("M001", "2026-09-24T11:00:00.000Z");
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect((await store.getTask("M001"))?.approvalGrantedAt).toBe(
+      "2026-09-24T10:00:00.000Z",
+    );
+
+    await store.close();
+    const reopened = createSqliteRunnerStore({ path: dbPath });
+    try {
+      await reopened.initialize();
+      expect((await reopened.getTask("M001"))?.approvalGrantedAt).toBe(
+        "2026-09-24T10:00:00.000Z",
+      );
+    } finally {
+      await reopened.close();
+    }
+  });
+
+  it("round-trips a task that already carries an approval grant", async () => {
+    await store.initialize();
+    await store.putProject(createProject());
+    const granted = createTask({
+      approvalGrantedAt: "2026-09-24T09:00:00.000Z",
+    });
+
+    await store.putTask(granted);
+
+    expect(await store.getTask(granted.id)).toEqual(granted);
+    expect(
+      (await store.listTasks()).map((task) => task.approvalGrantedAt),
+    ).toEqual(["2026-09-24T09:00:00.000Z"]);
+  });
 });

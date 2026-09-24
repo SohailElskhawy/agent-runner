@@ -177,9 +177,9 @@ export class SqliteRunnerStore implements RunnerStore {
       `INSERT INTO tasks (
          id, project_id, title, milestone, status, type, priority, risk,
          definition_json, routing_json, provenance_json, depends_on_json,
-         workflow, created_at, updated_at
+         workflow, created_at, updated_at, approval_granted_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          project_id = excluded.project_id,
          title = excluded.title,
@@ -193,7 +193,8 @@ export class SqliteRunnerStore implements RunnerStore {
          provenance_json = excluded.provenance_json,
          depends_on_json = excluded.depends_on_json,
          workflow = excluded.workflow,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at,
+         approval_granted_at = excluded.approval_granted_at`,
     ).run(
       task.id,
       task.projectId,
@@ -210,6 +211,7 @@ export class SqliteRunnerStore implements RunnerStore {
       task.workflow,
       task.createdAt,
       task.updatedAt,
+      task.approvalGrantedAt ?? null,
     );
   }
 
@@ -919,6 +921,16 @@ export class SqliteRunnerStore implements RunnerStore {
     }
   }
 
+  async approveTask(id: TaskId, grantedAt: IsoTimestamp): Promise<boolean> {
+    const db = this.requireDb("approveTask");
+    const result = db
+      .prepare(
+        "UPDATE tasks SET approval_granted_at = ?, updated_at = ? WHERE id = ? AND approval_granted_at IS NULL",
+      )
+      .run(grantedAt, grantedAt, id);
+    return Number(result.changes) === 1;
+  }
+
   async appendEvents(events: readonly NewEvent[]): Promise<StoredEvent[]> {
     if (events.length === 0) {
       return [];
@@ -1038,6 +1050,7 @@ function projectFromRow(row: Record<string, unknown>): Project {
 }
 
 function taskFromRow(row: Record<string, unknown>): Task {
+  const approvalGrantedAt = optionalTextColumn(row, "approval_granted_at");
   return {
     id: textColumn(row, "id"),
     projectId: textColumn(row, "project_id"),
@@ -1054,6 +1067,7 @@ function taskFromRow(row: Record<string, unknown>): Task {
     workflow: textColumn(row, "workflow"),
     createdAt: textColumn(row, "created_at"),
     updatedAt: textColumn(row, "updated_at"),
+    ...(approvalGrantedAt === null ? {} : { approvalGrantedAt }),
   };
 }
 

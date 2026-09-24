@@ -129,7 +129,10 @@ function firstIneligibilityOf(
   if (notDoneDependencies.length > 0) {
     return { reason: "dependency-not-done", notDoneDependencies };
   }
-  if (task.definition.approval.required) {
+  if (
+    task.definition.approval.required &&
+    task.approvalGrantedAt === undefined
+  ) {
     return { reason: "approval-required" };
   }
   const attempts = input.attemptCounts.get(task.id) ?? 0;
