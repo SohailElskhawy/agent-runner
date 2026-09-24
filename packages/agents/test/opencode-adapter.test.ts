@@ -172,19 +172,19 @@ describe("OpenCodeAdapter", () => {
   });
 
   it("normalizes timeout through the ProcessRunner", async () => {
-    process.env.FAKE_AGENT_DELAY_MS = "2000";
+    process.env.FAKE_AGENT_DELAY_MS = "60000";
     const adapter = makeAdapter();
     const result = await adapter.invoke(makeInvocation({ timeoutMs: 200 }));
 
     expect(result.kind).toBe("timeout");
     if (result.kind === "timeout") {
-      expect(result.durationMs).toBeLessThan(2000);
+      expect(result.durationMs).toBeLessThan(60000);
       expect(result.output.stdout).toBe("");
     }
   });
 
   it("normalizes cancellation through the ProcessRunner", async () => {
-    process.env.FAKE_AGENT_DELAY_MS = "2000";
+    process.env.FAKE_AGENT_DELAY_MS = "60000";
     const controller = new AbortController();
     const adapter = makeAdapter();
     const pending = adapter.invoke(

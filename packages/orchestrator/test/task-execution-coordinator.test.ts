@@ -24,6 +24,9 @@ const candidate: AgentRouteCandidate = {
   availability: { id: "adapter-a", available: true },
 };
 
+const POLL_INTERVAL_MS = 10;
+const POLL_TIMEOUT_MS = 5_000;
+
 describe("task execution coordinator (M061b)", () => {
   let directory: string;
   let store: RunnerStore;
@@ -184,10 +187,28 @@ describe("task execution coordinator (M061b)", () => {
       }),
     });
     const run = first.dispatchAvailable();
-    await new Promise((resolve) => setTimeout(resolve, 55));
-    const active = await store.listExecutionClaims({ status: "ACTIVE" });
-    expect(active).toHaveLength(1);
-    expect(Date.parse(active[0]!.leaseExpiresAt)).toBeGreaterThan(Date.now() - 30);
+
+    const claimedSnapshot = await waitFor("one active execution claim", async () => {
+      const claims = await store.listExecutionClaims({ status: "ACTIVE" });
+      const claim = claims[0];
+      return claims.length === 1 && claim !== undefined
+        ? { renewedAt: claim.renewedAt, leaseExpiresAt: claim.leaseExpiresAt }
+        : undefined;
+    });
+
+    const renewed = await waitFor("the heartbeat to renew the execution claim", async () => {
+      const claims = await store.listExecutionClaims({ status: "ACTIVE" });
+      const claim = claims[0];
+      return claims.length === 1 &&
+        claim !== undefined &&
+        claim.renewedAt !== claimedSnapshot.renewedAt
+        ? claim
+        : undefined;
+    });
+
+    expect(await store.listExecutionClaims({ status: "ACTIVE" })).toHaveLength(1);
+    expect(Date.parse(renewed.leaseExpiresAt) - Date.parse(renewed.renewedAt)).toBe(30);
+
     release?.();
     await run;
     expect(await store.listExecutionClaims({ status: "ACTIVE" })).toEqual([]);
@@ -304,6 +325,25 @@ function completedExecutor(): WorkflowTaskExecutor {
       return { kind: "rejected", taskId: "test", reason: "completed fixture" };
     },
   };
+}
+
+async function waitFor<T>(
+  description: string,
+  probe: () => Promise<T | undefined>,
+): Promise<T> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  for (;;) {
+    const value = await probe();
+    if (value !== undefined) {
+      return value;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `timed out after ${POLL_TIMEOUT_MS}ms waiting for ${description}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
 }
 
 function task(
