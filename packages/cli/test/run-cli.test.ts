@@ -5,6 +5,7 @@ import { runCli } from "../src/run-cli.js";
 import type {
   AddTaskResult,
   AgentStatusEntry,
+  ApprovalCommandResult,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -19,6 +20,7 @@ function recordingService(result: {
   init?: InitResult;
   add?: AddTaskResult;
   addFailure?: Error;
+  approve?: ApprovalCommandResult;
   run?: RunResult;
   unattended?: RunResult;
   status?: ProjectStatus;
@@ -29,6 +31,7 @@ function recordingService(result: {
   service: RunnerAppService;
   runCalls: RunSpy;
   unattendedCalls: UnattendedRunSpy;
+  approveCalls: { calls: readonly TaskId[] };
   initCalls: { count: number };
   addCalls: { calls: string[] };
   listAgentsCalls: { count: number };
@@ -36,6 +39,7 @@ function recordingService(result: {
   const runCalls: string[] = [];
   const unattendedCalls: { maxParallelism?: number | undefined }[] = [];
   const addCalls: string[] = [];
+  const approveCalls: string[] = [];
   let initCount = 0;
   let listAgentsCount = 0;
   const service: RunnerAppService = {
@@ -75,6 +79,19 @@ function recordingService(result: {
         result.run ?? {
           kind: "completed",
           message: `task "${taskId}" completed`,
+        }
+      );
+    },
+    async approve(taskId: TaskId) {
+      approveCalls.push(taskId);
+      if (result.failure !== undefined) {
+        throw result.failure;
+      }
+      return (
+        result.approve ?? {
+          kind: "granted",
+          taskId,
+          message: `approval granted for task "${taskId}"`,
         }
       );
     },
@@ -121,6 +138,7 @@ function recordingService(result: {
     service,
     runCalls: { calls: runCalls },
     unattendedCalls: { calls: unattendedCalls },
+    approveCalls: { calls: approveCalls },
     addCalls: { calls: addCalls },
     initCalls: {
       get count() {
@@ -150,6 +168,55 @@ describe("runCli command dispatch", () => {
     expect(exitCode).toBe(0);
     expect(recording.runCalls.calls).toEqual(["M001"]);
     expect(lines.join("\n")).toContain('task "M001" completed');
+  });
+
+  it("approves through the application service and maps granted and rejected results to exit codes", async () => {
+    const granted = recordingService({});
+    const { io, lines, errors } = captureIo();
+
+    const grantedExit = await runCli(["approve", "M001"], {
+      io,
+      servicesFactory: async () => granted.service,
+    });
+
+    expect(grantedExit).toBe(0);
+    expect(granted.approveCalls.calls).toEqual(["M001"]);
+    expect(lines.join("\n")).toContain('approval granted for task "M001"');
+    expect(errors).toHaveLength(0);
+
+    const alreadyGranted = recordingService({
+      approve: {
+        kind: "already-granted",
+        taskId: "M001",
+        message: 'task "M001" was already approved at 2026-01-01T00:00:00.000Z',
+      },
+    });
+    const alreadyCapture = captureIo();
+
+    const alreadyExit = await runCli(["approve", "M001"], {
+      io: alreadyCapture.io,
+      servicesFactory: async () => alreadyGranted.service,
+    });
+
+    expect(alreadyExit).toBe(0);
+    expect(alreadyCapture.lines.join("\n")).toContain("was already approved");
+
+    const rejected = recordingService({
+      approve: {
+        kind: "rejected",
+        taskId: "M001",
+        message: 'task "M001" does not require human approval',
+      },
+    });
+    const rejectedCapture = captureIo();
+
+    const rejectedExit = await runCli(["approve", "M001"], {
+      io: rejectedCapture.io,
+      servicesFactory: async () => rejected.service,
+    });
+
+    expect(rejectedExit).toBe(1);
+    expect(rejectedCapture.errors.join("\n")).toContain("does not require human approval");
   });
 
   it("delegates unattended execution to the application service on run-all", async () => {

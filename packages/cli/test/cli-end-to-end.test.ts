@@ -150,6 +150,77 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     expect(inspectOutput).toContain("integration.completed");
   });
 
+  it("grants approval for an approval-required task and surfaces it in status and inspect", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ projectId: "proj-local", approvalRequired: true }));
+    await store.close();
+    store = undefined;
+
+    const { io: statusIo, lines: statusLines } = captureIo();
+    const statusExit = await runCli(["status"], { io: statusIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(statusExit).toBe(0);
+    expect(statusLines.join("\n")).toContain("M001 [READY] Add a small utility function [approval required]");
+
+    const { io: inspectIo, lines: inspectLines } = captureIo();
+    const inspectExit = await runCli(["inspect", "M001"], { io: inspectIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(inspectExit).toBe(0);
+    expect(inspectLines.join("\n")).toContain("approval: required, granted at pending");
+
+    const { io: approveIo, lines: approveLines, errors: approveErrors } = captureIo();
+    const approveExit = await runCli(["approve", "M001"], { io: approveIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(approveExit).toBe(0);
+    expect(approveLines.join("\n")).toContain('approval granted for task "M001"');
+    expect(approveErrors).toHaveLength(0);
+
+    store = await openRepositoryStore();
+    const grantedTask = await store.getTask("M001");
+    expect(grantedTask?.approvalGrantedAt).toBeTypeOf("string");
+    expect(
+      (await store.listEvents({ taskId: "M001", type: "task.approval.granted" })).length,
+    ).toBe(1);
+    await store.close();
+    store = undefined;
+
+    const { io: grantedInspectIo, lines: grantedInspectLines } = captureIo();
+    const grantedInspectExit = await runCli(["inspect", "M001"], { io: grantedInspectIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(grantedInspectExit).toBe(0);
+    expect(grantedInspectLines.join("\n")).toMatch(
+      /approval: required, granted at \d{4}-\d{2}-\d{2}T/,
+    );
+
+    const { io: grantedStatusIo, lines: grantedStatusLines } = captureIo();
+    const grantedStatusExit = await runCli(["status"], { io: grantedStatusIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(grantedStatusExit).toBe(0);
+    expect(grantedStatusLines.join("\n")).not.toContain("[approval required]");
+
+    const { io: againIo, lines: againLines, errors: againErrors } = captureIo();
+    const againExit = await runCli(["approve", "M001"], { io: againIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(againExit).toBe(0);
+    expect(againLines.join("\n")).toContain('task "M001" was already approved at');
+    expect(againErrors).toHaveLength(0);
+  });
+
+  it("rejects approve for a task that does not require approval", async () => {
+    const { io: initIo } = captureIo();
+    const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+    expect(initExit).toBe(0);
+
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ projectId: "proj-local" }));
+    await store.close();
+    store = undefined;
+
+    const { io, errors } = captureIo();
+    const exitCode = await runCli(["approve", "M001"], { io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });
+
+    expect(exitCode).toBe(1);
+    expect(errors.join("\n")).toContain('task "M001" does not require human approval');
+  });
+
   it("reconciles an interrupted task on startup so status and inspect observe reconciled state", async () => {
     const { io: initIo } = captureIo();
     const initExit = await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });

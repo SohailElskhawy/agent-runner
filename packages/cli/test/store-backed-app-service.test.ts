@@ -229,6 +229,56 @@ describe("StoreBackedAppService", () => {
     expect(task?.latestAttempt?.status).toBe("FAILED");
   });
 
+  it("grants approval once and records an event", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "T1", approvalRequired: true }));
+    const service = serviceWithOutcome(completedOutcome);
+
+    const result = await service.approve("T1");
+
+    expect(result.kind).toBe("granted");
+    expect((await store.getTask("T1"))?.approvalGrantedAt).toBeTypeOf("string");
+    expect(
+      (await store.listEvents({ taskId: "T1", type: "task.approval.granted" })).length,
+    ).toBe(1);
+    expect((await service.approve("T1")).kind).toBe("already-granted");
+  });
+
+  it("rejects approving a task that does not require approval", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "T1" }));
+    const service = serviceWithOutcome(completedOutcome);
+
+    const result = await service.approve("T1");
+
+    expect(result.kind).toBe("rejected");
+    expect(result.message).toContain("does not require human approval");
+  });
+
+  it("status exposes approval requirement and grant state per task", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "T1", approvalRequired: true }));
+    await store.putTask(createFixtureTask({ id: "T2" }));
+    const service = serviceWithOutcome(completedOutcome);
+
+    expect((await service.status()).tasks.find((task) => task.id === "T1")?.approval).toEqual({
+      required: true,
+      granted: false,
+    });
+
+    await service.approve("T1");
+
+    const status = await service.status();
+    expect(status.tasks.find((task) => task.id === "T1")?.approval).toEqual({
+      required: true,
+      granted: true,
+    });
+    expect(status.tasks.find((task) => task.id === "T2")?.approval).toBeUndefined();
+  });
+
   it("inspects persisted attempts, events, and failure information without reconstructing state", async () => {
     await store.initialize();
     await store.putProject(createFixtureProject());

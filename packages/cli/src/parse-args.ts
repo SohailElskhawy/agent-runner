@@ -6,6 +6,7 @@ export type ParsedCommand =
   | { readonly name: "run-all"; readonly parallel?: number }
   | { readonly name: "status" }
   | { readonly name: "inspect"; readonly taskId: string }
+  | { readonly name: "approve"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
   | { readonly name: "agents" }
   | { readonly name: "help" }
@@ -17,6 +18,7 @@ export const KNOWN_COMMANDS = [
   "run-all",
   "status",
   "inspect",
+  "approve",
   "tasks",
   "agents",
   "help",
@@ -41,6 +43,8 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return { name: "status" };
     case "inspect":
       return { name: "inspect", taskId: requireTaskId(command, rest) };
+    case "approve":
+      return { name: "approve", taskId: requireTaskId(command, rest) };
     case "tasks":
       return parseTasksCommand(rest);
     case "agents":
@@ -64,7 +68,7 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
 }
 
 function requireTaskId(
-  command: "run" | "inspect",
+  command: "run" | "inspect" | "approve" | "retry",
   rest: readonly string[],
 ): string {
   const [taskId, ...extra] = rest;
@@ -207,6 +211,7 @@ export const USAGE = `Usage:
   agentic run-all [--parallel <n>]
   agentic status
   agentic inspect <task-id>
+  agentic approve <task-id>
   agentic tasks add <task-file>
   agentic agents
   agentic help
@@ -223,6 +228,8 @@ compatibility alias for unattended "run".
 format (docs/TASK_SCHEMA.md), normalizes it to the runner task contract,
 validates it, and persists it into local runner state. Manual task ingestion
 only.
+
+"approve" records human approval for a task that declares approval.required: true.
 
 Local runner state (SQLite database and task worktrees) lives outside the
 repository, per machine, keyed to the normalized repository path. Moving or

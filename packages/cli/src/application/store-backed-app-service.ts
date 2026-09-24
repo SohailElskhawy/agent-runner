@@ -33,6 +33,7 @@ import type { RunnerAppService } from "./runner-app-service.js";
 import type {
   AddTaskResult,
   AgentStatusEntry,
+  ApprovalCommandResult,
   ExecutionClaimStatusView,
   InitResult,
   ParallelCapacityUsage,
@@ -156,6 +157,65 @@ class StoreBackedAppService implements RunnerAppService {
     };
   }
 
+  async approve(taskId: TaskId): Promise<ApprovalCommandResult> {
+    await this.startupReconcile();
+    const task = await this.store.getTask(taskId);
+    if (task === null) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" was not found in runner state`,
+      };
+    }
+    if (!task.definition.approval.required) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" does not require human approval`,
+      };
+    }
+    if (task.approvalGrantedAt !== undefined) {
+      return {
+        kind: "already-granted",
+        taskId,
+        message: `task "${taskId}" was already approved at ${task.approvalGrantedAt}`,
+      };
+    }
+    if (task.status === "DONE" || task.status === "CANCELLED") {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" is ${task.status} and cannot be approved`,
+      };
+    }
+    const grantedAt = new Date().toISOString();
+    const granted = await this.store.transaction(async () => {
+      const recorded = await this.store.approveTask(taskId, grantedAt);
+      if (recorded) {
+        await this.store.appendEvents([
+          {
+            type: "task.approval.granted",
+            taskId,
+            payload: { taskId },
+            occurredAt: grantedAt,
+          },
+        ]);
+      }
+      return recorded;
+    });
+    return granted
+      ? {
+          kind: "granted",
+          taskId,
+          message: `approval granted for task "${taskId}"`,
+        }
+      : {
+          kind: "already-granted",
+          taskId,
+          message: `task "${taskId}" was already approved`,
+        };
+  }
+
   async run(taskId: TaskId): Promise<RunResult> {
     await this.startupReconcile();
     const recovery = await this.recovery.reconcileTask(taskId);
@@ -211,6 +271,14 @@ class StoreBackedAppService implements RunnerAppService {
         updatedAt: task.updatedAt,
         attemptCount: attempts.length,
         latestAttempt: toLatestAttemptSummary(attempts.at(-1)),
+        ...(task.definition.approval.required
+          ? {
+              approval: {
+                required: true,
+                granted: task.approvalGrantedAt !== undefined,
+              },
+            }
+          : {}),
       });
     }
     const scheduler = await this.buildSchedulerStatus(tasks);

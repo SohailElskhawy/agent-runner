@@ -94,6 +94,8 @@ export function createFixtureTask(overrides?: {
   id?: string;
   projectId?: string;
   status?: Task["status"];
+  approvalRequired?: boolean;
+  approvalGrantedAt?: string;
 }): Task {
   return {
     id: overrides?.id ?? "M001",
@@ -111,7 +113,7 @@ export function createFixtureTask(overrides?: {
       resources: [],
       verification: { required: ["typecheck", "unit"] },
       limits: { maxAttempts: 3, maxReviewCycles: 2 },
-      approval: { required: false },
+      approval: { required: overrides?.approvalRequired ?? false },
     },
     routing: { complexity: "small", capabilities: ["typescript"] },
     provenance: { kind: "user_request", source: "manual" },
@@ -119,6 +121,9 @@ export function createFixtureTask(overrides?: {
     workflow: "default",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    ...(overrides?.approvalGrantedAt === undefined
+      ? {}
+      : { approvalGrantedAt: overrides.approvalGrantedAt }),
   };
 }
 

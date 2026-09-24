@@ -26,6 +26,12 @@ export type RunResult =
   | { readonly kind: "cancelled"; readonly message: string }
   | { readonly kind: "rejected"; readonly message: string };
 
+export type ApprovalCommandResult = {
+  readonly kind: "granted" | "already-granted" | "rejected";
+  readonly taskId: string;
+  readonly message: string;
+};
+
 /** Per-run unattended scheduling request. */
 export type UnattendedRunRequest = {
   readonly maxParallelism?: number | undefined;
@@ -91,6 +97,9 @@ export type TaskStatusEntry = {
   readonly updatedAt: string;
   readonly attemptCount: number;
   readonly latestAttempt: LatestAttemptSummary | null;
+  readonly approval?:
+    | { readonly required: boolean; readonly granted: boolean }
+    | undefined;
 };
 
 export type LatestAttemptSummary = {

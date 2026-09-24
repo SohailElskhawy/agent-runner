@@ -6,6 +6,7 @@ import type {
 import type {
   AddTaskResult,
   AgentStatusEntry,
+  ApprovalCommandResult,
   InitResult,
   ProjectStatus,
   RunResult,
@@ -16,6 +17,7 @@ import type {
 export interface RunnerAppService {
   init(): Promise<InitResult>;
   addTask(taskFilePath: string): Promise<AddTaskResult>;
+  approve(taskId: TaskId): Promise<ApprovalCommandResult>;
   run(taskId: TaskId): Promise<RunResult>;
   runUnattended(options?: UnattendedRunRequest): Promise<RunResult>;
   status(): Promise<ProjectStatus>;

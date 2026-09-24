@@ -17,6 +17,11 @@ export function renderTaskInspection(
   io.writeLine(`  status: ${task.status}`);
   io.writeLine(`  workflow: ${task.workflow}`);
   io.writeLine(`  updated: ${task.updatedAt}`);
+  if (task.definition.approval.required) {
+    io.writeLine(
+      `  approval: required, granted at ${task.approvalGrantedAt ?? "pending"}`,
+    );
+  }
   if (inspection.failureReason !== null) {
     io.writeLine(`  failure reason: ${inspection.failureReason}`);
   }

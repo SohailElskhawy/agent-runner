@@ -7,6 +7,7 @@ export {
   executeRunCommand,
   executeStatusCommand,
   executeInspectCommand,
+  executeApproveCommand,
   executeAgentsCommand,
   EXIT_SUCCESS,
   EXIT_FAILURE,
@@ -24,6 +25,7 @@ export {
 export type {
   InitResult,
   RunResult,
+  ApprovalCommandResult,
   UnattendedRunRequest,
   AgentStatusEntry,
   ProjectStatus,

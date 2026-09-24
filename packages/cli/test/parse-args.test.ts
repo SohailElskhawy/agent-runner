@@ -63,6 +63,14 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  it("parses the approve command with an explicit task id", () => {
+    expect(parseArgs(["approve", "T1"])).toEqual({ name: "approve", taskId: "T1" });
+  });
+
+  it("rejects approve without a task id", () => {
+    expect(() => parseArgs(["approve"])).toThrow(/requires a <task-id> argument/);
+  });
+
   it("parses help and version aliases", () => {
     expect(parseArgs([])).toEqual({ name: "help" });
     expect(parseArgs(["--help"])).toEqual({ name: "help" });

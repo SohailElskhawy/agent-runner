@@ -30,6 +30,20 @@ export async function executeAddTaskCommand(
   return EXIT_SUCCESS;
 }
 
+export async function executeApproveCommand(
+  taskId: TaskId,
+  services: RunnerAppService,
+  io: CliIo,
+): Promise<number> {
+  const result = await services.approve(taskId);
+  if (result.kind === "rejected") {
+    io.writeError(result.message);
+    return EXIT_FAILURE;
+  }
+  io.writeLine(result.message);
+  return EXIT_SUCCESS;
+}
+
 export async function executeRunCommand(
   taskId: TaskId,
   services: RunnerAppService,

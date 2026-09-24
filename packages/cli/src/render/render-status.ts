@@ -16,7 +16,11 @@ export function renderProjectStatus(io: CliIo, status: ProjectStatus): void {
   } else {
     io.writeLine("tasks:");
     for (const task of status.tasks) {
-      io.writeLine(`  ${task.id} [${task.status}] ${task.title}`);
+      const approvalSuffix =
+        task.approval?.required === true && !task.approval.granted
+          ? " [approval required]"
+          : "";
+      io.writeLine(`  ${task.id} [${task.status}] ${task.title}${approvalSuffix}`);
       io.writeLine(`    updated: ${task.updatedAt}`);
       io.writeLine(`    attempts: ${task.attemptCount}`);
       const attempt = task.latestAttempt;
