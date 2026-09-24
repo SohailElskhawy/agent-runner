@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import type { ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -12,10 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url));
 const BUNDLE = join(PACKAGE_DIR, "bundle", "main.js");
+const STAGED_DOCUMENTS = ["README.md", "LICENSE", "THIRD-PARTY-NOTICES.md"] as const;
 const AGENT_FIXTURE = fileURLToPath(
   new URL("./fixtures/fake-pack-agent.mjs", import.meta.url),
 );
@@ -27,21 +29,50 @@ const TARBALL_ENTRIES = [
 ] as const;
 const enabled = process.env["AGENTIC_PACK_SMOKE"] === "1";
 
-type PnpmCommand = {
+type PnpmInvocation = {
   readonly executable: string;
-  readonly leadingArgs: readonly string[];
+  readonly args: readonly string[];
+  readonly windowsVerbatimArguments?: true | undefined;
 };
 
-function pnpmCommand(): PnpmCommand {
-  const execpath = process.env["npm_execpath"];
-  if (execpath === undefined || execpath.length === 0) {
+function quoteCmdToken(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function pnpmInvocation(args: readonly string[]): PnpmInvocation {
+  const execPath = process.env["npm_execpath"];
+  if (execPath === undefined || execPath.length === 0) {
     throw new Error(
-      "pack smoke test must run under pnpm: npm_execpath is not set; run it via `pnpm -C packages/agentic-dev-runner test`",
+      "AGENTIC_PACK_SMOKE requires npm_execpath; run this test through pnpm",
     );
   }
-  return /\.(?:cjs|mjs|js)$/i.test(execpath)
-    ? { executable: process.execPath, leadingArgs: [execpath] }
-    : { executable: execpath, leadingArgs: [] };
+  if (/\.(?:cmd|bat)$/i.test(execPath)) {
+    const command = [execPath, ...args].map(quoteCmdToken).join(" ");
+    return {
+      executable: process.env["ComSpec"] ?? "cmd.exe",
+      args: ["/d", "/s", "/c", `"${command}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return /\.(?:cjs|mjs|js)$/i.test(execPath)
+    ? { executable: process.execPath, args: [execPath, ...args] }
+    : { executable: execPath, args: [...args] };
+}
+
+function runPnpm(args: readonly string[], cwd: string): string {
+  const invocation = pnpmInvocation(args);
+  const options: ExecFileSyncOptionsWithStringEncoding & {
+    windowsVerbatimArguments?: true;
+  } =
+    invocation.windowsVerbatimArguments === true
+      ? {
+          cwd,
+          encoding: "utf8",
+          windowsVerbatimArguments: true,
+          windowsHide: true,
+        }
+      : { cwd, encoding: "utf8", windowsHide: true };
+  return execFileSync(invocation.executable, [...invocation.args], options);
 }
 
 function resolveTarball(packOutput: string, directory: string): string {
@@ -73,6 +104,16 @@ function initializeFixtureRepository(repository: string): void {
 describe.skipIf(!enabled)("packed CLI smoke", () => {
   let directory: string | undefined;
 
+  beforeAll(() => {
+    execFileSync(process.execPath, [join(PACKAGE_DIR, "scripts", "bundle.mjs")], {
+      cwd: PACKAGE_DIR,
+    });
+    expect(existsSync(BUNDLE), `bundle build produced no ${BUNDLE}`).toBe(true);
+    for (const stagedDocument of STAGED_DOCUMENTS) {
+      rmSync(join(PACKAGE_DIR, stagedDocument), { force: true });
+    }
+  });
+
   afterAll(() => {
     if (directory !== undefined) {
       rmSync(directory, { recursive: true, force: true });
@@ -80,20 +121,12 @@ describe.skipIf(!enabled)("packed CLI smoke", () => {
   });
 
   it("installs the tarball and runs a task end to end", () => {
-    const pnpm = pnpmCommand();
     directory = mkdtempSync(join(tmpdir(), "agentic-pack-smoke-"));
     const workDir = directory;
 
-    if (!existsSync(BUNDLE)) {
-      execFileSync(process.execPath, [join(PACKAGE_DIR, "scripts", "bundle.mjs")], {
-        cwd: PACKAGE_DIR,
-      });
-    }
-
-    const packOutput = execFileSync(
-      pnpm.executable,
-      [...pnpm.leadingArgs, "pack", "--pack-destination", workDir],
-      { cwd: PACKAGE_DIR, encoding: "utf8" },
+    const packOutput = runPnpm(
+      ["pack", "--pack-destination", workDir],
+      PACKAGE_DIR,
     );
     const tarball = resolveTarball(packOutput, workDir);
     expect(existsSync(tarball), `packed tarball missing: ${tarball}`).toBe(true);
@@ -108,10 +141,7 @@ describe.skipIf(!enabled)("packed CLI smoke", () => {
         2,
       ),
     );
-    execFileSync(pnpm.executable, [...pnpm.leadingArgs, "add", tarball], {
-      cwd: consumerDir,
-      encoding: "utf8",
-    });
+    runPnpm(["add", tarball], consumerDir);
 
     const installedDir = join(consumerDir, "node_modules", "agentic-dev-runner");
     const cli = join(installedDir, "bundle", "main.js");
