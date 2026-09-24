@@ -21,7 +21,8 @@
   "files": [
     "bundle",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
   ],
   "scripts": {
     "build": "node scripts/bundle.mjs",
