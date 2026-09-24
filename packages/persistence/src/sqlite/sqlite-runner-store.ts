@@ -921,6 +921,21 @@ export class SqliteRunnerStore implements RunnerStore {
     }
   }
 
+  async transitionTaskStatusFrom(
+    id: TaskId,
+    from: TaskStatus,
+    to: TaskStatus,
+    updatedAt: IsoTimestamp,
+  ): Promise<boolean> {
+    const db = this.requireDb("transitionTaskStatusFrom");
+    const result = db
+      .prepare(
+        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+      )
+      .run(to, updatedAt, id, from);
+    return Number(result.changes) === 1;
+  }
+
   async approveTask(id: TaskId, grantedAt: IsoTimestamp): Promise<boolean> {
     const db = this.requireDb("approveTask");
     const result = db

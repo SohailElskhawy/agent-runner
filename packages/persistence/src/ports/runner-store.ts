@@ -14,6 +14,7 @@ import type {
   StageRun,
   Task,
   TaskId,
+  TaskStatus,
 } from "@agentic-dev-runner/core";
 import type { NewEvent, StoredEvent } from "./event.js";
 
@@ -154,6 +155,19 @@ export interface RunnerStore {
     status: Task["status"],
     updatedAt: string,
   ): Promise<void>;
+
+  /**
+   * Applies a status transition only when the task's current persisted status
+   * equals `from`. Returns true when the row was updated; false when the task
+   * is missing or its status differs. The caller is responsible for the
+   * transition's legality and for event recording.
+   */
+  transitionTaskStatusFrom(
+    id: TaskId,
+    from: TaskStatus,
+    to: TaskStatus,
+    updatedAt: IsoTimestamp,
+  ): Promise<boolean>;
 
   putStageRun(stageRun: StageRun): Promise<void>;
   listStageRuns(attemptId: AttemptId): Promise<StageRun[]>;

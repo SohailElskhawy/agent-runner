@@ -142,6 +142,46 @@ describe("SqliteRunnerStore", () => {
     expect(await store.getTaskStatus("unknown-task")).toBeNull();
   });
 
+  it("applies a guarded task status transition only from the expected status", async () => {
+    await store.initialize();
+    const task = createTask({ status: "READY" });
+    await store.putProject(createProject());
+    await store.putTask(task);
+
+    const applied = await store.transitionTaskStatusFrom(
+      task.id,
+      "READY",
+      "FAILED",
+      "2026-01-01T01:00:00.000Z",
+    );
+
+    expect(applied).toBe(true);
+    const transitioned = await store.getTask(task.id);
+    expect(transitioned?.status).toBe("FAILED");
+    expect(transitioned?.updatedAt).toBe("2026-01-01T01:00:00.000Z");
+
+    const stale = await store.transitionTaskStatusFrom(
+      task.id,
+      "READY",
+      "DONE",
+      "2026-01-01T02:00:00.000Z",
+    );
+
+    expect(stale).toBe(false);
+    const unchanged = await store.getTask(task.id);
+    expect(unchanged?.status).toBe("FAILED");
+    expect(unchanged?.updatedAt).toBe("2026-01-01T01:00:00.000Z");
+
+    const missing = await store.transitionTaskStatusFrom(
+      "unknown-task",
+      "FAILED",
+      "READY",
+      "2026-01-01T03:00:00.000Z",
+    );
+
+    expect(missing).toBe(false);
+  });
+
   it("appends events immutably and preserves order", async () => {
     await store.initialize();
     const task = createTask();

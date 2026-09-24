@@ -93,6 +93,9 @@ class RecordingStore implements RunnerStore {
     return null;
   }
   async setTaskStatus(): Promise<void> {}
+  async transitionTaskStatusFrom(): Promise<boolean> {
+    return false;
+  }
   async approveTask(): Promise<boolean> {
     return false;
   }

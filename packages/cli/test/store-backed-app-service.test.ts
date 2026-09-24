@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import type { Task, TaskId } from "@agentic-dev-runner/core";
+import type { Task, TaskId, TaskStatus } from "@agentic-dev-runner/core";
 import {
   OrchestrationError,
   type CrashRecovery,
@@ -112,6 +112,36 @@ const completedOutcome: SingleTaskRunOutcome = {
   integration: { kind: "fast-forward", revision: "abc1234" },
   cleanup: { kind: "removed" },
 };
+
+/**
+ * Wraps a store so that the guarded status transition observes a concurrent
+ * change: it moves the task to a different status first, then reports that the
+ * guarded write did not apply. Every other member delegates to the real store.
+ */
+function concurrentlyChangedStore(
+  target: RunnerStore,
+  taskId: TaskId,
+  concurrentStatus: TaskStatus,
+): RunnerStore {
+  return new Proxy(target, {
+    get(object, property) {
+      if (property === "transitionTaskStatusFrom") {
+        return async (): Promise<boolean> => {
+          await object.setTaskStatus(
+            taskId,
+            concurrentStatus,
+            new Date().toISOString(),
+          );
+          return false;
+        };
+      }
+      const value: unknown = Reflect.get(object, property);
+      return typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(object)
+        : value;
+    },
+  });
+}
 
 describe("StoreBackedAppService", () => {
   let directory: string;
@@ -408,6 +438,39 @@ describe("StoreBackedAppService", () => {
       taskId: "T9",
       message: 'task "T9" was not found in runner state',
     });
+  });
+
+  it("rejects retry when the task changes state before the guarded write", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.putTask(createFixtureTask({ id: "T1", status: "FAILED" }));
+    await store.putAttempt(
+      createFixtureAttempt({
+        id: "att_T1_1",
+        taskId: "T1",
+        number: 1,
+        status: "FAILED",
+      }),
+    );
+    const service = createStoreBackedAppService({
+      storePath,
+      projectRoot: directory,
+      store: concurrentlyChangedStore(store, "T1", "IMPLEMENTING"),
+      orchestrator: new StubOrchestrator(completedOutcome),
+      recovery: new StubRecovery(),
+      agents: stubAgents,
+    });
+
+    const result = await service.retry("T1");
+
+    expect(result.kind).toBe("rejected");
+    expect(result.message).toContain("changed state while retrying");
+    expect((await store.getTask("T1"))?.status).toBe("IMPLEMENTING");
+    expect(
+      (await store.listEvents({ taskId: "T1" })).some(
+        (event) => event.type === "task.retry.requested",
+      ),
+    ).toBe(false);
   });
 
   it("renders retry results through the command layer with correct exit codes", async () => {

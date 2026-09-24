@@ -256,8 +256,16 @@ class StoreBackedAppService implements RunnerAppService {
     }
     const occurredAt = new Date().toISOString();
     const previousStatus = task.status;
-    await this.store.transaction(async () => {
-      await this.store.setTaskStatus(taskId, "READY", occurredAt);
+    const applied = await this.store.transaction(async () => {
+      const moved = await this.store.transitionTaskStatusFrom(
+        taskId,
+        previousStatus,
+        "READY",
+        occurredAt,
+      );
+      if (!moved) {
+        return false;
+      }
       await this.store.appendEvents([
         {
           type: "task.retry.requested",
@@ -272,7 +280,15 @@ class StoreBackedAppService implements RunnerAppService {
           occurredAt,
         },
       ]);
+      return true;
     });
+    if (!applied) {
+      return {
+        kind: "rejected",
+        taskId,
+        message: `task "${taskId}" changed state while retrying (expected ${previousStatus}); inspect it with "agentic tasks" and retry again`,
+      };
+    }
     return {
       kind: "accepted",
       taskId,
