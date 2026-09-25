@@ -6,8 +6,9 @@ version, its license identifier as declared in its `package.json`, and the
 copyright line from its license file. The full license texts follow.
 
 Versions were read from the workspace lockfile (`node_modules/.pnpm/`) at
-release time and are bundled as-is; the bundle also preserves the packages'
-license comments at the end of the file (`legalComments: "eof"`).
+release time and are bundled as-is; this notices file provides the
+authoritative third-party attribution and license texts for the bundled
+distribution.
 
 ## Bundled packages
 

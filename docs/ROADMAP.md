@@ -9,7 +9,7 @@
 - M003 — Define shared error/result model
 - M004 — Add application-service layer
 - M005 — Create CLI shell
-- M006 — Add structured logging
+- M006 — Add structured logging (Deferred to v0.2)
 
 ---
 
@@ -36,14 +36,14 @@
 - M016 — Read project configuration
 - M017 — Load `AGENTS.md`
 - M018 — Discover project documentation
-- M019 — Implement readiness analysis
-- M020 — Generate missing-context questions
-- M021 — Persist user decisions
-- M022 — Generate bounded milestones
-- M023 — Generate small tasks
-- M024 — Build/validate dependency DAG
-- M025 — Detect oversized tasks
-- M026 — Validate task provenance
+- M019 — Implement readiness analysis (Deferred to v0.2)
+- M020 — Generate missing-context questions (Deferred to v0.2)
+- M021 — Persist user decisions (Deferred to v0.2)
+- M022 — Generate bounded milestones (Deferred to v0.2)
+- M023 — Generate small tasks (Deferred to v0.2)
+- M024 — Build/validate dependency DAG (Deferred to v0.2)
+- M025 — Detect oversized tasks (Deferred to v0.2)
+- M026 — Validate task provenance (Deferred to v0.2)
 
 ---
 
@@ -55,10 +55,10 @@
 - M028 — Define capability profiles
 - M029 — Add process execution abstraction
 - M030 — Add timeout/cancellation handling
-- M031 — Add structured-output validation
+- M031 — Add structured-output validation (Deferred to v0.2)
 - M032 — Implement OpenCode adapter
 - M033 — Implement second agent adapter
-- M034 — Record token/cost telemetry
+- M034 — Record token/cost telemetry (Deferred to v0.2)
 
 ---
 
@@ -68,11 +68,11 @@
 
 - M035 — Define ContextPack schema
 - M036 — Build mandatory context collector
-- M037 — Add source-file relevance discovery
-- M038 — Add contract/ADR relevance discovery
+- M037 — Add source-file relevance discovery (Deferred to v0.2)
+- M038 — Add contract/ADR relevance discovery (Deferred to v0.2)
 - M039 — Build context manifests
-- M040 — Support agent context requests
-- M041 — Add context-size/token limits
+- M040 — Support agent context requests (Deferred to v0.2)
+- M041 — Add context-size/token limits (Deferred to v0.2)
 
 ---
 
@@ -116,7 +116,7 @@
 - M061 — Find runnable tasks
 - M062 — Implement deterministic scheduling priority
 - M063 — Implement rule-based agent routing
-- M064 — Add agent fallback/escalation
+- M064 — Add agent fallback/escalation (Deferred to v0.2)
 - M065 — Enforce parallelism limits
 - M066 — Continue independent work after failures
 
@@ -127,17 +127,17 @@
 **Complete when:** the MVP is actually usable.
 
 - M067 — `agentic init`
-- M068 — `agentic analyze`
-- M069 — `agentic plan`
-- M070 — `agentic tasks`
+- M068 — `agentic analyze` (Deferred to v0.2)
+- M069 — `agentic plan` (Deferred to v0.2)
+- M070 — `agentic tasks` (`tasks add`, `tasks` list) — Delivered in v0.1
 - M071 — `agentic run`
 - M072 — `agentic status`
 - M073 — `agentic inspect`
-- M074 — `agentic retry`
-- M075 — `agentic pause/resume`
+- M074 — `agentic retry` — Delivered in v0.1
+- M075 — `agentic pause/resume` (Deferred to v0.2)
 - M076 — `agentic agents`
-- M077 — `agentic cost`
-- M078 — `agentic doctor`
+- M077 — `agentic cost` (Deferred to v0.2)
+- M078 — `agentic doctor` — Delivered in v0.1
 
 ---
 
@@ -145,15 +145,44 @@
 
 **Complete when:** V0.1 can be trusted on a real project.
 
-- M079 — Windows validation
-- M080 — macOS validation
-- M081 — Linux validation
-- M082 — Forced-crash recovery tests
-- M083 — Parallel execution stress test
-- M084 — Provider failure tests
-- M085 — Run a real 20+ task project
-- M086 — Documentation/install guide
-- M087 — Package V0.1 release
+- M079 — Windows validation (GitHub Actions CI matrix: `.github/workflows/ci.yml`)
+- M080 — macOS validation (GitHub Actions CI matrix: `.github/workflows/ci.yml`)
+- M081 — Linux validation (GitHub Actions CI matrix: `.github/workflows/ci.yml`)
+- M082 — Forced-crash recovery tests (`packages/cli/test/forced-kill-recovery.e2e.test.ts`)
+- M083 — Parallel execution stress test (`packages/cli/test/parallel-stress-e2e.test.ts`)
+- M084 — Provider failure tests (`packages/cli/test/provider-failure-e2e.test.ts`)
+- M085 — Run a real 20+ task project (`packages/cli/test/roadmap-20-tasks-e2e.test.ts` and `docs/DOGFOOD.md`)
+- M086 — Documentation/install guide — Delivered in v0.1
+- M087 — Package V0.1 release — Delivered in v0.1
+
+---
+
+## Deferred to v0.2
+
+v0.1 launches with the proven execution core; deferred items require real usage feedback before design.
+
+- **M006 structured logging**: JSON structured logging and log query subsystem.
+- **M019–M026 discovery & autonomous planning**:
+  - M019 — Implement readiness analysis
+  - M020 — Generate missing-context questions
+  - M021 — Persist user decisions
+  - M022 — Generate bounded milestones
+  - M023 — Generate small tasks
+  - M024 — Build/validate dependency DAG
+  - M025 — Detect oversized tasks
+  - M026 — Validate task provenance
+  - `tasks generate`
+- **M031 generic structured outputs**: schema enforcement on arbitrary agent outputs beyond adapter normalization.
+- **M034 token/cost telemetry + `agentic cost` (M077)**: live token counting, cost calculation, and `agentic cost` command.
+- **M037/M038/M040/M041 context extras**:
+  - M037 — Add source-file relevance discovery
+  - M038 — Add contract/ADR relevance discovery
+  - M040 — Support agent context requests
+  - M041 — Add context-size/token limits
+- **M064 agent fallback/escalation**: dynamic fallback to alternate agents when preferred agent fails.
+- **M068 `agentic analyze`**: repository readiness and context assessment command.
+- **M069 `agentic plan`**: autonomous roadmap and task generation command.
+- **M075 `agentic pause/resume`**: in-flight run pausing and resumed execution.
 
 ---
 

@@ -48,7 +48,7 @@ Future API ──────┘          │
         │                                          │
         │ Git Manager                              │
         │ Verification Engine                      │
-        │ Discovery / Readiness                    │
+        │ Discovery / Readiness (v0.2)             │
         │ Persistence                              │
         │ Event System                             │
         │ Platform Abstraction                     │
@@ -84,15 +84,17 @@ Provides use cases such as:
 
 ```text
 initializeProject()
-analyzeProject()
-createRoadmap()
 startRun()
-pauseRun()
-resumeRun()
 retryTask()
+approveTask()
 getProjectStatus()
 inspectTask()
+listTaskSummaries()
+addTask()
+doctor()
 ```
+
+*(Deferred to v0.2: `analyzeProject()`, `createRoadmap()`, `pauseRun()`, `resumeRun()`.)*
 
 The CLI and future GUI both use these same operations.
 
@@ -201,8 +203,8 @@ Attempts store:
 - base revision
 - timings
 - logs
-- token usage
-- cost
+- token usage (deferred to v0.2)
+- cost (deferred to v0.2)
 - stage results
 - failure information
 
@@ -240,10 +242,10 @@ Inputs may include:
 - risk
 - required capabilities
 - estimated context size
-- cost policy
+- cost policy (deferred to v0.2)
 - configured agent availability
 
-Historical adaptive routing is deferred.
+Historical adaptive routing and agent fallback/escalation (M064) are deferred to v0.2.
 
 ---
 
@@ -253,9 +255,9 @@ The orchestrator communicates with agents through a provider-independent runtime
 
 Adapters may represent:
 
-- CLI agents
-- API agents
-- locally hosted models
+- CLI agents (v0.1 ships `opencode` and `codex`)
+- API agents (deferred to v0.2)
+- locally hosted models (deferred to v0.2)
 - future remote workers
 
 Each adapter declares supported capabilities.
@@ -263,11 +265,11 @@ Each adapter declares supported capabilities.
 Possible capabilities include:
 
 ```text
-structured_output
+structured_output (deferred to v0.2)
 streaming
 cancellation
-token_reporting
-cost_reporting
+token_reporting (deferred to v0.2)
+cost_reporting (deferred to v0.2)
 multimodal
 interactive_session
 sandboxing
@@ -306,6 +308,10 @@ Workflow execution must remain bounded.
 
 Review and retry cycles must have configured limits.
 
+### Unified Run Path
+
+Single-task execution and unattended batch execution share the same execution pipeline: `agentic run <task-id>` executes the resolved workflow (including integration verification) exactly like unattended execution (`agentic run` / `agentic run-all`). In both paths, tasks run in isolated worktrees, execute the stages declared by their resolved workflow, require passing verification checks, and become `DONE` only after successful integration verification.
+
 ---
 
 ## 11. Context Engine
@@ -320,13 +326,13 @@ Examples:
 
 - task contract
 - acceptance criteria
-- project rules
+- project rules (`AGENTS.md`)
 - relevant architecture constraints
 - base revision
 - allowed paths
 - dependency outputs
 
-### Retrieved Context
+### Retrieved Context (deferred to v0.2)
 
 Examples:
 
@@ -337,11 +343,13 @@ Examples:
 - ADRs
 - Git history
 
-### Discovery Context
+*(In v0.1, context packs contain mandatory context including `AGENTS.md`, task contract, and project configuration; dynamic retrieval of source files, contracts/ADRs, and agent-requested context extras are deferred to v0.2.)*
+
+### Discovery Context (deferred to v0.2)
 
 Important user decisions gathered during project readiness.
 
-### On-Demand Context
+### On-Demand Context (deferred to v0.2)
 
 Additional information requested during execution.
 
@@ -349,9 +357,11 @@ Every attempt must persist a ContextManifest describing exactly what the agent r
 
 ---
 
-## 12. Discovery & Readiness Engine
+## 12. Discovery & Readiness (v0.2 — not implemented)
 
-Before roadmap generation, the system determines whether the project is sufficiently defined.
+No discovery/readiness code exists in v0.1; tasks are authored manually and ingested with `agentic tasks add`.
+
+Before roadmap generation in v0.2, the system will determine whether the project is sufficiently defined.
 
 Possible states:
 
@@ -608,10 +618,10 @@ packages/
 
   context/
     builder/
-    retrieval/
+    retrieval/ (deferred to v0.2)
     manifests/
 
-  discovery/
+  discovery/ (deferred to v0.2)
     readiness/
     questioning/
     contracts/
@@ -646,7 +656,7 @@ packages/
   shared/
     schemas/
     errors/
-    logging/
+    logging/ (structured logging deferred to v0.2)
 ```
 
 These boundaries may evolve, but dependency direction must remain clear.
@@ -694,14 +704,14 @@ manually defined task
 
 The first vertical slice does not require:
 
-- autonomous planning
+- autonomous planning (deferred to v0.2)
 - multi-agent routing
 - parallel execution
-- discovery
-- adaptive routing
-- GUI
+- discovery (deferred to v0.2)
+- adaptive routing (deferred to v0.2)
+- GUI (deferred to v0.2)
 
-Those capabilities are added after the execution foundation proves reliable.
+Those capabilities are added after the execution foundation proves reliable. In v0.1, deterministic multi-agent routing, parallel execution, and isolated worktree workflows are delivered; autonomous discovery, planning, adaptive routing, and GUI remain deferred to v0.2.
 
 ---
 
