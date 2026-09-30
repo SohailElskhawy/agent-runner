@@ -8,6 +8,7 @@ export type PlanningInput = {
   readonly baseRevision: string;
   readonly repositoryEvidence: readonly RepositoryEvidence[];
   readonly knownDecisions: readonly string[];
+  readonly answeredQuestionIds: readonly string[];
   readonly existingTaskIds: readonly string[];
 };
 
@@ -35,12 +36,14 @@ export function validatePlanningInput(input: unknown): PlanningInputValidationRe
   });
   const knownDecisions = requireArray(input, "knownDecisions", issues, (entry, index) =>
     requireArrayString(entry, `knownDecisions[${index}]`, issues));
+  const answeredQuestionIds = requireArray(input, "answeredQuestionIds", issues, (entry, index) =>
+    requireArrayString(entry, `answeredQuestionIds[${index}]`, issues));
   const existingTaskIds = requireArray(input, "existingTaskIds", issues, (entry, index) =>
     requireArrayString(entry, `existingTaskIds[${index}]`, issues));
-  if (issues.length || repositoryRoot === undefined || goal === undefined || baseRevision === undefined || repositoryEvidence === undefined || knownDecisions === undefined || existingTaskIds === undefined) {
+  if (issues.length || repositoryRoot === undefined || goal === undefined || baseRevision === undefined || repositoryEvidence === undefined || knownDecisions === undefined || answeredQuestionIds === undefined || existingTaskIds === undefined) {
     return { ok: false, issues };
   }
-  return { ok: true, value: { repositoryRoot, goal, baseRevision, repositoryEvidence, knownDecisions, existingTaskIds } };
+  return { ok: true, value: { repositoryRoot, goal, baseRevision, repositoryEvidence, knownDecisions, answeredQuestionIds, existingTaskIds } };
 }
 
 function requireString(source: Record<string, unknown>, key: string, issues: string[]): string | undefined {

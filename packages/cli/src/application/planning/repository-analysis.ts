@@ -5,6 +5,7 @@ import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import type { PlanningInput, RepositoryEvidence } from "@agentic-dev-runner/core";
 
 const MAX_EVIDENCE_BYTES = 65_536;
+const MAX_ANSWER_BYTES = MAX_EVIDENCE_BYTES / 2;
 const MAX_TRACKED_PATHS = 500;
 const OMITTED = "\n[omitted: evidence size limit]";
 const OPTIONAL_FILES = [
@@ -77,46 +78,99 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
     const testPaths = tracked.filter(isTestPath);
     evidence.set(".agentic/test-files.txt", inventory(testPaths.slice(0, MAX_TRACKED_PATHS), testPaths.length > MAX_TRACKED_PATHS, "test path"));
 
-    let remaining = MAX_EVIDENCE_BYTES;
+    const answers = selectAnswers(parseAnswers(evidence.get(".agentic/decisions.md") ?? ""));
+    const sortedEvidence = [...evidence].sort(([a], [b]) => comparePaths(a, b));
+    const shellEvidence = sortedEvidence.map(([path, content]) => content === null
+      ? { path, status: "absent" as const }
+      : { path, status: "present" as const, content: "" });
+    const inputShell = {
+      repositoryRoot: projectRoot,
+      goal,
+      baseRevision,
+      repositoryEvidence: shellEvidence,
+      knownDecisions: answers.map((answer) => answer.answer),
+      answeredQuestionIds: answers.map((answer) => answer.id),
+      existingTaskIds: [...existingTaskIds],
+    };
+    let remaining = Math.max(0, MAX_EVIDENCE_BYTES - Buffer.byteLength(JSON.stringify(inputShell)));
     const repositoryEvidence: RepositoryEvidence[] = [];
-    for (const [path, content] of [...evidence].sort(([a], [b]) => comparePaths(a, b))) {
+    for (const [path, content] of sortedEvidence) {
       if (content === null) {
         repositoryEvidence.push({ path, status: "absent" });
         continue;
       }
-      const bytes = Buffer.from(content);
-      if (bytes.byteLength <= remaining) {
+      const serializedBytes = serializedContentBytes(content);
+      if (serializedBytes <= remaining) {
         repositoryEvidence.push({ path, status: "present", content });
-        remaining -= bytes.byteLength;
+        remaining -= serializedBytes;
       } else {
-        const truncated = truncateUtf8(bytes, remaining);
+        const truncated = fitSerializedContent(content, remaining);
         repositoryEvidence.push({ path, status: "present", content: truncated });
         remaining = 0;
       }
     }
-    const decisionText = repositoryEvidence.find((entry) => entry.path === ".agentic/decisions.md");
-    let decisionBudget = Math.max(0, MAX_EVIDENCE_BYTES - repositoryEvidence.reduce(
-      (total, entry) => total + (entry.status === "present" ? Buffer.byteLength(entry.content) : 0), 0,
-    ));
-    const knownDecisions = (decisionText?.status === "present" ? decisionText.content : "")
-      .split(/\r?\n/)
-      .map((line) => /^\s*Answer:\s*(\S.*)$/.exec(line)?.[1]?.trim())
-      .filter((answer): answer is string => answer !== undefined)
-      .filter((answer) => {
-        const bytes = Buffer.byteLength(answer);
-        if (bytes > decisionBudget) return false;
-        decisionBudget -= bytes;
-        return true;
-      });
     return {
       repositoryRoot: projectRoot,
       goal,
       baseRevision,
       repositoryEvidence,
-      knownDecisions,
+      knownDecisions: answers.map((answer) => answer.answer),
+      answeredQuestionIds: answers.map((answer) => answer.id),
       existingTaskIds: [...existingTaskIds],
     };
   };
+}
+
+function parseAnswers(content: string): { id: string; answer: string }[] {
+  let id: string | undefined;
+  const answers: { id: string; answer: string }[] = [];
+  for (const line of content.split(/\r?\n/)) {
+    const question = /^\s*Question ID:\s*(\S+)\s*$/.exec(line)
+      ?? /^\s*#{1,6}\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s*(?::|—|-)\s*.+$/.exec(line);
+    if (question?.[1] !== undefined) {
+      id = question[1];
+      continue;
+    }
+    const answerLine = /^\s*Answer:(.*)$/.exec(line);
+    if (answerLine !== null) {
+      const answer = answerLine[1]?.trim() ?? "";
+      if (id !== undefined && answer.length > 0) answers.push({ id, answer });
+      id = undefined;
+    }
+  }
+  return answers;
+}
+
+function selectAnswers(answers: readonly { id: string; answer: string }[]): { id: string; answer: string }[] {
+  let remaining = MAX_ANSWER_BYTES;
+  return answers.filter((answer) => {
+    const size = Buffer.byteLength(answer.id) + Buffer.byteLength(answer.answer);
+    if (size > remaining) return false;
+    remaining -= size;
+    return true;
+  });
+}
+
+function serializedContentBytes(content: string): number {
+  return Buffer.byteLength(JSON.stringify(content)) - 2;
+}
+
+function fitSerializedContent(content: string, budget: number): string {
+  const bytes = Buffer.from(content);
+  let low = 0;
+  let high = bytes.byteLength;
+  let result = "";
+  while (low <= high) {
+    const candidateBytes = Math.floor((low + high) / 2);
+    const candidate = candidateBytes >= bytes.byteLength ? content : truncateUtf8(bytes, candidateBytes);
+    if (serializedContentBytes(candidate) <= budget) {
+      result = candidate;
+      low = candidateBytes + 1;
+    } else {
+      high = candidateBytes - 1;
+    }
+  }
+  return result;
 }
 
 function inventory(paths: readonly string[], truncated: boolean, limit = "tracked path"): string {

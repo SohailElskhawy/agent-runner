@@ -114,18 +114,34 @@ describe("repository analysis", () => {
   it("extracts only answered decision lines", async () => {
     const root = repo();
     mkdirSync(join(root, ".agentic"));
-    writeFileSync(join(root, ".agentic", "decisions.md"), "Question: use auth?\nAnswer: use OAuth\nQuestion: theme?\nAnswer:   \n");
-    expect((await analyzer(root, "goal", [])).knownDecisions).toEqual(["use OAuth"]);
+    writeFileSync(join(root, ".agentic", "decisions.md"), "### AUTH: use auth?\nAnswer: use OAuth\n\n### THEME: theme?\nAnswer:   \n");
+    const input = await analyzer(root, "goal", []);
+    expect(input.knownDecisions).toEqual(["use OAuth"]);
+    expect(input.answeredQuestionIds).toEqual(["AUTH"]);
   });
 
   it("counts known decisions against the aggregate evidence byte cap", async () => {
     const root = repo();
     mkdirSync(join(root, ".agentic"));
-    writeFileSync(join(root, ".agentic", "decisions.md"), `Answer: ${"x".repeat(100_000)}\n`);
+    writeFileSync(join(root, ".agentic", "decisions.md"), `### Q-LONG: large answer\nAnswer: ${"x".repeat(100_000)}\n`);
     const input = await analyzer(root, "goal", []);
     const evidenceBytes = Buffer.byteLength(input.repositoryEvidence.flatMap((entry) => entry.status === "present" ? [entry.content] : []).join(""));
     const decisionBytes = Buffer.byteLength(input.knownDecisions.join(""));
     expect(evidenceBytes + decisionBytes).toBeLessThanOrEqual(65_536);
+    expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
+  });
+
+  it("reserves bytes for known answers after later evidence consumes the content budget", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), "### Q-AUTH: choose auth\nAnswer: Use OAuth\n");
+    writeFileSync(join(root, "AGENTS.md"), "x".repeat(65_000));
+    const input = await analyzer(root, "goal", []);
+    expect(input.knownDecisions).toContain("Use OAuth");
+    expect(input.answeredQuestionIds).toContain("Q-AUTH");
+    const evidenceBytes = Buffer.byteLength(input.repositoryEvidence.flatMap((entry) => entry.status === "present" ? [entry.content] : []).join(""));
+    expect(evidenceBytes + Buffer.byteLength(input.knownDecisions.join(""))).toBeLessThanOrEqual(65_536);
+    expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
   });
 
   it("includes untracked root manifests", async () => {

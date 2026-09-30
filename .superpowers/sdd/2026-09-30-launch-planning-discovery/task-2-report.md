@@ -57,3 +57,18 @@ Files changed in the fix:
 
 Focused test output: `Test Files 1 passed (1); Tests 12 passed (12)`.
 Typecheck output: `$ tsc --noEmit` completed successfully.
+
+## Review follow-up 2 — retained answers and question IDs
+
+Added required `PlanningInput.answeredQuestionIds` validation and decision parsing for stable markdown question headings (`### <id>: <prompt>`) with non-empty `Answer:` fields. The analyzer selects complete answer/ID pairs first, reserves their serialized byte cost, and budgets repository evidence against the remaining 65,536-byte serialized-input ceiling.
+
+### TDD and verification
+
+- **RED:** Added regression coverage for preserved answers under later large evidence, question ID linkage, and the core validator field. The core test failed because the validator output lacked `answeredQuestionIds`; the CLI tests failed because the analyzer did not return IDs and could not retain the paired answer.
+- **GREEN:** `pnpm --filter @agentic-dev-runner/core exec vitest run test/planning-input.test.ts` — 1 file / 2 tests passed.
+- **GREEN:** `pnpm --filter @agentic-dev-runner/cli exec vitest run test/repository-analysis.test.ts` — 1 file / 13 tests passed.
+- `pnpm --filter @agentic-dev-runner/core typecheck` — `$ tsc --noEmit`, passed.
+- `pnpm --filter @agentic-dev-runner/cli typecheck` — `$ tsc --noEmit`, passed.
+- `git diff --check` — passed.
+
+Files changed in this follow-up: `packages/core/src/domain/planning-input.ts`, `packages/core/test/planning-input.test.ts`, `packages/cli/src/application/planning/repository-analysis.ts`, and `packages/cli/test/repository-analysis.test.ts`.
