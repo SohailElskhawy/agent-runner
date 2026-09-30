@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateAgentProfileEligibility,
   normalizeAgentCapability,
+  profileTier,
   validateAgentProfile,
   type AgentProfile,
   type AgentProfileEligibility,
@@ -116,6 +117,39 @@ describe("normalizeAgentCapability", () => {
 });
 
 describe("validateAgentProfile", () => {
+  it("accepts each declared tier and defaults omitted tiers to standard", () => {
+    for (const tier of ["economy", "standard", "strong"] as const) {
+      const result = validateAgentProfile({
+        id: tier,
+        adapterId: "codex",
+        capabilities: [],
+        tier,
+      });
+      expect(result.ok && result.value.tier).toBe(tier);
+      if (result.ok) expect(profileTier(result.value)).toBe(tier);
+    }
+    const omitted = validateAgentProfile({ id: "old", adapterId: "codex", capabilities: [] });
+    expect(omitted.ok && profileTier(omitted.value)).toBe("standard");
+    expect(omitted).toEqual({
+      ok: true,
+      value: { id: "old", adapterId: "codex", capabilities: [] },
+    });
+  });
+
+  it("rejects unknown tiers with the valid values", () => {
+    expect(
+      validateAgentProfile({
+        id: "x",
+        adapterId: "codex",
+        capabilities: [],
+        tier: "premium",
+      }),
+    ).toEqual({
+      ok: false,
+      issues: ['agent profile.tier: must be one of "economy", "standard", or "strong"'],
+    });
+  });
+
   it("accepts a profile with id, adapterId, model, and normalized capabilities", () => {
     const result = validateAgentProfile({
       id: "general-coder",

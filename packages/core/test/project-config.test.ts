@@ -279,6 +279,29 @@ describe("validateProjectConfiguration agent profiles", () => {
     ]);
   });
 
+  it("preserves declared profile tiers and rejects invalid tiers", () => {
+    const value = validate({
+      verification: canonicalVerification(),
+      agents: {
+        profiles: {
+          budget: { adapter: "codex", capabilities: [], tier: "economy" },
+        },
+      },
+    });
+    expect(value.agentProfiles[0]?.tier).toBe("economy");
+    const invalid = validateProjectConfiguration({
+      verification: canonicalVerification(),
+      agents: {
+        profiles: {
+          budget: { adapter: "codex", capabilities: [], tier: "premium" },
+        },
+      },
+    });
+    expect(invalid.ok ? [] : invalid.issues.join(" ")).toContain(
+      'must be one of "economy", "standard", or "strong"',
+    );
+  });
+
   it("preserves profile declaration order", () => {
     const profiles = (canonicalAgents().agents as {
       profiles: Record<string, unknown>;

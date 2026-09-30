@@ -382,6 +382,27 @@ agents:
     ]);
   });
 
+  it("loads configured profile tiers and rejects unknown tiers", async () => {
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(
+      configPath(),
+      `${CANONICAL_YAML}agents:\n  profiles:\n    budget:\n      adapter: codex\n      capabilities: []\n      tier: economy\n`,
+      "utf8",
+    );
+    const result = await loadProjectConfiguration(projectRoot);
+    expect(result.ok && result.config.agentProfiles[0]?.tier).toBe("economy");
+
+    writeFileSync(
+      configPath(),
+      `${CANONICAL_YAML}agents:\n  profiles:\n    budget:\n      adapter: codex\n      capabilities: []\n      tier: premium\n`,
+      "utf8",
+    );
+    const invalid = await loadProjectConfiguration(projectRoot);
+    expect(invalid.ok || invalid.reason !== "INVALID" ? "" : invalid.issues.join(" ")).toContain(
+      'must be one of "economy", "standard", or "strong"',
+    );
+  });
+
   it("preserves profile declaration order deterministically", async () => {
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(

@@ -1,3 +1,5 @@
+import { isAgentTier, type AgentTier } from "./agent-tier.js";
+
 /**
  * Provider-independent agent capability profiles.
  *
@@ -21,6 +23,7 @@ export type AgentProfile = {
   readonly id: string;
   readonly adapterId: string;
   readonly model?: string | undefined;
+  readonly tier?: AgentTier | undefined;
   readonly capabilities: readonly string[];
 };
 
@@ -38,11 +41,16 @@ const AGENT_PROFILE_KEYS: ReadonlySet<string> = new Set([
   "id",
   "adapterId",
   "model",
+  "tier",
   "capabilities",
 ]);
 
 export function normalizeAgentCapability(capability: string): string {
   return capability.trim().toLowerCase();
+}
+
+export function profileTier(profile: AgentProfile): AgentTier {
+  return profile.tier ?? "standard";
 }
 
 export function evaluateAgentProfileEligibility(
@@ -80,6 +88,7 @@ export function validateAgentProfile(
   const id = requireNonEmptyString(input, "id", issues);
   const adapterId = requireNonEmptyString(input, "adapterId", issues);
   const model = requireOptionalNonEmptyString(input, "model", issues);
+  const tier = requireOptionalTier(input, issues);
   const capabilities = requireCapabilities(input, issues);
 
   if (issues.length > 0) {
@@ -87,16 +96,29 @@ export function validateAgentProfile(
   }
   return {
     ok: true,
-    value:
-      model === undefined
-        ? { id: defined(id), adapterId: defined(adapterId), capabilities: defined(capabilities) }
-        : {
-            id: defined(id),
-            adapterId: defined(adapterId),
-            model,
-            capabilities: defined(capabilities),
-          },
+    value: {
+      id: defined(id),
+      adapterId: defined(adapterId),
+      ...(model === undefined ? {} : { model }),
+      ...(tier === undefined ? {} : { tier }),
+      capabilities: defined(capabilities),
+    },
   };
+}
+
+function requireOptionalTier(
+  source: Record<string, unknown>,
+  issues: string[],
+): AgentTier | undefined {
+  const value = source["tier"];
+  if (value === undefined) return undefined;
+  if (!isAgentTier(value)) {
+    issues.push(
+      `${fieldPath("tier")}: must be one of "economy", "standard", or "strong"`,
+    );
+    return undefined;
+  }
+  return value;
 }
 
 function requireCapabilities(
