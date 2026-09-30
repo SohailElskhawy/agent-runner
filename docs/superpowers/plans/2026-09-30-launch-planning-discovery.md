@@ -37,7 +37,6 @@
 - Modify: `packages/core/src/domain/project-config.ts`
 - Modify: `packages/core/src/domain/agent-profile.ts`
 - Modify: `packages/core/src/domain/index.ts`
-- Modify: `packages/config/src/project-config-file.ts`
 - Test: `packages/core/test/planning-input.test.ts`
 - Test: `packages/core/test/project-config.test.ts`
 - Test: `packages/config/test/project-config-file.test.ts`
