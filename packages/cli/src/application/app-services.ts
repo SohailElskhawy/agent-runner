@@ -48,6 +48,7 @@ import {
   type AppServicesRequest,
 } from "./defaults.js";
 import { resolveRoutedAgent } from "./agents/agent-routing.js";
+import { createRepositoryAnalyzer } from "./planning/repository-analysis.js";
 
 export type AppServices = {
   readonly store: RunnerStore;
@@ -70,6 +71,8 @@ export type AppServices = {
    * `null` when configuration loaded or was intentionally not loaded.
    */
   readonly configurationError: string | null;
+  /** Builds bounded, provider-independent input for planning. */
+  readonly analyzeRepository: ReturnType<typeof createRepositoryAnalyzer>;
 };
 
 export type AppServicesOverrides = {
@@ -119,6 +122,7 @@ export async function createAppServices(
   });
   const runner = createNodeProcessRunner();
   const git = createGitManager({ runner });
+  const analyzeRepository = createRepositoryAnalyzer({ git, runner });
   const verification = overrides.verification ?? createVerificationEngine({ runner });
   const openCodeAdapter = new OpenCodeAdapter(runner);
   const codexAdapter = new CodexAdapter(runner);
@@ -227,6 +231,7 @@ export async function createAppServices(
     runner,
     configuration,
     configurationError,
+    analyzeRepository,
   };
 }
 
