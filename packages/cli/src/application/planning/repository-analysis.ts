@@ -39,8 +39,7 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
     const tracked = listed.stdout.split("\0").filter((path) => path && !isExcluded(path)).sort(comparePaths);
     const paths = tracked.slice(0, MAX_TRACKED_PATHS);
     const candidates = new Set(OPTIONAL_FILES);
-    candidates.add("package.json");
-    candidates.add("pnpm-workspace.yaml");
+    for (const name of MANIFEST_NAMES) candidates.add(name);
     const rootEntries = await readdir(projectRoot, { withFileTypes: true });
     for (const directory of rootEntries.filter((entry) => entry.isDirectory() && !EXCLUDED.has(entry.name)).sort((a, b) => comparePaths(a.name, b.name))) {
       const child = join(projectRoot, directory.name);
@@ -75,7 +74,8 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
       ...status.entries.map((entry) => `${entry.indexStatus}${entry.worktreeStatus} ${entry.path}`).sort(),
     ].join("\n"));
     evidence.set(".agentic/tracked-files.txt", inventory(paths, tracked.length > paths.length));
-    evidence.set(".agentic/test-files.txt", inventory(paths.filter(isTestPath), tracked.length > paths.length));
+    const testPaths = tracked.filter(isTestPath);
+    evidence.set(".agentic/test-files.txt", inventory(testPaths.slice(0, MAX_TRACKED_PATHS), testPaths.length > MAX_TRACKED_PATHS, "test path"));
 
     let remaining = MAX_EVIDENCE_BYTES;
     const repositoryEvidence: RepositoryEvidence[] = [];
@@ -94,22 +94,33 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
         remaining = 0;
       }
     }
+    const decisionText = repositoryEvidence.find((entry) => entry.path === ".agentic/decisions.md");
+    let decisionBudget = Math.max(0, MAX_EVIDENCE_BYTES - repositoryEvidence.reduce(
+      (total, entry) => total + (entry.status === "present" ? Buffer.byteLength(entry.content) : 0), 0,
+    ));
+    const knownDecisions = (decisionText?.status === "present" ? decisionText.content : "")
+      .split(/\r?\n/)
+      .map((line) => /^\s*Answer:\s*(\S.*)$/.exec(line)?.[1]?.trim())
+      .filter((answer): answer is string => answer !== undefined)
+      .filter((answer) => {
+        const bytes = Buffer.byteLength(answer);
+        if (bytes > decisionBudget) return false;
+        decisionBudget -= bytes;
+        return true;
+      });
     return {
       repositoryRoot: projectRoot,
       goal,
       baseRevision,
       repositoryEvidence,
-      knownDecisions: (evidence.get(".agentic/decisions.md") ?? "")
-        .split(/\r?\n/)
-        .map((line) => /^\s*Answer:\s*(\S.*)$/.exec(line)?.[1]?.trim())
-        .filter((answer): answer is string => answer !== undefined),
+      knownDecisions,
       existingTaskIds: [...existingTaskIds],
     };
   };
 }
 
-function inventory(paths: readonly string[], truncated: boolean): string {
-  return [...paths, ...(truncated ? ["[omitted: tracked path limit]"] : [])].join("\n");
+function inventory(paths: readonly string[], truncated: boolean, limit = "tracked path"): string {
+  return [...paths, ...(truncated ? [`[omitted: ${limit} limit]`] : [])].join("\n");
 }
 
 function isExcluded(path: string): boolean {

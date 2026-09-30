@@ -88,11 +88,53 @@ describe("repository analysis", () => {
     expect(inventory?.status === "present" && inventory.content).toContain("omitted: tracked path limit");
   });
 
+  it("includes late test paths beyond the general inventory cap", async () => {
+    const root = repo();
+    mkdirSync(join(root, "files"));
+    for (let index = 0; index < 505; index += 1) writeFileSync(join(root, "files", `item-${index}.txt`), "");
+    mkdirSync(join(root, "zz-tests"));
+    writeFileSync(join(root, "zz-tests", "late.test.ts"), "");
+    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "files"]);
+    const evidence = await analyzer(root, "goal", []);
+    const tests = evidence.repositoryEvidence.find((entry) => entry.path === ".agentic/test-files.txt");
+    expect(tests?.status === "present" && tests.content).toContain("zz-tests/late.test.ts");
+  });
+
+  it("includes later test paths and marks a truncated test inventory", async () => {
+    const root = repo();
+    mkdirSync(join(root, "zz-tests"));
+    for (let index = 0; index < 505; index += 1) writeFileSync(join(root, "zz-tests", `test-${index}.test.ts`), "");
+    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "tests"]);
+    const tests = (await analyzer(root, "goal", [])).repositoryEvidence.find((entry) => entry.path === ".agentic/test-files.txt");
+    expect(tests?.status === "present" && tests.content).toContain("omitted: test path limit");
+  });
+
   it("extracts only answered decision lines", async () => {
     const root = repo();
     mkdirSync(join(root, ".agentic"));
     writeFileSync(join(root, ".agentic", "decisions.md"), "Question: use auth?\nAnswer: use OAuth\nQuestion: theme?\nAnswer:   \n");
     expect((await analyzer(root, "goal", [])).knownDecisions).toEqual(["use OAuth"]);
+  });
+
+  it("counts known decisions against the aggregate evidence byte cap", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), `Answer: ${"x".repeat(100_000)}\n`);
+    const input = await analyzer(root, "goal", []);
+    const evidenceBytes = Buffer.byteLength(input.repositoryEvidence.flatMap((entry) => entry.status === "present" ? [entry.content] : []).join(""));
+    const decisionBytes = Buffer.byteLength(input.knownDecisions.join(""));
+    expect(evidenceBytes + decisionBytes).toBeLessThanOrEqual(65_536);
+  });
+
+  it("includes untracked root manifests", async () => {
+    const root = repo();
+    for (const name of ["pyproject.toml", "Cargo.toml", "go.mod"]) writeFileSync(join(root, name), name);
+    const input = await analyzer(root, "goal", []);
+    for (const name of ["pyproject.toml", "Cargo.toml", "go.mod"]) {
+      expect(input.repositoryEvidence.find((entry) => entry.path === name)).toEqual({ path: name, status: "present", content: name });
+    }
   });
 
   it("keeps evidence ordering stable", async () => {
