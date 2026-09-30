@@ -10,6 +10,7 @@ export type VerificationCheckDefinition = {
 export type ProjectConfiguration = {
   readonly verificationChecks: readonly VerificationCheckDefinition[];
   readonly agentProfiles: readonly AgentProfile[];
+  readonly planningProfileId?: string;
 };
 
 export type ProjectConfigurationValidationResult =
@@ -21,6 +22,7 @@ const PROJECT_CONFIG_ROOT = "project configuration";
 const PROJECT_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "verification",
   "agents",
+  "planning",
 ]);
 
 const VERIFICATION_SECTION_KEYS: ReadonlySet<string> = new Set(["checks"]);
@@ -28,6 +30,7 @@ const VERIFICATION_SECTION_KEYS: ReadonlySet<string> = new Set(["checks"]);
 const CHECK_KEYS: ReadonlySet<string> = new Set(["command", "args"]);
 
 const AGENTS_SECTION_KEYS: ReadonlySet<string> = new Set(["profiles"]);
+const PLANNING_SECTION_KEYS: ReadonlySet<string> = new Set(["profile"]);
 
 export function validateProjectConfiguration(
   input: unknown,
@@ -42,6 +45,11 @@ export function validateProjectConfiguration(
   rejectUnknownFields(input, PROJECT_CONFIG_KEYS, PROJECT_CONFIG_ROOT, issues);
   const verification = requireVerificationSection(input, issues);
   const agentProfiles = requireAgentProfiles(input, issues);
+  const planningProfileId = requirePlanningProfileId(
+    input,
+    agentProfiles ?? [],
+    issues,
+  );
   if (
     verification === undefined ||
     agentProfiles === undefined ||
@@ -54,8 +62,34 @@ export function validateProjectConfiguration(
     value: {
       verificationChecks: defined(verification),
       agentProfiles: defined(agentProfiles),
+      ...(planningProfileId === undefined ? {} : { planningProfileId }),
     },
   };
+}
+
+function requirePlanningProfileId(
+  source: Record<string, unknown>,
+  profiles: readonly AgentProfile[],
+  issues: string[],
+): string | undefined {
+  const planning = source["planning"];
+  if (planning === undefined) return undefined;
+  const path = fieldPath("planning");
+  if (!isRecord(planning)) {
+    issues.push(`${path}: must be an object with a profile id`);
+    return undefined;
+  }
+  rejectUnknownFields(planning, PLANNING_SECTION_KEYS, path, issues);
+  const profile = planning["profile"];
+  if (!isNonEmptyString(profile)) {
+    issues.push(`${path}.profile: must be a non-empty string profile id`);
+    return undefined;
+  }
+  if (!profiles.some((candidate) => candidate.id === profile)) {
+    issues.push(`${path}.profile: references unknown agent profile "${profile}"`);
+    return undefined;
+  }
+  return profile;
 }
 
 function requireVerificationSection(

@@ -51,6 +51,30 @@ describe("validateProjectConfiguration", () => {
     ]);
   });
 
+  it("accepts and resolves a configured planning profile", () => {
+    const result = validateProjectConfiguration({
+      ...canonicalConfig(),
+      agents: {
+        profiles: { planner: { adapter: "opencode", capabilities: [] } },
+      },
+      planning: { profile: "planner" },
+    });
+    expect(result.ok && result.value.planningProfileId).toBe("planner");
+  });
+
+  it("rejects invalid or unknown planning profile references", () => {
+    for (const profile of ["", "  ", 7, null, "missing"]) {
+      const result = validateProjectConfiguration({
+        ...canonicalConfig(),
+        agents: {
+          profiles: { planner: { adapter: "opencode", capabilities: [] } },
+        },
+        planning: { profile },
+      });
+      expect(result.ok).toBe(false);
+    }
+  });
+
   it("normalizes into a representation-independent result", () => {
     const input = canonicalConfig();
     const value = validate(input);

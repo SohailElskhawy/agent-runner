@@ -588,3 +588,33 @@ agents:
     expect(result.issues.join(" ")).toContain('unknown field "timeoutMs"');
   });
 });
+
+describe("loadProjectConfiguration planning profile", () => {
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), "agentic-planning-config-"));
+  });
+  afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
+
+  it("loads the planner profile id from YAML", async () => {
+    writeFileSync(
+      configPath(),
+      `${CANONICAL_YAML}agents:\n  profiles:\n    planner:\n      adapter: opencode\n      capabilities: []\nplanning:\n  profile: planner\n`,
+      "utf8",
+    );
+    const result = await loadProjectConfiguration(projectRoot);
+    expect(result.ok && result.config.planningProfileId).toBe("planner");
+  });
+
+  it("rejects invalid and unknown planner profile references", async () => {
+    for (const profile of ["", "   ", "missing"]) {
+      writeFileSync(
+        configPath(),
+        `${CANONICAL_YAML}agents:\n  profiles:\n    planner:\n      adapter: opencode\n      capabilities: []\nplanning:\n  profile: ${JSON.stringify(profile)}\n`,
+        "utf8",
+      );
+      const result = await loadProjectConfiguration(projectRoot);
+      expect(result.ok).toBe(false);
+      rmSync(configPath(), { force: true });
+    }
+  });
+});
