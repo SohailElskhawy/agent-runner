@@ -25,6 +25,12 @@ describe("parsePlanningResult", () => {
     if (!malformed.ok) expect(malformed.issues.join(" ")).toContain("choices");
   });
 
+  it("rejects duplicate question IDs", () => {
+    const result = parsePlanningResult({ version: 1, kind: "NEEDS_DISCOVERY", questions: [question, { ...question, prompt: "Another decision?" }] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues).toContain('planning result.questions[1].id: duplicates "database"');
+  });
+
   it("requires milestone completion criteria", () => {
     const result = parsePlanningResult({ version: 1, kind: "READY_FOR_PLANNING", milestones: [{ id: "M1", title: "Foundation", completionCriteria: [] }], tasks: [task] });
     expect(result.ok).toBe(false);

@@ -26,6 +26,7 @@ export function parsePlanningResult(value: unknown): PlanningResultValidation {
   if (value["version"] !== 1) issues.push("planning result.version: must be 1");
   if (value["kind"] === "NEEDS_DISCOVERY") {
     const questions: PlanningQuestion[] = [];
+    const questionIds = new Set<string>();
     if (!Array.isArray(value["questions"])) issues.push("planning result.questions: must be an array");
     else {
       if (value["questions"].length === 0) issues.push("planning result.questions: must contain at least one question");
@@ -33,6 +34,8 @@ export function parsePlanningResult(value: unknown): PlanningResultValidation {
         const path = `planning result.questions[${index}]`;
         if (!isRecord(item)) { issues.push(`${path}: must be an object`); return; }
         const id = nonEmpty(item["id"], `${path}.id`, issues);
+        if (id !== undefined && questionIds.has(id)) issues.push(`${path}.id: duplicates "${id}"`);
+        if (id !== undefined) questionIds.add(id);
         const prompt = nonEmpty(item["prompt"], `${path}.prompt`, issues);
         const reason = nonEmpty(item["reason"], `${path}.reason`, issues);
         const importance = item["importance"];
