@@ -23,6 +23,8 @@ export * from "./verification-result.js";
 export * from "./project-config.js";
 export * from "./planning-input.js";
 export * from "./planning-result.js";
+export * from "./planned-task.js";
+export * from "./plan-validation.js";
 export * from "./readiness.js";
 export * from "./task-state-machine.js";
 export * from "./workflow-definition.js";
