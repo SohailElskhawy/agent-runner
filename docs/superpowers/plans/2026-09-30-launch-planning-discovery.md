@@ -44,27 +44,29 @@
 **Interfaces:**
 - Produces: `PlanningInput` with `goal`, `baseRevision`, ordered repository evidence, known decisions, and existing task IDs; `ProjectConfiguration.planningProfileId` for the configured planning profile.
 
-- [ ] Add tests for valid and malformed `PlanningInput`, including empty repositories and preserved deterministic evidence order.
-- [ ] Run `pnpm --filter @agentic-dev-runner/core exec vitest run test/planning-input.test.ts test/project-config.test.ts` and confirm the new cases fail.
-- [ ] Implement the smallest provider-free contract; parse `planning.profile` as a required non-empty profile id only when planning is invoked, preserving old config compatibility when the section is absent.
-- [ ] Add config tests for absent/valid/unknown planner profile references and invalid values.
-- [ ] Run the focused core and config tests; both must pass.
+- [x] Add tests for valid and malformed `PlanningInput`, including empty repositories and preserved deterministic evidence order.
+- [x] Run `pnpm --filter @agentic-dev-runner/core exec vitest run test/planning-input.test.ts test/project-config.test.ts` and confirm the new cases fail.
+- [x] Implement the smallest provider-free contract; parse `planning.profile` as a required non-empty profile id only when planning is invoked, preserving old config compatibility when the section is absent.
+- [x] Add config tests for absent/valid/unknown planner profile references and invalid values.
+- [x] Run the focused core and config tests; both must pass.
 
 ### Task 2: Build bounded repository analysis input
 
 **Files:**
 - Create: `packages/cli/src/application/planning/repository-analysis.ts`
 - Create: `packages/cli/test/repository-analysis.test.ts`
+- Modify: `packages/core/src/domain/planning-input.ts`
+- Modify: `packages/core/test/planning-input.test.ts`
 - Modify: `packages/cli/src/application/app-services.ts`
 
 **Interfaces:**
 - Consumes: `PlanningInput` from Task 1 and existing `GitManager.resolveHeadRevision/status`.
-- Produces: `analyzeRepository(projectRoot, goal?, existingTaskIds) -> Promise<PlanningInput>`; deterministic evidence records for required docs, root/one-level manifests, capped tracked path listing, tests, and `.agentic/decisions.md`.
+- Produces: `analyzeRepository(projectRoot, goal?, existingTaskIds) -> Promise<PlanningInput>`; deterministic evidence records for required docs, root/one-level manifests, capped tracked path listing, tests, and `.agentic/decisions.md`, plus stable IDs for answered discovery questions.
 
-- [ ] Add temp-repository tests for established, empty, missing-file, dirty-tree, size-limit, and stable-order cases.
-- [ ] Run `pnpm --filter @agentic-dev-runner/cli exec vitest run test/repository-analysis.test.ts` and confirm failure.
-- [ ] Implement bounded local scanning with Node filesystem APIs and existing Git state; record missing optional files as absent and cap aggregate bytes and path count.
-- [ ] Run the focused test and confirm it passes.
+- [x] Add temp-repository tests for established, empty, missing-file, dirty-tree, size-limit, stable-order, retained answers, and answered-question IDs; test PlanningInput validation for question IDs.
+- [x] Run `pnpm --filter @agentic-dev-runner/cli exec vitest run test/repository-analysis.test.ts` and confirm failure.
+- [x] Implement bounded local scanning with Node filesystem APIs and existing Git state; record missing optional files as absent and cap aggregate bytes and path count.
+- [x] Run the focused test and confirm it passes.
 
 ### Task 3: Parse planner results and assess readiness
 
@@ -78,10 +80,10 @@
 **Interfaces:**
 - Produces: version-1 discriminated result for `NEEDS_DISCOVERY` questions or `READY_FOR_PLANNING` milestones/tasks; pure validation returning all issues.
 
-- [ ] Add tests for both result variants, unknown version/kind, malformed/empty questions, missing choices, milestone completion criteria, answered questions not repeating, and a defined project that can plan without low-risk implementation questions.
-- [ ] Run the two focused core tests and confirm new cases fail.
-- [ ] Implement typed parsing and inspectable readiness reasons; ensure low-risk reversible details do not block readiness.
-- [ ] Run the focused tests and confirm they pass.
+- [x] Add tests for both result variants, unknown version/kind, malformed/empty questions, duplicate question IDs, missing choices, milestone completion criteria, answered questions not repeating, and a defined project that can plan without low-risk implementation questions.
+- [x] Run the two focused core tests and confirm new cases fail.
+- [x] Implement typed parsing and inspectable readiness reasons; ensure low-risk reversible details do not block readiness.
+- [x] Run the focused tests and confirm they pass.
 
 ### Task 4: Normalize tasks and validate a whole generated DAG
 
@@ -93,12 +95,12 @@
 
 **Interfaces:**
 - Consumes: parsed planner result and existing `validateManualTaskInput`.
-- Produces: normalized `ManualTaskInput[]` plus accumulated validation issues; defaults are READY, priority by milestone order, workflow by risk, runner-owned provenance, empty forbidden paths, and approval for high/critical risk.
+- Produces: normalized `ManualTaskInput[]` plus accumulated validation issues; defaults are READY, priority by milestone order, low→simple / medium→default / high-critical→security-critical workflow, runner-owned provenance, empty forbidden paths, and approval for high/critical risk.
 
-- [ ] Add tests for field normalization/defaults, duplicate/existing IDs, unknown milestones, empty milestones, unresolved dependencies, cycles, unconfigured checks, missing provenance, and task size limits.
-- [ ] Run `pnpm --filter @agentic-dev-runner/core exec vitest run test/plan-validation.test.ts` and confirm failure.
-- [ ] Implement normalization through the existing task validator and one whole-plan DAG check; use `task-conflicts` only to report scope/resource overlaps.
-- [ ] Run the focused test and existing `task-ingestion`/`task-conflicts` tests; all must pass.
+- [x] Add tests for field normalization/defaults, duplicate/existing IDs, unknown milestones, empty milestones, unresolved dependencies, cycles, unconfigured checks, missing provenance, and task size limits.
+- [x] Run `pnpm --filter @agentic-dev-runner/core exec vitest run test/plan-validation.test.ts` and confirm failure.
+- [x] Implement normalization through the existing task validator and one whole-plan DAG check; use `task-conflicts` only to report scope/resource overlaps.
+- [x] Run the focused test and existing `task-ingestion`/`task-conflicts` tests; all must pass.
 
 ### Task 5: Persist questions and draft plans as inspectable files
 
@@ -116,7 +118,7 @@
 - [ ] Add file tests for empty-repository question creation, preserving existing answers, stable serialization/digest, edited draft reads, and cleanup after planner failure.
 - [ ] Add fake-runtime tests for questions, valid plan, malformed response repair success/exhaustion, and no source integration.
 - [ ] Run focused CLI planning tests and confirm new cases fail.
-- [ ] Implement file-backed draft/decision storage and reuse the existing GitManager/AgentRuntime at the analyzed base revision; allow the planner to write only its draft output and do not integrate source edits. Do not add a persistence table for human-editable planning files.
+- [ ] Implement file-backed draft/decision storage with stable question-ID headings and answer fields; reuse `PlanningInput.answeredQuestionIds` to suppress already-answered questions, then invoke the planner again to get a plan once readiness is satisfied. Reuse the existing GitManager/AgentRuntime at the analyzed base revision; allow the planner to write only its draft output and do not integrate source edits. Do not add a persistence table for human-editable planning files.
 - [ ] Run the focused tests and confirm they pass.
 
 ### Task 6: Add analyze/plan/plan-show CLI services and readable preview
