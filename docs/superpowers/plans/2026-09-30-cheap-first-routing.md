@@ -43,10 +43,10 @@
 **Interfaces:**
 - Produces: `AgentTier = "economy" | "standard" | "strong"`, `profileTier(profile)`, and optional `AgentProfile.tier`.
 
-- [ ] Add tests for all tiers, omitted-tier default, invalid tier rejection, and config round trip.
-- [ ] Run focused core/config tests and confirm new cases fail.
-- [ ] Implement tier type/order/default and strict YAML validation; preserve old config behavior.
-- [ ] Run focused tests and existing routing/config suites.
+- [x] Add tests for all tiers, omitted-tier default, invalid tier rejection, and config round trip.
+- [x] Run focused core/config tests and confirm new cases fail.
+- [x] Implement tier type/order/default and strict YAML validation; preserve old config behavior.
+- [x] Run focused tests and existing routing/config suites.
 
 ### Task 2: Derive tier floors and route candidates deterministically
 
@@ -109,4 +109,3 @@
 
 - [ ] Run focused core/config/CLI suites for changed modules.
 - [ ] Run workspace `pnpm build`, `pnpm typecheck`, `pnpm lint`, and `pnpm test`; fix failures in this workstream before handoff.
-
