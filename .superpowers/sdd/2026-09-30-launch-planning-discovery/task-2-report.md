@@ -47,4 +47,13 @@ Addressed the three Task 2 review findings in the analyzer and its focused tests
 - `pnpm --filter @agentic-dev-runner/cli typecheck` — passed.
 - `git diff --check` — passed.
 
-Fixes remain uncommitted pending the task owner's commit go-ahead.
+Fix commit: `1ce3a428c89556f71567ceda333d0c4eec71939c` (`fix(cli): keep planning evidence within analysis caps`).
+
+Files changed in the fix:
+
+- `packages/cli/src/application/planning/repository-analysis.ts`
+- `packages/cli/test/repository-analysis.test.ts`
+- `.superpowers/sdd/2026-09-30-launch-planning-discovery/task-2-report.md`
+
+Focused test output: `Test Files 1 passed (1); Tests 12 passed (12)`.
+Typecheck output: `$ tsc --noEmit` completed successfully.
