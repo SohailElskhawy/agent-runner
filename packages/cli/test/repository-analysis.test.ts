@@ -144,6 +144,16 @@ describe("repository analysis", () => {
     expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
   });
 
+  it("caps serialized escaped answers while retaining earlier answers and matching IDs", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), `### Q-SMALL: first\nAnswer: keep me\n\n### Q-ESCAPED: large\nAnswer: ${"\0".repeat(12_000)}\n`);
+    const input = await analyzer(root, "goal", []);
+    expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
+    expect(input.knownDecisions).toContain("keep me");
+    expect(input.answeredQuestionIds).toEqual(["Q-SMALL"]);
+  });
+
   it("includes untracked root manifests", async () => {
     const root = repo();
     for (const name of ["pyproject.toml", "Cargo.toml", "go.mod"]) writeFileSync(join(root, name), name);

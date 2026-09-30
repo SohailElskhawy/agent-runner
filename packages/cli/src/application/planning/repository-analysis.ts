@@ -78,11 +78,21 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
     const testPaths = tracked.filter(isTestPath);
     evidence.set(".agentic/test-files.txt", inventory(testPaths.slice(0, MAX_TRACKED_PATHS), testPaths.length > MAX_TRACKED_PATHS, "test path"));
 
-    const answers = selectAnswers(parseAnswers(evidence.get(".agentic/decisions.md") ?? ""));
     const sortedEvidence = [...evidence].sort(([a], [b]) => comparePaths(a, b));
     const shellEvidence = sortedEvidence.map(([path, content]) => content === null
       ? { path, status: "absent" as const }
       : { path, status: "present" as const, content: "" });
+    const metadataShell = {
+      repositoryRoot: projectRoot,
+      goal,
+      baseRevision,
+      repositoryEvidence: shellEvidence,
+      knownDecisions: [],
+      answeredQuestionIds: [],
+      existingTaskIds: [...existingTaskIds],
+    };
+    const answerBudget = Math.max(0, Math.min(MAX_ANSWER_BYTES, MAX_EVIDENCE_BYTES - Buffer.byteLength(JSON.stringify(metadataShell))));
+    const answers = selectAnswers(parseAnswers(evidence.get(".agentic/decisions.md") ?? ""), answerBudget);
     const inputShell = {
       repositoryRoot: projectRoot,
       goal,
@@ -141,14 +151,15 @@ function parseAnswers(content: string): { id: string; answer: string }[] {
   return answers;
 }
 
-function selectAnswers(answers: readonly { id: string; answer: string }[]): { id: string; answer: string }[] {
-  let remaining = MAX_ANSWER_BYTES;
-  return answers.filter((answer) => {
-    const size = Buffer.byteLength(answer.id) + Buffer.byteLength(answer.answer);
-    if (size > remaining) return false;
-    remaining -= size;
-    return true;
-  });
+function selectAnswers(answers: readonly { id: string; answer: string }[], budget: number): { id: string; answer: string }[] {
+  const selected: { id: string; answer: string }[] = [];
+  for (const answer of answers) {
+    const candidate = [...selected, answer];
+    const answerBytes = Buffer.byteLength(JSON.stringify(candidate.map((entry) => entry.answer))) - 2;
+    const idBytes = Buffer.byteLength(JSON.stringify(candidate.map((entry) => entry.id))) - 2;
+    if (answerBytes + idBytes <= budget) selected.push(answer);
+  }
+  return selected;
 }
 
 function serializedContentBytes(content: string): number {

@@ -72,3 +72,18 @@ Added required `PlanningInput.answeredQuestionIds` validation and decision parsi
 - `git diff --check` — passed.
 
 Files changed in this follow-up: `packages/core/src/domain/planning-input.ts`, `packages/core/test/planning-input.test.ts`, `packages/cli/src/application/planning/repository-analysis.ts`, and `packages/cli/test/repository-analysis.test.ts`.
+
+## Review follow-up 3 — serialized answer budget and pair validation
+
+Changed answer selection to measure the serialized decision and ID arrays, including JSON escaping, and to reserve that exact serialized cost before evidence. The answer budget also accounts for the fixed serialized `PlanningInput` metadata. The core validator now rejects different `knownDecisions` and `answeredQuestionIds` lengths.
+
+### TDD and verification
+
+- **RED:** The new escaped-answer regression produced a serialized `PlanningInput` of 73,225 bytes; the new core mismatch test accepted mismatched arrays.
+- **GREEN:** `pnpm --filter @agentic-dev-runner/core exec vitest run test/planning-input.test.ts` — 1 file / 3 tests passed.
+- **GREEN:** `pnpm --filter @agentic-dev-runner/cli exec vitest run test/repository-analysis.test.ts` — 1 file / 14 tests passed.
+- `pnpm --filter @agentic-dev-runner/core typecheck` — `$ tsc --noEmit`, passed.
+- `pnpm --filter @agentic-dev-runner/cli typecheck` — `$ tsc --noEmit`, passed.
+- `git diff --check` — passed.
+
+Files changed in this follow-up: `packages/core/src/domain/planning-input.ts`, `packages/core/test/planning-input.test.ts`, `packages/cli/src/application/planning/repository-analysis.ts`, `packages/cli/test/repository-analysis.test.ts`, and this report.

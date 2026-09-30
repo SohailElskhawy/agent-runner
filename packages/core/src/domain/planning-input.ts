@@ -40,6 +40,9 @@ export function validatePlanningInput(input: unknown): PlanningInputValidationRe
     requireArrayString(entry, `answeredQuestionIds[${index}]`, issues));
   const existingTaskIds = requireArray(input, "existingTaskIds", issues, (entry, index) =>
     requireArrayString(entry, `existingTaskIds[${index}]`, issues));
+  if (knownDecisions !== undefined && answeredQuestionIds !== undefined && knownDecisions.length !== answeredQuestionIds.length) {
+    issues.push("planning input.answeredQuestionIds: must match knownDecisions length");
+  }
   if (issues.length || repositoryRoot === undefined || goal === undefined || baseRevision === undefined || repositoryEvidence === undefined || knownDecisions === undefined || answeredQuestionIds === undefined || existingTaskIds === undefined) {
     return { ok: false, issues };
   }

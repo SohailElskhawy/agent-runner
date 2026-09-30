@@ -31,4 +31,12 @@ describe("validatePlanningInput", () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  it("rejects a different number of answered question IDs and decisions", () => {
+    const result = validatePlanningInput({
+      repositoryRoot: "/project", goal: "Build it", baseRevision: "abc",
+      repositoryEvidence: [], knownDecisions: ["Use OAuth"], answeredQuestionIds: [], existingTaskIds: [],
+    });
+    expect(result).toEqual({ ok: false, issues: ["planning input.answeredQuestionIds: must match knownDecisions length"] });
+  });
 });
