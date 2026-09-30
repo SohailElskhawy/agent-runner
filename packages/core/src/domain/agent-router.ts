@@ -13,12 +13,10 @@
  * Selection rules, applied in order:
  * 1. Only available (adapter present) and eligible (declares every required
  *    capability) candidates may be selected.
- * 2. A lower declared model/cost class is preferred only when the domain
- *    already carries such information. The current domain has no cost-class
- *    dimension — `AgentProfile.model` is an opaque identifier — so no
- *    cost-based preference is applied.
- * 3. The supplied candidate order is the deterministic tie-breaker: the first
- *    remaining candidate in the supplied order is selected.
+ * 2. Candidates below the requested minimum tier are rejected; among the
+ *    remaining eligible profiles, the lowest declared tier is preferred.
+ * 3. The supplied candidate order is the deterministic tie-breaker for equal
+ *    tiers.
  *
  * Rejection precedence per candidate: an unavailable adapter always rejects
  * first, because a capability match is meaningless when the adapter cannot

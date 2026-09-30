@@ -63,10 +63,10 @@
 - Produces: `requiredTierFor(task, priorFailedAttempts)` and tier-aware `selectAgentProfile` with structured `below-minimum-tier` rejection.
 - Policy: large/high/critical → strong; medium complexity or risk → standard; otherwise economy; each prior failure raises one tier, capped at strong.
 
-- [ ] Add tests for tier floor, escalation/cap, cheapest capable selection, configured-order ties, rejection diagnostics, and scheduling admission parity.
-- [ ] Run focused core tests and confirm new cases fail.
-- [ ] Implement pure policy and filter logic; preserve availability/capability precedence and return no route rather than downgrade.
-- [ ] Run focused tests plus existing router, task-selection, and parallelism tests.
+- [x] Add tests for tier floor, escalation/cap, cheapest capable selection, configured-order ties, rejection diagnostics, and scheduling admission parity.
+- [x] Run focused core tests and confirm new cases fail.
+- [x] Implement pure policy and filter logic; preserve availability/capability precedence and return no route rather than downgrade.
+- [x] Run focused tests plus existing router, task-selection, and parallelism tests.
 
 ### Task 3: Use one routing helper for both execution paths and persist decisions
 
