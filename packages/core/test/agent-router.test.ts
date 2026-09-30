@@ -111,6 +111,30 @@ describe("selectAgentProfile", () => {
     });
   });
 
+  it("chooses the cheapest capable profile at or above the required tier", () => {
+    const candidates = [
+      candidate({ profile: profile({ id: "strong", tier: "strong" }), availability: { id: "strong", available: true } }),
+      candidate({ profile: profile({ id: "economy", tier: "economy" }), availability: { id: "economy", available: true } }),
+      candidate({ profile: profile({ id: "standard", tier: "standard" }), availability: { id: "standard", available: true } }),
+    ];
+    expect(selectAgentProfile({ requiredCapabilities: [], candidates, minimumTier: "standard" })).toEqual({
+      selected: true,
+      profile: candidates[2]?.profile,
+    });
+  });
+
+  it("reports available capable profiles below the minimum tier", () => {
+    const result = selectAgentProfile({
+      requiredCapabilities: [],
+      minimumTier: "strong",
+      candidates: [candidate({ profile: profile({ tier: "economy" }) })],
+    });
+    expect(result).toEqual({
+      selected: false,
+      rejections: [{ reason: "below-minimum-tier", profileId: "profile-1", tier: "economy", minimumTier: "strong" }],
+    });
+  });
+
   it("selects a profile when the task declares no capabilities", () => {
     const result = route([
       candidate({ profile: profile({ capabilities: [] }) }),

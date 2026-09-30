@@ -1,4 +1,5 @@
 export * from "./agent-tier.js";
+export * from "./routing-policy.js";
 export * from "./agent-profile.js";
 export * from "./agent-router.js";
 export * from "./ids.js";

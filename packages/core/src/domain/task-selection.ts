@@ -32,6 +32,7 @@ import type { TaskStatus } from "./task-status.js";
 import type { Task } from "./task.js";
 import type { AgentRouteCandidate, AgentRouteRejection } from "./agent-router.js";
 import { selectAgentProfile } from "./agent-router.js";
+import { requiredTierFor } from "./routing-policy.js";
 
 export const TASK_INELIGIBILITY_REASONS = [
   "not-ready",
@@ -143,6 +144,7 @@ function firstIneligibilityOf(
   const route = selectAgentProfile({
     requiredCapabilities: task.routing.capabilities,
     candidates: input.agentCandidates,
+    minimumTier: requiredTierFor(task, attempts),
   });
   if (!route.selected) {
     return { reason: "no-eligible-agent", rejections: route.rejections };

@@ -60,11 +60,13 @@ function profile(overrides?: {
   id?: string;
   adapterId?: string;
   capabilities?: readonly string[];
+  tier?: AgentProfile["tier"];
 }): AgentProfile {
   return {
     id: overrides?.id ?? "profile-a",
     adapterId: overrides?.adapterId ?? "adapter-a",
     capabilities: overrides?.capabilities ?? ["typescript"],
+    ...(overrides?.tier === undefined ? {} : { tier: overrides.tier }),
   };
 }
 
@@ -216,10 +218,22 @@ describe("selectRunnableTasks", () => {
     const result = selection({
       tasks: [task],
       attemptCounts: new Map([["M001", 2]]),
+      agentCandidates: [candidate({ tier: "strong" })],
     });
 
     expect(result.runnable).toEqual([task]);
     expect(result.ineligible).toEqual([]);
+  });
+
+  it("uses the same escalated tier floor for scheduler admission", () => {
+    const task = makeTask({ maxAttempts: 4 });
+    const low = candidate({ id: "economy", tier: "economy" });
+    const standard = candidate({ id: "standard", tier: "standard" });
+    expect(selection({ tasks: [task], attemptCounts: new Map([["M001", 1]]), agentCandidates: [low] }).ineligible[0]?.ineligibility).toEqual({
+      reason: "no-eligible-agent",
+      rejections: [{ reason: "below-minimum-tier", profileId: "economy", tier: "economy", minimumTier: "standard" }],
+    });
+    expect(selection({ tasks: [task], attemptCounts: new Map([["M001", 1]]), agentCandidates: [low, standard] }).runnable).toEqual([task]);
   });
 
   it("does not select a task whose maxAttempts budget is exhausted", () => {

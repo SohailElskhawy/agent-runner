@@ -28,6 +28,10 @@
 
 import type { AgentProfile } from "./agent-profile.js";
 import { evaluateAgentProfileEligibility } from "./agent-profile.js";
+import { profileTier } from "./agent-profile.js";
+import type { AgentTier } from "./agent-tier.js";
+
+const TIER_RANK: Record<AgentTier, number> = { economy: 0, standard: 1, strong: 2 };
 
 export type AgentRouteAvailability = {
   readonly id: string;
@@ -42,6 +46,7 @@ export type AgentRouteCandidate = {
 export type AgentRouteRequest = {
   readonly requiredCapabilities: readonly string[];
   readonly candidates: readonly AgentRouteCandidate[];
+  readonly minimumTier?: AgentTier;
 };
 
 export type AgentRouteRejection =
@@ -53,6 +58,12 @@ export type AgentRouteRejection =
       readonly reason: "missing-capabilities";
       readonly profileId: string;
       readonly missingCapabilities: readonly string[];
+    }
+  | {
+      readonly reason: "below-minimum-tier";
+      readonly profileId: string;
+      readonly tier: AgentTier;
+      readonly minimumTier: AgentTier;
     };
 
 export type AgentRouteResult =
@@ -66,6 +77,9 @@ export function selectAgentProfile(
   request: AgentRouteRequest,
 ): AgentRouteResult {
   const rejections: AgentRouteRejection[] = [];
+  let selected: AgentProfile | undefined;
+  let selectedTier = Number.POSITIVE_INFINITY;
+  const minimumTier = request.minimumTier ?? "economy";
 
   for (const candidate of request.candidates) {
     if (!candidate.availability.available) {
@@ -87,8 +101,22 @@ export function selectAgentProfile(
       });
       continue;
     }
-    return { selected: true, profile: candidate.profile };
+    const tier = profileTier(candidate.profile);
+    if (TIER_RANK[tier] < TIER_RANK[minimumTier]) {
+      rejections.push({
+        reason: "below-minimum-tier",
+        profileId: candidate.profile.id,
+        tier,
+        minimumTier,
+      });
+      continue;
+    }
+    if (TIER_RANK[tier] < selectedTier) {
+      selected = candidate.profile;
+      selectedTier = TIER_RANK[tier];
+    }
   }
 
+  if (selected !== undefined) return { selected: true, profile: selected };
   return { selected: false, rejections };
 }
