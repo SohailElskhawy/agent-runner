@@ -17,6 +17,7 @@ Added a version-1 discriminated planning result parser for `NEEDS_DISCOVERY` and
 - **RED:** Ran `pnpm --filter @agentic-dev-runner/core exec vitest run test/planning-result.test.ts test/readiness.test.ts` before implementation. All 7 tests failed because `parsePlanningResult` and `assessReadiness` were not exported, as expected.
 - **GREEN:** Implemented the parser and readiness assessment. The same focused command passed: 2 files, 7 tests.
 - Added an assertion that answered questions are excluded from the returned readiness questions, and reran the focused tests successfully.
+- Duplicate-ID follow-up commit: `9587b62c97eb671200741bee426a9f86cb1d02aa`.
 
 ## Verification
 
@@ -27,7 +28,7 @@ Added a version-1 discriminated planning result parser for `NEEDS_DISCOVERY` and
 
 ## Concerns and deviations
 
-- Readiness accepts answered question IDs so it can suppress repeats deterministically. `PlanningInput.knownDecisions` currently stores answer strings without question IDs, so the planning service must preserve/supply answered IDs to use repeat suppression across runs. Semantic matching answers to questions is intentionally not guessed in core.
+- `PlanningInput.answeredQuestionIds` supplies stable IDs for deterministic repeat suppression. When every important question is answered, readiness reports `READY_FOR_PLANNING`; Task 5 must invoke the planner again to produce the actual plan.
 - No architecture or scope deviations.
 
 ## Follow-up: duplicate question IDs
@@ -35,4 +36,4 @@ Added a version-1 discriminated planning result parser for `NEEDS_DISCOVERY` and
 - Added a parser check rejecting repeated question IDs with an index-specific issue.
 - **RED:** Focused tests initially failed only the new duplicate-ID case: the parser accepted duplicate `database` IDs.
 - **GREEN:** After the check, focused tests passed (2 files, 8 tests); core typecheck and `git diff --check` passed.
-- Uncommitted pending parent confirmation, as requested.
+- Committed with report update `9587b62c97eb671200741bee426a9f86cb1d02aa`.
