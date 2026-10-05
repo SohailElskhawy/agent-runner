@@ -8,6 +8,8 @@ import { renderTaskAddResult } from "../render/render-tasks-add.js";
 import { renderTasksList } from "../render/render-tasks-list.js";
 import { renderAgentsReport } from "../render/render-agents.js";
 import { renderDoctorReport } from "../render/render-doctor.js";
+import { renderAnalysis } from "../render/render-analyze.js";
+import { renderPlan, renderQuestions } from "../render/render-plan.js";
 import type { RunnerAppService } from "../application/runner-app-service.js";
 
 export const EXIT_SUCCESS = 0;
@@ -130,4 +132,50 @@ export async function executeDoctorCommand(
   const report = await services.doctor();
   renderDoctorReport(io, report);
   return report.ok ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+
+export async function executeAnalyzeCommand(services: RunnerAppService, io: CliIo): Promise<number> {
+  if (services.analyze === undefined) throw new Error("planning services are not wired");
+  renderAnalysis(io, await services.analyze());
+  return EXIT_SUCCESS;
+}
+
+export async function executePlanCommand(goal: string, services: RunnerAppService, io: CliIo): Promise<number> {
+  if (services.plan === undefined || services.showPlan === undefined) throw new Error("planning services are not wired");
+  const result = await services.plan(goal);
+  if (result.kind === "NEEDS_DISCOVERY") {
+    renderQuestions(io, result.questions);
+    return EXIT_SUCCESS;
+  }
+  const plan = await services.showPlan(result.draft.planId);
+  if (plan === null) {
+    io.writeError(`plan draft "${result.draft.planId}" was not found`);
+    return EXIT_FAILURE;
+  }
+  renderPlan(io, plan);
+  return EXIT_SUCCESS;
+}
+
+export async function executePlanShowCommand(planId: string | undefined, services: RunnerAppService, io: CliIo): Promise<number> {
+  if (services.showPlan === undefined) throw new Error("planning services are not wired");
+  const plan = await services.showPlan(planId);
+  if (plan === null) {
+    io.writeError(planId === undefined ? "no plan drafts found" : `plan draft "${planId}" was not found`);
+    return EXIT_FAILURE;
+  }
+  renderPlan(io, plan);
+  return EXIT_SUCCESS;
+}
+
+
+export async function executePlanApproveCommand(planId: string, services: RunnerAppService, io: CliIo): Promise<number> {
+  if (services.approvePlan === undefined) throw new Error("plan approval service is not wired");
+  const result = await services.approvePlan(planId);
+  if (result.kind === "rejected") {
+    io.writeError(result.message);
+    return EXIT_FAILURE;
+  }
+  io.writeLine(result.message);
+  return EXIT_SUCCESS;
 }

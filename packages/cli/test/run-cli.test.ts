@@ -540,6 +540,30 @@ describe("runCli command dispatch", () => {
           occurredAt: "2026-01-01T00:00:01.000Z",
           payload: { from: "READY", to: "IMPLEMENTING" },
         },
+        {
+          sequence: 2,
+          type: "task.routing.decided",
+          occurredAt: "2026-01-01T00:00:02.000Z",
+          payload: {
+            profileId: "standard-coder",
+            selectedTier: "standard",
+            minimumTier: "economy",
+            attemptCount: 0,
+            reason: "risk low and complexity small require minimum tier economy",
+          },
+        },
+        {
+          sequence: 3,
+          type: "task.routing.decided",
+          occurredAt: "2026-01-01T00:00:03.000Z",
+          payload: { profileId: "legacy" },
+        },
+        {
+          sequence: 4,
+          type: "task.routing.decided",
+          occurredAt: "2026-01-01T00:00:04.000Z",
+          payload: { profileId: 42, minimumTier: "unknown", attemptCount: -1 },
+        },
       ],
       claims: [],
       integrationQueue: [],
@@ -560,6 +584,17 @@ describe("runCli command dispatch", () => {
     expect(inspectOutput).toContain("verification_failed");
     expect(inspectOutput).toContain("typecheck failed");
     expect(inspectOutput).toContain("task.transitioned");
+    expect(inspectOutput).toContain(
+      'routing: profile "standard-coder" (tier standard; minimum economy; attempts 0)',
+    );
+    expect(inspectOutput).toContain("risk low and complexity small require minimum tier economy");
+    expect(inspectOutput.match(/routing decision: details unavailable/g)).toHaveLength(2);
+    expect(inspectOutput.indexOf("#2 task.routing.decided")).toBeLessThan(
+      inspectOutput.indexOf("#3 task.routing.decided"),
+    );
+    expect(inspectOutput.indexOf("#3 task.routing.decided")).toBeLessThan(
+      inspectOutput.indexOf("#4 task.routing.decided"),
+    );
     expect(inspectOutput).toContain("failure reason: typecheck failed");
     expect(inspectOutput).toContain("VERIFY [FAILED]");
     expect(inspectOutput).toContain("execution claims:");

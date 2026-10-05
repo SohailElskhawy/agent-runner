@@ -48,7 +48,7 @@ Future API ──────┘          │
         │                                          │
         │ Git Manager                              │
         │ Verification Engine                      │
-        │ Discovery / Readiness (v0.2)             │
+        │ Planning / Readiness / Discovery         │
         │ Persistence                              │
         │ Event System                             │
         │ Platform Abstraction                     │
@@ -84,6 +84,10 @@ Provides use cases such as:
 
 ```text
 initializeProject()
+analyzeRepository()
+planRepository()
+showPlan()
+approvePlan()
 startRun()
 retryTask()
 approveTask()
@@ -94,7 +98,7 @@ addTask()
 doctor()
 ```
 
-*(Deferred to v0.2: `analyzeProject()`, `createRoadmap()`, `pauseRun()`, `resumeRun()`.)*
+`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pauseRun()` and `resumeRun()` are deferred to v0.2.
 
 The CLI and future GUI both use these same operations.
 
@@ -233,7 +237,11 @@ The scheduler must not create tasks or expand roadmap scope.
 
 The router selects an eligible agent for a stage or task.
 
-V0.1 routing is deterministic.
+V0.1 routing is deterministic and cheap-first. Profiles may declare `economy`,
+`standard`, or `strong` tiers (omitted means `standard`). The router chooses
+the cheapest available profile meeting the task's risk/complexity floor and
+raises that floor after failed attempts, capped at `strong`. It does not
+downgrade when no qualifying profile is available.
 
 Inputs may include:
 
@@ -242,10 +250,10 @@ Inputs may include:
 - risk
 - required capabilities
 - estimated context size
-- cost policy (deferred to v0.2)
+- configured relative profile tier
 - configured agent availability
 
-Historical adaptive routing and agent fallback/escalation (M064) are deferred to v0.2.
+Learned performance routing and automatic alternate-provider fallback are deferred to v0.2.
 
 ---
 
@@ -345,7 +353,7 @@ Examples:
 
 *(In v0.1, context packs contain mandatory context including `AGENTS.md`, task contract, and project configuration; dynamic retrieval of source files, contracts/ADRs, and agent-requested context extras are deferred to v0.2.)*
 
-### Discovery Context (deferred to v0.2)
+### Additional Discovery Context (deferred to v0.2)
 
 Important user decisions gathered during project readiness.
 
@@ -357,11 +365,16 @@ Every attempt must persist a ContextManifest describing exactly what the agent r
 
 ---
 
-## 12. Discovery & Readiness (v0.2 — not implemented)
+## 12. Planning, Discovery & Readiness
 
-No discovery/readiness code exists in v0.1; tasks are authored manually and ingested with `agentic tasks add`.
-
-Before roadmap generation in v0.2, the system will determine whether the project is sufficiently defined.
+V0.1 provides `agentic analyze` and `agentic plan --goal <text>`. Analysis
+collects bounded local evidence; planning combines it with the goal and reports
+`READY_FOR_PLANNING` or `NEEDS_DISCOVERY`. When important product or
+architecture decisions are missing, the planner writes targeted questions to `.agentic/decisions.md`;
+the human edits answers and reruns planning. The planner returns a bounded
+draft that the runner validates and previews. `agentic plan approve <plan-id>`
+revalidates and imports its tasks transactionally with durable approval. A
+draft cannot be scheduled before explicit approval.
 
 Possible states:
 
@@ -375,7 +388,7 @@ or
 UNASSESSED
 → ANALYZING
 → NEEDS_DISCOVERY
-→ DISCOVERY
+→ human records decisions
 → READY_FOR_PLANNING
 ```
 
@@ -621,7 +634,7 @@ packages/
     retrieval/ (deferred to v0.2)
     manifests/
 
-  discovery/ (deferred to v0.2)
+  planning/ (bounded analysis, drafts, validation)
     readiness/
     questioning/
     contracts/
@@ -685,33 +698,23 @@ This is required so future GUI, remote workers, alternate persistence, or new ag
 
 ---
 
-## 23. Initial Vertical Slice
-
-The first implementation target is deliberately smaller than the full V0.1 architecture.
+## 23. End-to-End Product Flow
 
 ```text
-manually defined task
-→ persisted state
-→ isolated worktree
-→ fresh ContextPack
-→ one agent invocation
-→ code modification
-→ verification
-→ task commit
-→ integration
+repository + goal
+→ bounded analysis
+→ discovery decisions if needed
+→ draft plan and DAG validation
+→ preview and explicit approval
+→ existing scheduler and cheap-first routing
+→ isolated worktree execution
+→ verification and runner-controlled integration
 → DONE
 ```
 
-The first vertical slice does not require:
-
-- autonomous planning (deferred to v0.2)
-- multi-agent routing
-- parallel execution
-- discovery (deferred to v0.2)
-- adaptive routing (deferred to v0.2)
-- GUI (deferred to v0.2)
-
-Those capabilities are added after the execution foundation proves reliable. In v0.1, deterministic multi-agent routing, parallel execution, and isolated worktree workflows are delivered; autonomous discovery, planning, adaptive routing, and GUI remain deferred to v0.2.
+Manual task ingestion remains supported and enters the same execution path.
+GUI, remote execution, learned routing, provider fallback, and token/cost
+analytics remain outside v0.1 scope.
 
 ---
 

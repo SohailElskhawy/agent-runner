@@ -1,0 +1,356 @@
+# Review package: 3f38229..21d204a
+
+## Commits
+21d204a feat(cli): collect bounded planning repository input
+
+## Files changed
+ packages/cli/src/application/app-services.ts       |   5 +
+ .../application/planning/repository-analysis.ts    | 134 +++++++++++++++++++++
+ packages/cli/test/repository-analysis.test.ts      | 105 ++++++++++++++++
+ 3 files changed, 244 insertions(+)
+
+## Diff
+diff --git a/packages/cli/src/application/app-services.ts b/packages/cli/src/application/app-services.ts
+index 3e9abae..afc3fc7 100644
+--- a/packages/cli/src/application/app-services.ts
++++ b/packages/cli/src/application/app-services.ts
+@@ -41,20 +41,21 @@ import {
+ } from "./project-configuration.js";
+ import {
+   resolveAgentTimeoutMs,
+   resolveMaxParallelism,
+   resolveStorePath,
+   resolveWorktreesDir,
+   type AppServicesOptions,
+   type AppServicesRequest,
+ } from "./defaults.js";
+ import { resolveRoutedAgent } from "./agents/agent-routing.js";
++import { createRepositoryAnalyzer } from "./planning/repository-analysis.js";
+ 
+ export type AppServices = {
+   readonly store: RunnerStore;
+   readonly orchestrator: TaskRunner;
+   readonly recovery: CrashRecovery;
+   readonly executionClaimRecovery: ReturnType<typeof createExecutionClaimRecovery>;
+   readonly agents: AgentRegistry;
+   readonly adapters: AgentAdapterRegistry;
+   readonly scheduler: UnattendedScheduler | null;
+   readonly integrationRecovery: ReturnType<typeof createIntegrationQueueProcessor>;
+@@ -63,20 +64,22 @@ export type AppServices = {
+   readonly maxParallelism: number;
+   /** Process execution seam shared by git, verification, and agent adapters. */
+   readonly runner: ProcessRunner;
+   /** The project configuration loaded at composition time, if any. */
+   readonly configuration: ProjectConfiguration | null;
+   /**
+    * The configuration load failure tolerated by a `doctor` composition, or
+    * `null` when configuration loaded or was intentionally not loaded.
+    */
+   readonly configurationError: string | null;
++  /** Builds bounded, provider-independent input for planning. */
++  readonly analyzeRepository: ReturnType<typeof createRepositoryAnalyzer>;
+ };
+ 
+ export type AppServicesOverrides = {
+   readonly store?: RunnerStore | undefined;
+   readonly orchestrator?: SingleTaskOrchestrator | undefined;
+   readonly recovery?: CrashRecovery | undefined;
+   readonly agent?: AgentRuntime | undefined;
+   readonly agentRegistry?: AgentRegistry | undefined;
+   readonly agentAdapters?: AgentAdapterRegistry | undefined;
+   readonly verification?: VerificationEngine | undefined;
+@@ -112,20 +115,21 @@ export async function createAppServices(
+       ? [...options.verificationChecks]
+       : configuration === null
+         ? []
+         : toVerificationCheckSpecs(configuration.verificationChecks);
+   const agentProfiles = routed ? (configuration?.agentProfiles ?? []) : [];
+   const store = overrides.store ?? createSqliteRunnerStore({
+     path: resolveStorePath(options),
+   });
+   const runner = createNodeProcessRunner();
+   const git = createGitManager({ runner });
++  const analyzeRepository = createRepositoryAnalyzer({ git, runner });
+   const verification = overrides.verification ?? createVerificationEngine({ runner });
+   const openCodeAdapter = new OpenCodeAdapter(runner);
+   const codexAdapter = new CodexAdapter(runner);
+   const agents = overrides.agentRegistry ?? createAgentRegistry([
+     openCodeAdapter,
+     codexAdapter,
+   ]);
+   const adapters = overrides.agentAdapters ?? createAgentAdapterRegistry([
+     openCodeAdapter,
+     codexAdapter,
+@@ -220,20 +224,21 @@ export async function createAppServices(
+     executionClaimRecovery,
+     integrationRecovery,
+     worktreeRecovery,
+     agents,
+     adapters,
+     scheduler,
+     maxParallelism: resolveMaxParallelism(options),
+     runner,
+     configuration,
+     configurationError,
++    analyzeRepository,
+   };
+ }
+ 
+ async function discoverAgentCandidates(
+   profiles: ProjectConfiguration["agentProfiles"],
+   agents: AgentRegistry,
+ ) {
+   const availability = await agents.discoverAgents();
+   const availableById = new Map(
+     availability.map((entry) => [entry.id, entry.available]),
+diff --git a/packages/cli/src/application/planning/repository-analysis.ts b/packages/cli/src/application/planning/repository-analysis.ts
+new file mode 100644
+index 0000000..a251f7f
+--- /dev/null
++++ b/packages/cli/src/application/planning/repository-analysis.ts
+@@ -0,0 +1,134 @@
++import { readFile, readdir } from "node:fs/promises";
++import { join } from "node:path";
++import type { GitManager } from "@agentic-dev-runner/git";
++import type { ProcessRunner } from "@agentic-dev-runner/platform";
++import type { PlanningInput, RepositoryEvidence } from "@agentic-dev-runner/core";
++
++const MAX_EVIDENCE_BYTES = 65_536;
++const MAX_TRACKED_PATHS = 500;
++const OMITTED = "\n[omitted: evidence size limit]";
++const OPTIONAL_FILES = [
++  "AGENTS.md", "docs/PROJECT_SPEC.md", "docs/ARCHITECTURE.md", "docs/V0.1_SCOPE.md",
++  "docs/ADRS.md", "docs/ROADMAP.md", ".agentic/decisions.md",
++];
++const MANIFEST_NAMES = new Set([
++  "package.json", "pnpm-workspace.yaml", "pyproject.toml", "requirements.txt", "Cargo.toml",
++  "go.mod", "pom.xml", "build.gradle", "build.gradle.kts", "composer.json",
++]);
++const EXCLUDED = new Set(["node_modules", "vendor", "dist", "build", "coverage", ".git", ".next", ".turbo"]);
++
++export function createRepositoryAnalyzer(options: { readonly git: GitManager; readonly runner: ProcessRunner }) {
++  return async function analyzeRepository(
++    projectRoot: string,
++    goal = "",
++    existingTaskIds: readonly string[] = [],
++  ): Promise<PlanningInput> {
++    const [baseRevision, status] = await Promise.all([
++      options.git.resolveHeadRevision(projectRoot).catch(async () => {
++        if (!(await options.git.isRepository(projectRoot))) throw new Error(`not a Git repository: ${projectRoot}`);
++        const head = await options.runner.run({ executable: "git", args: ["rev-parse", "--verify", "HEAD"], cwd: projectRoot });
++        if (head.outcome.kind === "completed" && head.outcome.code !== 0) return "unborn";
++        throw new Error(`could not resolve repository HEAD: ${head.stderr.trim() || head.outcome.kind}`);
++      }),
++      options.git.status(projectRoot),
++    ]);
++    const listed = await options.runner.run({ executable: "git", args: ["ls-files", "-z"], cwd: projectRoot });
++    if (listed.outcome.kind !== "completed" || listed.outcome.code !== 0) {
++      throw new Error(`could not list tracked repository paths: ${listed.stderr.trim() || listed.outcome.kind}`);
++    }
++    const tracked = listed.stdout.split("\0").filter((path) => path && !isExcluded(path)).sort(comparePaths);
++    const paths = tracked.slice(0, MAX_TRACKED_PATHS);
++    const candidates = new Set(OPTIONAL_FILES);
++    candidates.add("package.json");
++    candidates.add("pnpm-workspace.yaml");
++    const rootEntries = await readdir(projectRoot, { withFileTypes: true });
++    for (const directory of rootEntries.filter((entry) => entry.isDirectory() && !EXCLUDED.has(entry.name)).sort((a, b) => comparePaths(a.name, b.name))) {
++      const child = join(projectRoot, directory.name);
++      const childEntries = await readdir(child, { withFileTypes: true }).catch(() => []);
++      for (const entry of childEntries) {
++        if (entry.isFile() && MANIFEST_NAMES.has(entry.name)) candidates.add(`${directory.name}/${entry.name}`);
++      }
++      if (directory.name === "packages" || directory.name === "apps") {
++        for (const nested of childEntries.filter((entry) => entry.isDirectory() && !EXCLUDED.has(entry.name)).sort((a, b) => comparePaths(a.name, b.name))) {
++          for (const entry of await readdir(join(child, nested.name), { withFileTypes: true }).catch(() => [])) {
++            if (entry.isFile() && MANIFEST_NAMES.has(entry.name)) candidates.add(`${directory.name}/${nested.name}/${entry.name}`);
++          }
++        }
++      }
++    }
++    for (const path of tracked) {
++      const parts = path.split("/");
++      if ((parts.length <= 2 || ((parts[0] === "packages" || parts[0] === "apps") && parts.length === 3)) && MANIFEST_NAMES.has(parts.at(-1) ?? "")) candidates.add(path);
++    }
++    const evidence = new Map<string, string | null>();
++    for (const path of [...candidates].sort(comparePaths)) {
++      try {
++        const data = await readFile(join(projectRoot, path));
++        evidence.set(path, data.toString("utf8"));
++      } catch (error) {
++        if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
++        evidence.set(path, null);
++      }
++    }
++    evidence.set(".agentic/analysis-status.txt", [
++      `baseRevision: ${baseRevision}`, `workingTree: ${status.clean ? "clean" : "dirty"}`,
++      ...status.entries.map((entry) => `${entry.indexStatus}${entry.worktreeStatus} ${entry.path}`).sort(),
++    ].join("\n"));
++    evidence.set(".agentic/tracked-files.txt", inventory(paths, tracked.length > paths.length));
++    evidence.set(".agentic/test-files.txt", inventory(paths.filter(isTestPath), tracked.length > paths.length));
++
++    let remaining = MAX_EVIDENCE_BYTES;
++    const repositoryEvidence: RepositoryEvidence[] = [];
++    for (const [path, content] of [...evidence].sort(([a], [b]) => comparePaths(a, b))) {
++      if (content === null) {
++        repositoryEvidence.push({ path, status: "absent" });
++        continue;
++      }
++      const bytes = Buffer.from(content);
++      if (bytes.byteLength <= remaining) {
++        repositoryEvidence.push({ path, status: "present", content });
++        remaining -= bytes.byteLength;
++      } else {
++        const truncated = truncateUtf8(bytes, remaining);
++        repositoryEvidence.push({ path, status: "present", content: truncated });
++        remaining = 0;
++      }
++    }
++    return {
++      repositoryRoot: projectRoot,
++      goal,
++      baseRevision,
++      repositoryEvidence,
++      knownDecisions: (evidence.get(".agentic/decisions.md") ?? "")
++        .split(/\r?\n/)
++        .map((line) => /^\s*Answer:\s*(\S.*)$/.exec(line)?.[1]?.trim())
++        .filter((answer): answer is string => answer !== undefined),
++      existingTaskIds: [...existingTaskIds],
++    };
++  };
++}
++
++function inventory(paths: readonly string[], truncated: boolean): string {
++  return [...paths, ...(truncated ? ["[omitted: tracked path limit]"] : [])].join("\n");
++}
++
++function isExcluded(path: string): boolean {
++  return path.split(/[\\/]/).some((part) => EXCLUDED.has(part));
++}
++
++function comparePaths(left: string, right: string): number {
++  return left < right ? -1 : left > right ? 1 : 0;
++}
++
++function truncateUtf8(bytes: Buffer, budget: number): string {
++  if (budget <= 0) return "";
++  if (budget <= Buffer.byteLength(OMITTED)) return OMITTED.slice(0, budget);
++  const prefixBytes = budget - Buffer.byteLength(OMITTED);
++  let prefix = bytes.subarray(0, prefixBytes).toString("utf8");
++  while (Buffer.byteLength(prefix) > prefixBytes) prefix = Array.from(prefix).slice(0, -1).join("");
++  return prefix + OMITTED;
++}
++
++function isTestPath(path: string): boolean {
++  return !isExcluded(path) && /(^|[\\/])(test|tests|__tests__)([\\/]|$)|\.(test|spec)\.[^\\/]+$/i.test(path);
++}
+diff --git a/packages/cli/test/repository-analysis.test.ts b/packages/cli/test/repository-analysis.test.ts
+new file mode 100644
+index 0000000..b5b9a8e
+--- /dev/null
++++ b/packages/cli/test/repository-analysis.test.ts
+@@ -0,0 +1,105 @@
++import { execFileSync } from "node:child_process";
++import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { createGitManager } from "@agentic-dev-runner/git";
++import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
++import { afterEach, describe, expect, it } from "vitest";
++import { createRepositoryAnalyzer } from "../src/application/planning/repository-analysis.js";
++
++const roots: string[] = [];
++const analyzer = createRepositoryAnalyzer({ git: createGitManager({ runner: createNodeProcessRunner() }), runner: createNodeProcessRunner() });
++function repo(): string {
++  const root = mkdtempSync(join(tmpdir(), "agentic-planning-analysis-"));
++  roots.push(root);
++  execFileSync("git", ["init", "-q", root]);
++  execFileSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "initial"]);
++  return root;
++}
++function unbornRepo(): string {
++  const root = mkdtempSync(join(tmpdir(), "agentic-planning-unborn-"));
++  roots.push(root);
++  execFileSync("git", ["init", "-q", root]);
++  return root;
++}
++afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
++
++describe("repository analysis", () => {
++  it("collects project docs, manifests, and test inventory for an established repository", async () => {
++    const root = repo();
++    mkdirSync(join(root, "docs"));
++    mkdirSync(join(root, "packages", "app", "test"), { recursive: true });
++    writeFileSync(join(root, "AGENTS.md"), "local rules");
++    writeFileSync(join(root, "docs", "PROJECT_SPEC.md"), "spec");
++    writeFileSync(join(root, "package.json"), "{}");
++    writeFileSync(join(root, "packages", "app", "package.json"), "{}");
++    writeFileSync(join(root, "packages", "app", "test", "app.test.ts"), "test");
++    execFileSync("git", ["-C", root, "add", "."]);
++    execFileSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "files"]);
++    const input = await analyzer(root, "build app", ["T-1"]);
++    expect(input.goal).toBe("build app");
++    expect(input.existingTaskIds).toEqual(["T-1"]);
++    expect(input.repositoryEvidence).toContainEqual({ path: "AGENTS.md", status: "present", content: "local rules" });
++    const packageManifest = input.repositoryEvidence.find((entry) => entry.path === "packages/app/package.json");
++    expect(packageManifest?.status).toBe("present");
++    const tests = input.repositoryEvidence.find((entry) => entry.path === ".agentic/test-files.txt");
++    expect(tests?.status === "present" && tests.content).toContain("packages/app/test/app.test.ts");
++  });
++
++  it("works in a nearly empty repository and reports optional files as absent", async () => {
++    const input = await analyzer(repo(), undefined, []);
++    expect(input.goal).toBe("");
++    expect(input.repositoryEvidence.find((entry) => entry.path === "AGENTS.md")).toEqual({ path: "AGENTS.md", status: "absent" });
++    expect(input.repositoryEvidence.find((entry) => entry.path === ".agentic/decisions.md")).toEqual({ path: ".agentic/decisions.md", status: "absent" });
++  });
++
++  it("analyzes a Git repository before its first commit", async () => {
++    const input = await analyzer(unbornRepo(), "goal", []);
++    expect(input.baseRevision).toBe("unborn");
++  });
++
++  it("records base revision and dirty state", async () => {
++    const root = repo();
++    writeFileSync(join(root, "local.txt"), "dirty");
++    const input = await analyzer(root, "goal", []);
++    const status = input.repositoryEvidence.find((entry) => entry.path === ".agentic/analysis-status.txt");
++    expect(status?.status).toBe("present");
++    expect(status?.status === "present" && status.content).toContain("dirty");
++    expect(input.baseRevision).toMatch(/^[0-9a-f]{40,}$/);
++  });
++
++  it("limits collected file contents", async () => {
++    const root = repo();
++    writeFileSync(join(root, "AGENTS.md"), "é".repeat(100_000));
++    const input = await analyzer(root, "goal", []);
++    const content = input.repositoryEvidence.flatMap((entry) => entry.status === "present" ? [entry.content] : []).join("");
++    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(65_536);
++    expect(content).toContain("omitted");
++  });
++
++  it("caps the tracked path inventory", async () => {
++    const root = repo();
++    mkdirSync(join(root, "files"));
++    for (let index = 0; index < 505; index += 1) writeFileSync(join(root, "files", `item-${index}.txt`), "");
++    execFileSync("git", ["-C", root, "add", "."]);
++    execFileSync("git", ["-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "files"]);
++    const inventory = (await analyzer(root, "goal", [])).repositoryEvidence.find((entry) => entry.path === ".agentic/tracked-files.txt");
++    expect(inventory?.status === "present" && inventory.content.split("\n")).toHaveLength(501);
++    expect(inventory?.status === "present" && inventory.content).toContain("omitted: tracked path limit");
++  });
++
++  it("extracts only answered decision lines", async () => {
++    const root = repo();
++    mkdirSync(join(root, ".agentic"));
++    writeFileSync(join(root, ".agentic", "decisions.md"), "Question: use auth?\nAnswer: use OAuth\nQuestion: theme?\nAnswer:   \n");
++    expect((await analyzer(root, "goal", [])).knownDecisions).toEqual(["use OAuth"]);
++  });
++
++  it("keeps evidence ordering stable", async () => {
++    const root = repo();
++    const first = await analyzer(root, "goal", ["b", "a"]);
++    const second = await analyzer(root, "goal", ["b", "a"]);
++    expect(first).toEqual(second);
++    expect(first.repositoryEvidence.map((entry) => entry.path)).toEqual([...first.repositoryEvidence.map((entry) => entry.path)].sort());
++  });
++});

@@ -123,10 +123,16 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     const claimedTaskIds = new Set(activeClaims.map((claim) => claim.taskId));
     const selectableTasks = tasks.filter((task) => !claimedTaskIds.has(task.id));
     const attempts = await Promise.all(
-      selectableTasks.map(async (task) => [
-        task.id,
-        (await this.store.listAttempts({ taskId: task.id })).length,
-      ] as const),
+      selectableTasks.map(async (task) => {
+        const taskAttempts = await this.store.listAttempts({ taskId: task.id });
+        return [
+          task.id,
+          taskAttempts.length,
+          taskAttempts.filter(
+            ({ status }) => status === "FAILED" || status === "TIMED_OUT",
+          ).length,
+        ] as const;
+      }),
     );
     const agentCandidates =
       typeof this.candidates === "function"
@@ -134,7 +140,10 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
         : this.candidates;
     const selection = selectRunnableTasks({
       tasks: selectableTasks,
-      attemptCounts: new Map(attempts),
+      attemptCounts: new Map(attempts.map(([taskId, count]) => [taskId, count])),
+      failedAttemptCounts: new Map(
+        attempts.map(([taskId, , failedCount]) => [taskId, failedCount]),
+      ),
       agentCandidates,
     });
     const ordered = orderRunnableTasks(selection.runnable);

@@ -1,12 +1,20 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
   buildTaskFromManualInput,
+  detectTaskConflicts,
+  validateManualTaskInput,
+  type PlanningInput,
+  type PlanningResult,
+  type ManualTaskInput,
   countParallelismActiveExecutions,
   evaluateParallelismCapacity,
   isParallelismActiveStatus,
+  normalizeAndValidatePlan,
+  parsePlanningResult,
+  validatePlanningInput,
   TASK_STATUSES,
-  validateManualTaskInput,
   type IntegrationQueueStatus,
   type Project,
   type ProjectConfiguration,
@@ -49,10 +57,14 @@ import type {
   TaskInspection,
   TaskListEntry,
   UnattendedRunRequest,
+  PlanPreview,
+  PlanApprovalResult,
 } from "./ports.js";
 import { buildTaskInspection, toLatestAttemptSummary } from "./inspect-view.js";
 import type { TaskStatusEntry } from "./ports.js";
 import { readTaskFile } from "./task-file.js";
+import { readPlanDraft } from "./planning/plan-files.js";
+import type { PlanningOutcome } from "./planning/planner.js";
 import { runDoctorChecks, type DoctorReport } from "./doctor.js";
 import {
   DEFAULT_MAX_PARALLELISM,
@@ -81,6 +93,8 @@ export type StoreBackedAppServiceOptions = {
   readonly configuration?: ProjectConfiguration | null | undefined;
   /** A tolerated configuration load failure, reported by `doctor`. */
   readonly configurationError?: string | null | undefined;
+  readonly analyzeRepository?: (projectRoot: string, goal?: string, existingTaskIds?: readonly string[]) => Promise<PlanningInput>;
+  readonly planRepository?: ((input: PlanningInput) => Promise<PlanningOutcome>) | null;
 };
 
 export function createStoreBackedAppService(
@@ -105,6 +119,8 @@ class StoreBackedAppService implements RunnerAppService {
   private readonly worktreesDir: string;
   private readonly configuration: ProjectConfiguration | null;
   private readonly configurationError: string | null;
+  private readonly analyzeRepository: StoreBackedAppServiceOptions["analyzeRepository"];
+  private readonly planRepository: StoreBackedAppServiceOptions["planRepository"];
   private startupReconciliation: Promise<void> | undefined;
 
   constructor(options: StoreBackedAppServiceOptions) {
@@ -127,6 +143,8 @@ class StoreBackedAppService implements RunnerAppService {
       options.worktreesDir ?? resolveWorktreesDir({ projectRoot: options.projectRoot });
     this.configuration = options.configuration ?? null;
     this.configurationError = options.configurationError ?? null;
+    this.analyzeRepository = options.analyzeRepository;
+    this.planRepository = options.planRepository;
   }
 
   async init(): Promise<InitResult> {
@@ -498,6 +516,105 @@ class StoreBackedAppService implements RunnerAppService {
     });
   }
 
+  async analyze(): Promise<PlanningInput> {
+    await this.startupReconcile();
+    const tasks = await this.store.listTasks();
+    if (this.analyzeRepository === undefined) throw new CliError("repository analysis is not wired");
+    return this.analyzeRepository(this.projectRoot, "", tasks.map((task) => task.id));
+  }
+
+  async plan(goal: string): Promise<PlanningOutcome> {
+    await this.startupReconcile();
+    if (this.planRepository == null || this.analyzeRepository === undefined) {
+      throw new CliError('no planning profile is configured; set planning.profile in .agentic/config.json');
+    }
+    const tasks = await this.store.listTasks();
+    const input = await this.analyzeRepository(this.projectRoot, goal, tasks.map((task) => task.id));
+    return this.planRepository(input);
+  }
+
+  async showPlan(planId?: string): Promise<PlanPreview | null> {
+    await this.startupReconcile();
+    let selectedId = planId;
+    if (selectedId === undefined) {
+      const directory = join(this.projectRoot, ".agentic", "plans");
+      const candidates = await readdir(directory, { withFileTypes: true }).catch(() => []);
+      const plans = await Promise.all(candidates
+        .filter((entry) => entry.isDirectory() && /^plan-[a-f0-9]{16}$/.test(entry.name))
+        .map(async (entry) => ({ id: entry.name, modified: (await stat(join(directory, entry.name, "plan.json")).catch(() => null))?.mtimeMs ?? -1 })));
+      selectedId = plans.sort((a, b) => b.modified - a.modified || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0]?.id;
+      if (selectedId === undefined) return null;
+    }
+    const draft = await readPlanDraft(this.projectRoot, selectedId);
+    const validatedDraft = validatePlanDraft(draft, this.configuration?.verificationChecks.map((check) => check.name) ?? [], selectedId);
+    const preview = validatedDraft.preview;
+    const approvals = await this.store.listEvents({ type: "plan.approved" });
+    const approval = approvals.find((event) => isPlanApprovalEvent(event.payload, selectedId));
+    return {
+      ...preview,
+      approvalStatus: approval === undefined
+        ? "draft"
+        : isRecord(approval.payload) && approval.payload["previewDigest"] === validatedDraft.contentDigest
+          ? "approved"
+          : "changed",
+    };
+  }
+
+  async approvePlan(planId: string): Promise<PlanApprovalResult> {
+    await this.startupReconcile();
+    const rejected = (message: string): PlanApprovalResult => ({ kind: "rejected", planId, taskIds: [], message });
+    const alreadyApproved = (): PlanApprovalResult => rejected(`plan "${planId}" was already approved`);
+    const priorEvents = await this.store.listEvents({ type: "plan.approved" });
+    if (priorEvents.some((event) => isPlanApprovalEvent(event.payload, planId))) return alreadyApproved();
+
+    let draft: ValidatedPlanDraft;
+    try {
+      draft = validatePlanDraft(
+        await readPlanDraft(this.projectRoot, planId),
+        this.configuration?.verificationChecks.map((check) => check.name) ?? [],
+        planId,
+      );
+    } catch (error) {
+      return rejected(describeError(error));
+    }
+    const project = await this.store.getProject(DEFAULT_PROJECT_ID);
+    if (project === null) return rejected('runner is not initialized; run "agentic init" before approving plans');
+
+    const approvedAt = new Date().toISOString();
+    const committed = await this.store.transaction(async () => {
+      const events = await this.store.listEvents({ type: "plan.approved" });
+      if (events.some((event) => isPlanApprovalEvent(event.payload, planId))) return null;
+      const planTaskIds = new Set(draft.tasks.map((task) => task.id));
+      for (const task of draft.tasks) {
+        if (await this.store.getTask(task.id) !== null) return { kind: "collision" as const, taskId: task.id };
+      }
+      for (const task of draft.tasks) {
+        for (const dependency of task.dependsOn) {
+          if (!planTaskIds.has(dependency) && await this.store.getTask(dependency) === null) {
+            return { kind: "missing-dependency" as const, taskId: task.id, dependency };
+          }
+        }
+      }
+      const tasks = draft.tasks.map((task) => buildTaskFromManualInput(task, { projectId: project.id, now: approvedAt }));
+      for (const task of tasks) await this.store.putTask(task);
+      await this.store.appendEvents([{
+        type: "plan.approved", taskId: null,
+        payload: {
+          planId, inputDigest: draft.preview.inputDigest,
+          previewDigest: draft.contentDigest, taskIds: tasks.map((task) => task.id),
+        },
+        occurredAt: approvedAt,
+      }]);
+      return { kind: "approved" as const, tasks };
+    });
+    if (committed === null) return alreadyApproved();
+    if (committed.kind === "collision") return rejected(`task "${committed.taskId}" already exists in runner state; plan approval was cancelled`);
+    if (committed.kind === "missing-dependency") return rejected(`task "${committed.taskId}" depends on missing runner task "${committed.dependency}"`);
+
+    const taskIds = committed.tasks.map((task) => task.id);
+    return { kind: "approved", planId, taskIds, message: `approved plan "${planId}" with ${String(taskIds.length)} tasks` };
+  }
+
   async close(): Promise<void> {
     await this.store.close();
     this.startupReconciliation = undefined;
@@ -648,4 +765,110 @@ export function summarizeTaskStates(tasks: readonly Task[]): string {
     .map(([status, count]) => `${count} ${status}`)
     .join(", ");
   return `final persisted task state: ${breakdown.length === 0 ? "no tasks" : breakdown}`;
+}
+
+
+type ValidatedPlanDraft = { readonly preview: PlanPreview; readonly input: PlanningInput; readonly tasks: readonly ManualTaskInput[]; readonly contentDigest: string };
+
+function validatePlanDraft(value: unknown, configuredVerificationChecks: readonly string[], expectedPlanId?: string): ValidatedPlanDraft {
+  if (!isRecord(value) || typeof value["planId"] !== "string" || typeof value["inputDigest"] !== "string" || typeof value["summary"] !== "string" || !Array.isArray(value["tasks"])) {
+    throw new CliError('plan draft is malformed; regenerate it with "agentic plan --goal"');
+  }
+  if (expectedPlanId !== undefined && value["planId"] !== expectedPlanId) throw new CliError("plan draft ID does not match its directory");
+  const parsedResult = parsePlanningResult(value["result"]);
+  if (!parsedResult.ok || parsedResult.value.kind !== "READY_FOR_PLANNING") {
+    throw new CliError(`plan draft milestones or result are invalid: ${parsedResult.ok ? "expected READY_FOR_PLANNING" : parsedResult.issues.join("; ")}`);
+  }
+  const parsedInput = validatePlanningInput(value["input"]);
+  if (!parsedInput.ok) throw new CliError(`plan draft input is invalid: ${parsedInput.issues.join("; ")}`);
+  const parsedInputs = value["tasks"].map((task, index) => {
+    const parsed = validateManualTaskInput(task);
+    if (!parsed.ok) throw new CliError(`plan draft task ${String(index + 1)} is invalid: ${parsed.issues.join("; ")}`);
+    return parsed.value;
+  });
+  const result: PlanningResult = {
+    version: 1,
+    kind: "READY_FOR_PLANNING",
+    milestones: parsedResult.value.milestones,
+    tasks: parsedInputs.map(toPlannerTask),
+  };
+  const validation = normalizeAndValidatePlan(result, {
+    configuredVerificationChecks,
+    existingTaskIds: parsedInput.value.existingTaskIds,
+  });
+  if (!validation.ok) throw new CliError(`plan draft tasks are invalid: ${validation.issues.join("; ")}`);
+  const normalizedTasks = validation.tasks;
+  const previewTasks = normalizedTasks.map((task) => ({
+    id: task.id, title: task.title, milestone: task.milestone, dependsOn: task.dependsOn,
+    approvalRequired: task.approval.required, objective: task.objective,
+    acceptanceCriteria: task.acceptanceCriteria, allowedPaths: task.scope.allowedPaths, risk: task.risk,
+  }));
+  return {
+    input: parsedInput.value,
+    tasks: normalizedTasks,
+    contentDigest: digestCanonicalPlanContent({
+      planId: value["planId"], inputDigest: value["inputDigest"], summary: value["summary"],
+      milestones: parsedResult.value.milestones, tasks: normalizedTasks,
+    }),
+    preview: {
+      planId: value["planId"], inputDigest: value["inputDigest"], summary: value["summary"],
+      milestones: parsedResult.value.milestones, tasks: previewTasks,
+      parallelizableTaskCount: safeParallelSubset(normalizedTasks),
+      conflicts: validation.conflicts,
+      approvalStatus: "draft",
+    },
+  };
+}
+
+function toPlannerTask(task: ManualTaskInput): Readonly<Record<string, unknown>> {
+  return {
+    id: task.id,
+    title: task.title,
+    milestone: task.milestone,
+    provenanceSource: task.provenance.source,
+    risk: task.risk,
+    type: task.type,
+    objective: task.objective,
+    acceptanceCriteria: task.acceptanceCriteria,
+    dependsOn: task.dependsOn,
+    allowedPaths: task.scope.allowedPaths,
+    resources: task.resources,
+    routing: task.routing,
+    verification: task.verification.required,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+
+function safeParallelSubset(tasks: readonly ManualTaskInput[]): number {
+  const ready = tasks.filter((task) => task.dependsOn.length === 0 && !task.approval.required).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const selected: ManualTaskInput[] = [];
+  for (const candidate of ready) {
+    const conflicts = detectTaskConflicts([...selected, candidate].map((task) => buildTaskFromManualInput(task, {
+      projectId: "planning", now: "1970-01-01T00:00:00.000Z",
+    })));
+    if (conflicts.length === 0) selected.push(candidate);
+  }
+  return selected.length;
+}
+
+
+function isPlanApprovalEvent(payload: unknown, planId: string): boolean {
+  return isRecord(payload) && payload["planId"] === planId;
+}
+
+function digestCanonicalPlanContent(content: unknown): string {
+  return createHash("sha256").update(canonicalJson(content)).digest("hex");
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }

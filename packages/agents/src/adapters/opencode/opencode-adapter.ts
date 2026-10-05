@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ProcessOutcome, ProcessResult, ProcessRunner, ProcessSpec } from "@agentic-dev-runner/platform";
 import { stableStringify } from "@agentic-dev-runner/context";
 import type {
@@ -73,6 +74,13 @@ export class OpenCodeAdapter implements AgentRuntime {
         stableStringify(invocation.contextPack),
         { encoding: "utf8", mode: 0o600 },
       );
+      const readOnlyAgentName = invocation.readOnly === true
+        ? `agentic-readonly-${randomUUID()}`
+        : undefined;
+      const configPath = readOnlyAgentName === undefined ? undefined : join(contextDir, "opencode.json");
+      if (readOnlyAgentName !== undefined && configPath !== undefined) {
+        await writeFile(configPath, readOnlyAgentConfig(readOnlyAgentName), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      }
 
       const spec: ProcessSpec = {
         executable: this.options.executable ?? DEFAULT_EXECUTABLE,
@@ -81,9 +89,11 @@ export class OpenCodeAdapter implements AgentRuntime {
           ...buildRunArgs({
             model: invocation.agent.model ?? this.options.model,
             prompt: buildPrompt(contextPackPath, invocation.instruction),
+            readOnlyAgentName,
           }),
         ],
         cwd: invocation.worktreePath,
+        ...(configPath === undefined ? {} : { env: { ...inheritedEnvironment(), OPENCODE_CONFIG: configPath } }),
         timeoutMs: invocation.timeoutMs,
         signal: invocation.signal,
       };
@@ -122,13 +132,29 @@ async function removeContextDir(path: string): Promise<void> {
 function buildRunArgs(input: {
   model?: string | undefined;
   prompt: string;
+  readOnlyAgentName?: string | undefined;
 }): string[] {
   const args = ["run"];
+  if (input.readOnlyAgentName !== undefined) {
+    args.push("--pure", "--agent", input.readOnlyAgentName);
+  }
   if (input.model !== undefined) {
     args.push("--model", input.model);
   }
   args.push(input.prompt);
   return args;
+}
+
+function readOnlyAgentConfig(name: string): string {
+  return `${JSON.stringify({ agent: { [name]: {
+    description: "Read-only planning agent",
+    mode: "primary",
+    permission: { edit: "deny", bash: "deny", task: "deny", skill: "deny" },
+  } } }, null, 2)}\n`;
+}
+
+function inheritedEnvironment(): Record<string, string> {
+  return Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
 function buildPrompt(

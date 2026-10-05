@@ -58,6 +58,33 @@ describe("task execution coordinator (M061b)", () => {
     expect(result.admissions.every((admission) => admission.kind === "admitted")).toBe(true);
   });
 
+  it("does not escalate scheduler admission after a cancelled attempt", async () => {
+    await store.putTask(task("M001", "P0"));
+    await store.putAttempt({
+      id: "att_M001_1",
+      taskId: "M001",
+      number: 1,
+      status: "CANCELLED",
+      agent: "adapter-a",
+      baseRevision: "base",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    const result = await createTaskExecutionCoordinator({
+      store,
+      agentCandidates: [{
+        ...candidate,
+        profile: { ...candidate.profile, tier: "economy" },
+      }],
+      maxParallelism: 1,
+      createExecutor: () => completedExecutor(),
+      now: () => "2026-01-01T00:00:00.000Z",
+    }).dispatchAvailable();
+
+    expect(result.admissions.find(({ taskId }) => taskId === "M001")?.kind).toBe("admitted");
+  });
+
   it("enforces capacity and starts independent tasks concurrently", async () => {
     let running = 0;
     let maximum = 0;

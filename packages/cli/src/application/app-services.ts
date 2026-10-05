@@ -47,8 +47,9 @@ import {
   type AppServicesOptions,
   type AppServicesRequest,
 } from "./defaults.js";
-import { resolveRoutedAgent } from "./agents/agent-routing.js";
+import { routeTaskAttempt } from "./agents/task-routing.js";
 import { createRepositoryAnalyzer } from "./planning/repository-analysis.js";
+import { createRepositoryPlanner } from "./planning/planner.js";
 
 export type AppServices = {
   readonly store: RunnerStore;
@@ -73,6 +74,8 @@ export type AppServices = {
   readonly configurationError: string | null;
   /** Builds bounded, provider-independent input for planning. */
   readonly analyzeRepository: ReturnType<typeof createRepositoryAnalyzer>;
+  /** Invokes the configured planning profile without importing or running tasks. */
+  readonly planRepository: ReturnType<typeof createRepositoryPlanner> | null;
 };
 
 export type AppServicesOverrides = {
@@ -134,6 +137,21 @@ export async function createAppServices(
     openCodeAdapter,
     codexAdapter,
   ]);
+  const planningProfile = configuration?.planningProfileId === undefined
+    ? undefined
+    : configuration.agentProfiles.find((profile) => profile.id === configuration?.planningProfileId);
+  const planningAgent = planningProfile === undefined ? null : adapters.resolveAdapter(planningProfile.adapterId);
+  const planRepository = planningProfile === undefined || planningAgent === null
+    ? null
+    : createRepositoryPlanner({
+        git,
+        runner,
+        agent: planningAgent,
+        profile: planningProfile,
+        worktreesDir: resolveWorktreesDir(options),
+        timeoutMs: resolveAgentTimeoutMs(options),
+        configuredVerificationChecks: verificationChecks.map((check) => check.name),
+      });
   const orchestratorBaseOptions = {
     store,
     git,
@@ -191,8 +209,9 @@ export async function createAppServices(
             maxParallelism: resolveMaxParallelism(options),
             agentCandidates: () => discoverAgentCandidates(agentProfiles, agents),
             createExecutor: async (task, executionId) => {
-              const routedAgent = await resolveRoutedAgent({
-                requiredCapabilities: task.routing.capabilities,
+              const routedAgent = await routeTaskAttempt({
+                task,
+                store,
                 agentProfiles,
                 agents,
                 adapters,
@@ -232,6 +251,7 @@ export async function createAppServices(
     configuration,
     configurationError,
     analyzeRepository,
+    planRepository,
   };
 }
 

@@ -301,7 +301,12 @@ describe("createRoutedTaskOrchestrator", () => {
     expect(outcome.taskStatus).toBe("READY");
     expect(executorCalls).toHaveLength(0);
     expect(store.attempts).toHaveLength(0);
-    expect(store.events).toHaveLength(0);
+    expect(store.events).toHaveLength(1);
+    expect(store.events[0]).toMatchObject({
+      type: "task.routing.decided",
+      taskId: "M001",
+      payload: { profileId: null },
+    });
   });
 
   it("never invokes the selected agent runtime when routing fails", async () => {

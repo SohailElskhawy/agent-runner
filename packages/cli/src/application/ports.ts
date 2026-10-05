@@ -1,3 +1,5 @@
+import type { PlanningMilestone, TaskConflict } from "@agentic-dev-runner/core";
+import type { PlanningOutcome } from "./planning/planner.js";
 import type {
   ExecutionClaimStatus,
   IntegrationQueueStatus,
@@ -191,4 +193,36 @@ export type TaskInspectionEvent = {
   readonly type: string;
   readonly occurredAt: string;
   readonly payload: unknown;
+};
+
+
+export type PlanPreview = {
+  readonly planId: string;
+  readonly inputDigest: string;
+  readonly summary: string;
+  readonly milestones: readonly PlanningMilestone[];
+  readonly tasks: readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly milestone: string;
+    readonly dependsOn: readonly string[];
+    readonly approvalRequired: boolean;
+    readonly objective: string;
+    readonly acceptanceCriteria: readonly string[];
+    readonly allowedPaths: readonly string[];
+    readonly risk: string;
+  }[];
+  readonly parallelizableTaskCount: number;
+  readonly conflicts: readonly TaskConflict[];
+  readonly approvalStatus: "draft" | "approved" | "changed";
+};
+
+export type PlanningCommandResult = PlanningOutcome;
+
+
+export type PlanApprovalResult = {
+  readonly kind: "approved" | "rejected";
+  readonly planId: string;
+  readonly taskIds: readonly string[];
+  readonly message: string;
 };

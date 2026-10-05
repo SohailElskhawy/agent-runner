@@ -32,6 +32,7 @@ writeFileSync(
   ].join("\n"),
 );
 writeFileSync(join(repositoryPath, "README.md"), "roadmap 20-task dogfood fixture\n");
+writeFileSync(join(repositoryPath, ".gitignore"), ".serena/\n");
 writeFileSync(
   join(repositoryPath, "agentic.yaml"),
   [

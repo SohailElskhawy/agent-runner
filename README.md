@@ -9,11 +9,18 @@ Agentic Dev Runner is a local-first orchestration engine that executes a bounded
 - **Provider-agnostic.** Provider behavior lives behind adapters; v0.1 ships `opencode` and `codex`.
 - **Cross-platform.** macOS, Linux, and Windows are first-class targets, with no Bash, `/tmp`, shell-quoting, or signal assumptions.
 
-## Status: v0.1.0
+## Status: v0.1 Technical Preview / Early Access
+
+Planning and cheap-first routing are part of the v0.1 scope. The Technical
+Preview remains under verification; this status does not claim the launch
+dogfood or release gates are complete.
 
 What works today:
 
 - `agentic init` creates local runner state (SQLite database plus worktrees root) for the current repository.
+- `agentic analyze` gathers bounded repository evidence; readiness is assessed when a goal is supplied to `plan`.
+- `agentic plan --goal "..."` produces targeted questions or a bounded draft; it does not execute tasks.
+- `agentic plan show [<plan-id>]` previews the draft; `agentic plan approve <plan-id>` validates and explicitly imports it for execution.
 - Manual task ingestion from JSON with `agentic tasks add`.
 - Single-task execution (`agentic run <task-id>`) through the resolved workflow, with integration verification before `DONE`.
 - Unattended DAG execution (`agentic run`, `agentic run-all`) over every runnable task, with bounded parallelism via `--parallel <n>`.
@@ -21,11 +28,12 @@ What works today:
 - Durable attempts, events, execution claims, exclusive resource locks, and crash recovery.
 - Human approval gates, retry with attempt budgets, project status, task inspection, preflight `doctor`, and local agent discovery.
 
-Explicit limitations of v0.1.0:
+V0.1 limitations and deferrals:
 
-- Tasks are authored manually as JSON. Autonomous planning — analysis, roadmap/milestone generation, task generation, and oversized-task detection — is v0.2.
+- Planning uses bounded repository evidence and a human-edited `.agentic/decisions.md`; it is not an interactive design session or a guarantee of product completeness. Manual JSON tasks remain supported for advanced users.
 - Token and cost telemetry are v0.2; there is no `agentic cost` command yet.
 - `pause`/`resume` are v0.2. A run either continues to completion or is interrupted and recovered on the next invocation.
+- Learned routing and automatic fallback to a different provider are v0.2. V0.1 routing deterministically selects the cheapest eligible configured profile that meets the task's minimum tier and escalates that minimum after failed attempts.
 - Timeout and cancellation terminate the direct agent process only, not its whole process tree. A terminated agent can leave orphaned child processes behind on the host.
 - The runner is local-only: one engine per machine, no remote workers, no cloud control plane, no GUI.
 - macOS, Linux, and Windows are supported targets; the CI matrix runs lint, typecheck, build, and the full test suite on all three.
@@ -39,6 +47,25 @@ Explicit limitations of v0.1.0:
 - An `agentic.yaml` file at the repository root (see [Configuration](#agenticyaml))
 
 ## Install
+
+The v0.1.0 package is not yet published. Until the release gates pass and
+publication is authorized, install dependencies and the locally built package
+from the source checkout root:
+
+```bash
+corepack pnpm install
+corepack pnpm --filter agentic-dev-runner build
+npm install --global ./packages/agentic-dev-runner
+agentic help
+```
+
+To run the CLI directly without installing it, from the source checkout root:
+
+```bash
+node packages/agentic-dev-runner/bundle/main.js help
+```
+
+After publication, the package install commands will be:
 
 ```bash
 # globally
@@ -56,8 +83,10 @@ agentic version
 
 ## Quickstart
 
-The walkthrough below is fixture-free: any Git repository with a non-empty
-`AGENTS.md` and one working verification command will do.
+Install Agentic Dev Runner using the steps above, then run these commands from
+the root of your target Git project with a configured verification command.
+Planning also supports nearly empty Git repositories and does not require
+`AGENTS.md` or a package manifest.
 
 ### 1. Configure the project (`agentic.yaml`)
 
@@ -76,13 +105,21 @@ agents:
     opencode:
       adapter: opencode
       model: opencode/gpt-5
+      tier: standard
       capabilities:
         - typescript
+planning:
+  profile: opencode
 ```
 
 `verification.checks` are named commands the runner executes itself;
 `agents.profiles` map profile ids to provider adapters. Swap `adapter: opencode`
 for `adapter: codex` to use the Codex CLI instead.
+`planning.profile` is required for `agentic plan --goal` and must name one of
+the configured agent profiles.
+
+The optional `tier` is `economy`, `standard`, or `strong`; omitted tiers behave
+as `standard` for existing configurations.
 
 ### 2. Initialize local runner state
 
@@ -96,7 +133,42 @@ normalized repository path: `~/.agentic/projects/<project-key>/state.db` plus
 repository directory creates a new local state identity; no state migration is
 performed.
 
-### 3. Author a task
+### 3. Analyze and plan
+
+```bash
+agentic analyze
+agentic plan --goal "Implement the project described in docs/PROJECT_SPEC.md"
+```
+
+If planning reports `NEEDS_DISCOVERY`, edit the generated
+`.agentic/decisions.md` answers and rerun the plan command. Review the draft,
+then explicitly approve it before execution:
+
+```bash
+agentic plan show
+agentic plan approve <plan-id>
+```
+
+Plan approval authorizes the tasks; it does not commit the generated
+`.agentic/` decisions and draft files. The runner requires a clean Git
+checkout before execution. Commit those files or otherwise restore a clean
+working tree, then confirm `git status --short` is empty:
+
+```bash
+git add .agentic
+git commit -m "chore: record planning artifacts"
+git status --short
+```
+
+```bash
+agentic run --parallel 3
+agentic status
+```
+
+`agentic plan` only creates a draft. The runner validates approval, imports
+tasks, schedules execution, verifies changes, and controls integration.
+
+### Advanced: add a manually authored task
 
 Save this as `task.json` — the documented task schema
 ([`docs/TASK_SCHEMA.md`](https://github.com/SohailElskhawy/agent-runner/blob/master/docs/TASK_SCHEMA.md))
@@ -156,7 +228,7 @@ in JSON form:
 }
 ```
 
-### 4. Add and run
+Add and run it with:
 
 ```bash
 agentic tasks add task.json
@@ -176,6 +248,10 @@ task sequentially instead, use `agentic run M001`.
 | Command | Description |
 | --- | --- |
 | `agentic init` | Initialize local runner state (SQLite database and worktrees root) for the current repository. Requires a valid `agentic.yaml`. |
+| `agentic analyze` | Collect bounded project evidence for later planning. |
+| `agentic plan --goal <text>` | Ask discovery questions or generate a bounded draft plan. Does not execute tasks. |
+| `agentic plan show [<plan-id>]` | Show the latest draft or a selected draft for review. |
+| `agentic plan approve <plan-id>` | Revalidate and explicitly approve/import a draft into runner state. |
 | `agentic run <task-id>` | Execute one task's resolved workflow (default: PLAN → PLAN_REVIEW → IMPLEMENT → CODE_REVIEW → VERIFY → INTEGRATE) with integration verification before `DONE`. |
 | `agentic run [--parallel <n>]` | Unattended DAG execution of every runnable task; `--parallel <n>` caps concurrent tasks (positive integer, default 1). |
 | `agentic run-all [--parallel <n>]` | Compatibility alias for unattended `agentic run`. |
@@ -260,6 +336,7 @@ agents:
     opencode:
       adapter: opencode      # built-in adapter: opencode | codex
       model: opencode/gpt-5  # optional, opaque model id passed to the adapter
+      tier: standard         # optional cost tier: economy | standard | strong
       capabilities:          # task capabilities this profile can satisfy
         - typescript
 ```
@@ -272,6 +349,14 @@ agents:
   that is both available locally and eligible for the task. `capabilities` are
   matched exactly against the task's `routing.capabilities` (case-insensitive,
   after trimming); a missing capability makes the profile ineligible.
+- Profile `tier` sets the relative cost level. The runner selects the cheapest
+  available profile that meets the task's minimum tier, keeping configured
+  order as the tie-breaker. The minimum is `strong` for high or critical risk
+  and large tasks, `standard` for medium risk or complexity, and `economy`
+  otherwise. Each failed or timed-out attempt raises the minimum one tier, up
+  to `strong`; successful, running, and cancelled attempts do not escalate it.
+  Escalation does not add attempts: `limits.max_attempts` remains the total
+  attempt cap.
 - A task requiring a check name that is not configured is rejected before
   execution.
 

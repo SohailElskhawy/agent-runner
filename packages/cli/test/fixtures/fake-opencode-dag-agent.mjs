@@ -17,6 +17,32 @@ try {
   process.exit(3);
 }
 
+if (prompt.includes("STAGE PLANNING —")) {
+  const planningDocument = contextPack.documents?.find((document) => document.path === "PLANNING_INPUT.json");
+  if (typeof planningDocument?.content !== "string") {
+    console.error("planning context pack has no PlanningInput document");
+    process.exit(6);
+  }
+  const planningInput = JSON.parse(planningDocument.content);
+  const answered = planningInput.answeredQuestionIds?.includes("storage") === true;
+  process.stdout.write(JSON.stringify(answered
+    ? {
+        version: 1,
+        kind: "READY_FOR_PLANNING",
+        milestones: [{ id: "M1", title: "TODO basics", completionCriteria: ["Tasks can be added and completed"] }],
+        tasks: [
+          { id: "T001", title: "Add TODO items", milestone: "M1", provenanceSource: "M1", risk: "low", type: "implementation", objective: "Add validated TODO items to an in-memory list.", acceptanceCriteria: ["addTodo appends an incomplete task"], dependsOn: [], allowedPaths: ["src/**", "test/**"], resources: [], routing: { complexity: "small", capabilities: ["javascript"] }, verification: ["unit"] },
+          { id: "T002", title: "Complete TODO items", milestone: "M1", provenanceSource: "M1", risk: "low", type: "implementation", objective: "Add completion for an existing TODO item.", acceptanceCriteria: ["completeTodo marks the selected task complete"], dependsOn: ["T001"], allowedPaths: ["src/**", "test/**"], resources: [], routing: { complexity: "small", capabilities: ["javascript"] }, verification: ["unit"] },
+        ],
+      }
+    : {
+        version: 1,
+        kind: "NEEDS_DISCOVERY",
+        questions: [{ id: "storage", prompt: "Where should TODO items persist?", reason: "Persistence changes the implementation and data lifecycle.", importance: "important", choices: ["In-memory for this demo", "SQLite"] }],
+      }));
+  process.exit(0);
+}
+
 const taskId = contextPack.task?.id;
 if (typeof taskId !== "string") {
   console.error("context pack has no task id");
@@ -154,6 +180,51 @@ const MODULES = {
       ].join("\n"),
     },
   },
+  T001: {
+    files: {
+      "src/todo.cjs": [
+        "function addTodo(todos, title) {",
+        '  if (!Array.isArray(todos)) throw new TypeError("todos must be an array");',
+        '  if (typeof title !== "string" || title.trim().length === 0) throw new TypeError("title must be non-empty");',
+        '  return [...todos, { title: title.trim(), completed: false }];',
+        "}", "", "module.exports = { addTodo };", "",
+      ].join("\n"),
+      "test/todo.test.cjs": [
+        'const test = require("node:test");', 'const assert = require("node:assert/strict");',
+        'const { addTodo } = require("../src/todo.cjs");', "",
+        'test("addTodo appends a trimmed incomplete task", () => {',
+        '  assert.deepEqual(addTodo([], "  buy milk "), [{ title: "buy milk", completed: false }]);',
+        '  assert.throws(() => addTodo([], "  "), TypeError);', "});", "",
+      ].join("\n"),
+    },
+  },
+  T002: {
+    files: {
+      "src/todo.cjs": [
+        "function addTodo(todos, title) {",
+        '  if (!Array.isArray(todos)) throw new TypeError("todos must be an array");',
+        '  if (typeof title !== "string" || title.trim().length === 0) throw new TypeError("title must be non-empty");',
+        '  return [...todos, { title: title.trim(), completed: false }];',
+        "}", "", "function completeTodo(todos, index) {",
+        '  if (!Array.isArray(todos)) throw new TypeError("todos must be an array");',
+        '  if (!Number.isInteger(index) || index < 0 || index >= todos.length) throw new RangeError("index is out of range");',
+        '  return todos.map((todo, current) => current === index ? { ...todo, completed: true } : todo);',
+        "}", "", "module.exports = { addTodo, completeTodo };", "",
+      ].join("\n"),
+      "test/todo.test.cjs": [
+        'const test = require("node:test");', 'const assert = require("node:assert/strict");',
+        'const { addTodo, completeTodo } = require("../src/todo.cjs");', "",
+        'test("addTodo appends a trimmed incomplete task", () => {',
+        '  assert.deepEqual(addTodo([], "  buy milk "), [{ title: "buy milk", completed: false }]);',
+        '  assert.throws(() => addTodo([], "  "), TypeError);', "});", "",
+        'test("completeTodo marks the selected task complete", () => {',
+        '  const todos = addTodo([], "buy milk");',
+        '  assert.deepEqual(completeTodo(todos, 0), [{ title: "buy milk", completed: true }]);',
+        '  assert.throws(() => completeTodo(todos, 2), RangeError);', "});", "",
+      ].join("\n"),
+    },
+  },
+
 };
 
 const moduleForTask = MODULES[taskId];

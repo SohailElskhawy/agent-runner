@@ -1,6 +1,7 @@
 import type { CliIo } from "../io.js";
 import type {
   TaskInspection,
+  TaskInspectionEvent,
   TaskInspectionStage,
   TaskInspectionVerification,
 } from "../application/ports.js";
@@ -77,7 +78,56 @@ export function renderTaskInspection(
     io.writeLine(
       `  #${event.sequence} ${event.type} @ ${event.occurredAt}`,
     );
+    if (event.type === "task.routing.decided") {
+      renderRoutingDecision(io, event);
+    }
   }
+}
+
+const AGENT_TIERS = new Set(["economy", "standard", "strong"]);
+
+function renderRoutingDecision(
+  io: CliIo,
+  event: TaskInspectionEvent,
+): void {
+  const payload = event.payload;
+  if (!isRecord(payload)) {
+    io.writeLine("    routing decision: details unavailable");
+    return;
+  }
+  const profileId = payload["profileId"];
+  const selectedTier = payload["selectedTier"];
+  const minimumTier = payload["minimumTier"];
+  const attemptCount = payload["attemptCount"];
+  if (
+    (profileId !== null && typeof profileId !== "string") ||
+    (selectedTier !== null && !isAgentTier(selectedTier)) ||
+    !isAgentTier(minimumTier) ||
+    typeof attemptCount !== "number" ||
+    !Number.isInteger(attemptCount) ||
+    attemptCount < 0 ||
+    (typeof profileId === "string" && selectedTier === null)
+  ) {
+    io.writeLine("    routing decision: details unavailable");
+    return;
+  }
+  const reason =
+    typeof payload["reason"] === "string" && payload["reason"].length > 0
+      ? payload["reason"]
+      : "reason unavailable";
+  const route =
+    profileId === null
+      ? `no eligible profile (minimum ${minimumTier}; attempts ${String(attemptCount)})`
+      : `profile "${profileId}" (tier ${selectedTier}; minimum ${minimumTier}; attempts ${String(attemptCount)})`;
+  io.writeLine(`    routing: ${route} — ${reason}`);
+}
+
+function isAgentTier(value: unknown): value is "economy" | "standard" | "strong" {
+  return typeof value === "string" && AGENT_TIERS.has(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function renderStages(

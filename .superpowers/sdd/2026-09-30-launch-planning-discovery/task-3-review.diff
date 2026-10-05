@@ -1,0 +1,221 @@
+# Review package: 21d204a..ebfb94f
+
+## Commits
+ebfb94f feat(core): validate planning readiness results
+
+## Files changed
+ packages/core/src/domain/index.ts           |  2 +
+ packages/core/src/domain/planning-result.ts | 89 +++++++++++++++++++++++++++++
+ packages/core/src/domain/readiness.ts       | 18 ++++++
+ packages/core/test/planning-result.test.ts  | 33 +++++++++++
+ packages/core/test/readiness.test.ts        | 22 +++++++
+ 5 files changed, 164 insertions(+)
+
+## Diff
+diff --git a/packages/core/src/domain/index.ts b/packages/core/src/domain/index.ts
+index 0d024f9..50dc237 100644
+--- a/packages/core/src/domain/index.ts
++++ b/packages/core/src/domain/index.ts
+@@ -15,14 +15,16 @@ export * from "./integration-queue.js";
+ export * from "./integration-drift.js";
+ export * from "./parallelism-capacity.js";
+ export * from "./context-manifest.js";
+ export * from "./context-pack.js";
+ export * from "./attempt.js";
+ export * from "./execution-claim.js";
+ export * from "./stage-run.js";
+ export * from "./verification-result.js";
+ export * from "./project-config.js";
+ export * from "./planning-input.js";
++export * from "./planning-result.js";
++export * from "./readiness.js";
+ export * from "./task-state-machine.js";
+ export * from "./workflow-definition.js";
+ export * from "./workflow-resolver.js";
+ export * from "./review-cycle-policy.js";
+diff --git a/packages/core/src/domain/planning-result.ts b/packages/core/src/domain/planning-result.ts
+new file mode 100644
+index 0000000..0e9d0d0
+--- /dev/null
++++ b/packages/core/src/domain/planning-result.ts
+@@ -0,0 +1,89 @@
++export type PlanningQuestion = {
++  readonly id: string;
++  readonly prompt: string;
++  readonly reason: string;
++  readonly importance: "important" | "low-risk";
++  readonly choices: readonly string[];
++};
++
++export type PlanningMilestone = {
++  readonly id: string;
++  readonly title: string;
++  readonly completionCriteria: readonly string[];
++};
++
++export type PlanningResult =
++  | { readonly version: 1; readonly kind: "NEEDS_DISCOVERY"; readonly questions: readonly PlanningQuestion[] }
++  | { readonly version: 1; readonly kind: "READY_FOR_PLANNING"; readonly milestones: readonly PlanningMilestone[]; readonly tasks: readonly Readonly<Record<string, unknown>>[] };
++
++export type PlanningResultValidation =
++  | { readonly ok: true; readonly value: PlanningResult }
++  | { readonly ok: false; readonly issues: readonly string[] };
++
++export function parsePlanningResult(value: unknown): PlanningResultValidation {
++  const issues: string[] = [];
++  if (!isRecord(value)) return { ok: false, issues: ["planning result: must be an object"] };
++  if (value["version"] !== 1) issues.push("planning result.version: must be 1");
++  if (value["kind"] === "NEEDS_DISCOVERY") {
++    const questions: PlanningQuestion[] = [];
++    if (!Array.isArray(value["questions"])) issues.push("planning result.questions: must be an array");
++    else {
++      if (value["questions"].length === 0) issues.push("planning result.questions: must contain at least one question");
++      value["questions"].forEach((item: unknown, index: number) => {
++        const path = `planning result.questions[${index}]`;
++        if (!isRecord(item)) { issues.push(`${path}: must be an object`); return; }
++        const id = nonEmpty(item["id"], `${path}.id`, issues);
++        const prompt = nonEmpty(item["prompt"], `${path}.prompt`, issues);
++        const reason = nonEmpty(item["reason"], `${path}.reason`, issues);
++        const importance = item["importance"];
++        if (importance !== "important" && importance !== "low-risk") issues.push(`${path}.importance: must be important or low-risk`);
++        const choices = stringList(item["choices"], `${path}.choices`, issues, true);
++        if (id !== undefined && prompt !== undefined && reason !== undefined && (importance === "important" || importance === "low-risk") && choices !== undefined) {
++          questions.push({ id, prompt, reason, importance, choices });
++        }
++      });
++    }
++    return issues.length ? { ok: false, issues } : { ok: true, value: { version: 1, kind: "NEEDS_DISCOVERY", questions } };
++  }
++  if (value["kind"] === "READY_FOR_PLANNING") {
++    const milestones: PlanningMilestone[] = [];
++    if (!Array.isArray(value["milestones"]) || value["milestones"].length === 0) issues.push("planning result.milestones: must be a non-empty array");
++    else value["milestones"].forEach((item: unknown, index: number) => {
++      const path = `planning result.milestones[${index}]`;
++      if (!isRecord(item)) { issues.push(`${path}: must be an object`); return; }
++      const id = nonEmpty(item["id"], `${path}.id`, issues);
++      const title = nonEmpty(item["title"], `${path}.title`, issues);
++      const completionCriteria = stringList(item["completionCriteria"], `${path}.completionCriteria`, issues, true);
++      if (id !== undefined && title !== undefined && completionCriteria !== undefined) milestones.push({ id, title, completionCriteria });
++    });
++    const tasks: Readonly<Record<string, unknown>>[] = [];
++    if (!Array.isArray(value["tasks"]) || value["tasks"].length === 0) issues.push("planning result.tasks: must be a non-empty array");
++    else value["tasks"].forEach((item: unknown, index: number) => {
++      if (!isRecord(item)) issues.push(`planning result.tasks[${index}]: must be an object`);
++      else tasks.push(item);
++    });
++    return issues.length ? { ok: false, issues } : { ok: true, value: { version: 1, kind: "READY_FOR_PLANNING", milestones, tasks } };
++  }
++  issues.push("planning result.kind: must be NEEDS_DISCOVERY or READY_FOR_PLANNING");
++  return { ok: false, issues };
++}
++
++function nonEmpty(value: unknown, path: string, issues: string[]): string | undefined {
++  if (typeof value !== "string" || !value.trim()) { issues.push(`${path}: must be a non-empty string`); return undefined; }
++  return value;
++}
++
++function stringList(value: unknown, path: string, issues: string[], nonEmptyList: boolean): readonly string[] | undefined {
++  if (!Array.isArray(value)) { issues.push(`${path}: must be an array of strings`); return undefined; }
++  if (nonEmptyList && value.length === 0) issues.push(`${path}: must contain at least one item`);
++  const parsed: string[] = [];
++  value.forEach((entry: unknown, index: number) => {
++    const item = nonEmpty(entry, `${path}[${index}]`, issues);
++    if (item !== undefined) parsed.push(item);
++  });
++  return parsed.length === value.length && (!nonEmptyList || parsed.length > 0) ? parsed : undefined;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === "object" && value !== null && !Array.isArray(value);
++}
+diff --git a/packages/core/src/domain/readiness.ts b/packages/core/src/domain/readiness.ts
+new file mode 100644
+index 0000000..0363b66
+--- /dev/null
++++ b/packages/core/src/domain/readiness.ts
+@@ -0,0 +1,18 @@
++import type { PlanningQuestion, PlanningResult } from "./planning-result.js";
++
++export type ReadinessResult = {
++  readonly status: "NEEDS_DISCOVERY" | "READY_FOR_PLANNING";
++  readonly questions: readonly PlanningQuestion[];
++  readonly reasons: readonly string[];
++};
++
++export function assessReadiness(result: PlanningResult, answeredQuestionIds: readonly string[] = []): ReadinessResult {
++  if (result.kind === "READY_FOR_PLANNING") return { status: "READY_FOR_PLANNING", questions: [], reasons: [] };
++  const answered = new Set(answeredQuestionIds);
++  const blockers = result.questions.filter((question) => question.importance === "important" && !answered.has(question.id));
++  return {
++    status: blockers.length ? "NEEDS_DISCOVERY" : "READY_FOR_PLANNING",
++    questions: blockers,
++    reasons: blockers.map((question) => `${question.id}: ${question.prompt} — ${question.reason}`),
++  };
++}
+diff --git a/packages/core/test/planning-result.test.ts b/packages/core/test/planning-result.test.ts
+new file mode 100644
+index 0000000..900515d
+--- /dev/null
++++ b/packages/core/test/planning-result.test.ts
+@@ -0,0 +1,33 @@
++import { describe, expect, it } from "vitest";
++import { parsePlanningResult } from "@agentic-dev-runner/core";
++
++const question = { id: "database", prompt: "Which database?", reason: "It sets the persistence boundary.", importance: "important", choices: ["SQLite", "PostgreSQL"] };
++const milestone = { id: "M1", title: "Foundation", completionCriteria: ["The app builds."] };
++const task = { id: "T1", title: "Create project", milestone: "M1" };
++
++describe("parsePlanningResult", () => {
++  it("parses both version-1 result variants", () => {
++    expect(parsePlanningResult({ version: 1, kind: "NEEDS_DISCOVERY", questions: [question] })).toEqual({ ok: true, value: { version: 1, kind: "NEEDS_DISCOVERY", questions: [question] } });
++    expect(parsePlanningResult({ version: 1, kind: "READY_FOR_PLANNING", milestones: [milestone], tasks: [task] })).toEqual({ ok: true, value: { version: 1, kind: "READY_FOR_PLANNING", milestones: [milestone], tasks: [task] } });
++  });
++
++  it("rejects unknown versions and result kinds", () => {
++    expect(parsePlanningResult({ version: 2, kind: "NEEDS_DISCOVERY", questions: [question] }).ok).toBe(false);
++    expect(parsePlanningResult({ version: 1, kind: "UNKNOWN" }).ok).toBe(false);
++  });
++
++  it("reports malformed and empty questions and missing choices", () => {
++    const empty = parsePlanningResult({ version: 1, kind: "NEEDS_DISCOVERY", questions: [] });
++    expect(empty.ok).toBe(false);
++    if (!empty.ok) expect(empty.issues).toContain("planning result.questions: must contain at least one question");
++    const malformed = parsePlanningResult({ version: 1, kind: "NEEDS_DISCOVERY", questions: [{ ...question, prompt: " ", choices: [] }] });
++    expect(malformed.ok).toBe(false);
++    if (!malformed.ok) expect(malformed.issues.join(" ")).toContain("choices");
++  });
++
++  it("requires milestone completion criteria", () => {
++    const result = parsePlanningResult({ version: 1, kind: "READY_FOR_PLANNING", milestones: [{ id: "M1", title: "Foundation", completionCriteria: [] }], tasks: [task] });
++    expect(result.ok).toBe(false);
++    if (!result.ok) expect(result.issues.join(" ")).toContain("completionCriteria");
++  });
++});
+diff --git a/packages/core/test/readiness.test.ts b/packages/core/test/readiness.test.ts
+new file mode 100644
+index 0000000..97110cf
+--- /dev/null
++++ b/packages/core/test/readiness.test.ts
+@@ -0,0 +1,22 @@
++import { describe, expect, it } from "vitest";
++import { assessReadiness, type PlanningResult } from "@agentic-dev-runner/core";
++
++const needsDiscovery: PlanningResult = { version: 1, kind: "NEEDS_DISCOVERY", questions: [
++  { id: "database", prompt: "Which database?", reason: "It sets the persistence boundary.", importance: "important", choices: ["SQLite", "PostgreSQL"] },
++  { id: "button-color", prompt: "Which button color?", reason: "It affects a reversible visual detail.", importance: "low-risk", choices: ["Blue", "Green"] },
++] };
++
++describe("assessReadiness", () => {
++  it("does not repeat answered questions and does not block on low-risk details", () => {
++    expect(assessReadiness(needsDiscovery, ["database"])).toEqual({ status: "READY_FOR_PLANNING", questions: [], reasons: [] });
++  });
++
++  it("reports important unanswered decisions as inspectable blockers", () => {
++    expect(assessReadiness(needsDiscovery, [])).toEqual({ status: "NEEDS_DISCOVERY", questions: [needsDiscovery.questions[0]], reasons: ["database: Which database? — It sets the persistence boundary."] });
++  });
++
++  it("accepts a defined project without low-risk implementation questions", () => {
++    const ready: PlanningResult = { version: 1, kind: "READY_FOR_PLANNING", milestones: [{ id: "M1", title: "Build", completionCriteria: ["Build succeeds."] }], tasks: [{ id: "T1" }] };
++    expect(assessReadiness(ready)).toEqual({ status: "READY_FOR_PLANNING", questions: [], reasons: [] });
++  });
++});

@@ -110,16 +110,21 @@
 - Create: `packages/cli/test/planning-files.test.ts`
 - Create: `packages/cli/test/planner.test.ts`
 - Modify: `packages/cli/src/application/app-services.ts`
+- Modify: `packages/agents/src/runtime/agent-runtime.ts`
+- Modify: `packages/agents/src/adapters/codex/codex-adapter.ts`
+- Modify: `packages/agents/src/adapters/opencode/opencode-adapter.ts`
+- Modify: `packages/agents/test/codex-adapter.test.ts`
+- Modify: `packages/agents/test/opencode-adapter.test.ts`
 
 **Interfaces:**
 - Consumes: `PlanningInput`, parsed readiness/plan results, normalized tasks, configured planning profile, and existing agent runtime.
 - Produces: `.agentic/decisions.md`, `.agentic/plans/<plan-id>/{plan.json,summary.md,input.json}`, stable plan IDs, bounded planner repair, and planner invocation isolated at the analyzed base revision.
 
-- [ ] Add file tests for empty-repository question creation, preserving existing answers, stable serialization/digest, edited draft reads, and cleanup after planner failure.
-- [ ] Add fake-runtime tests for questions, valid plan, malformed response repair success/exhaustion, and no source integration.
-- [ ] Run focused CLI planning tests and confirm new cases fail.
-- [ ] Implement file-backed draft/decision storage with stable question-ID headings and answer fields; reuse `PlanningInput.answeredQuestionIds` to suppress already-answered questions, then invoke the planner again to get a plan once readiness is satisfied. Reuse the existing GitManager/AgentRuntime at the analyzed base revision; allow the planner to write only its draft output and do not integrate source edits. Do not add a persistence table for human-editable planning files.
-- [ ] Run the focused tests and confirm they pass.
+- [x] Add file tests for empty-repository question creation, preserving existing answers, stable serialization/digest, edited draft reads, and cleanup after planner failure.
+- [x] Add fake-runtime tests for questions, valid plan, malformed response repair success/exhaustion, read-only enforcement, and no source integration.
+- [x] Run focused CLI planning tests and confirm new cases fail.
+- [x] Implement file-backed draft/decision storage with stable question-ID headings and answer fields; reuse `PlanningInput.answeredQuestionIds` to suppress already-answered questions, then invoke the planner again to get a plan once readiness is satisfied. Reuse the existing GitManager/AgentRuntime at the analyzed base revision; enforce provider-level read-only mode for planning and do not integrate source edits. Do not add a persistence table for human-editable planning files.
+- [x] Run the focused tests and confirm they pass.
 
 ### Task 6: Add analyze/plan/plan-show CLI services and readable preview
 
@@ -137,7 +142,7 @@
 - Create: `packages/cli/test/planning-cli.test.ts`
 
 **Interfaces:**
-- Produces: `agentic analyze`, `agentic plan --goal <text>`, `agentic plan show [<plan-id>]`; analyze reports bounded findings/readiness, plan writes questions or a validated draft, show summarizes milestones, tasks, parallelizable count, approval gates, and task details.
+- Produces: `agentic analyze`, `agentic plan --goal <text>`, `agentic plan show [<plan-id>]`; analyze reports bounded findings/readiness, plan writes questions or a validated draft, show summarizes milestones, tasks, parallelizable count, approval gates, task details, and path/resource scheduling conflict warnings.
 
 - [ ] Add parser tests for exact commands, missing goal/plan ID, and invalid extra arguments.
 - [ ] Add command/service tests for analyze, question output, summary output, and nonzero failures.
@@ -159,27 +164,29 @@
 
 **Interfaces:**
 - Consumes: editable normalized draft from Task 5 and `RunnerStore.transaction/putTask/appendEvents`.
-- Produces: `agentic plan approve <plan-id>` that revalidates, checks collisions, imports all tasks and one `plan.approved` event atomically, then writes an approved marker; duplicate approval is rejected.
+- Produces: `agentic plan approve <plan-id>` that revalidates, checks collisions, and atomically imports all tasks with one authoritative `plan.approved` event; duplicate approval is rejected from durable event state.
 
-- [ ] Add tests for invalid edit, duplicate task IDs, atomic rollback, successful approval event/task persistence, unapproved non-executability, and repeated approval.
-- [ ] Run focused approval tests and confirm failures.
-- [ ] Implement application approval using one existing store transaction; use the durable event to detect an already approved plan before writing its filesystem marker.
-- [ ] Run focused approval, persistence, scheduler, and CLI E2E tests; all must pass.
+- [x] Add tests for invalid edit, duplicate task IDs, atomic rollback, successful approval event/task persistence, unapproved non-executability, and repeated approval.
+- [x] Run focused approval tests and confirm failures.
+- [x] Implement application approval using one existing store transaction; use the durable event as the sole approval record so no post-commit marker write can fail.
+- [x] Run focused approval, persistence, scheduler, and CLI E2E tests; all must pass.
 
 ### Task 8: Prove generated plans use the existing execution lifecycle
 
 **Files:**
 - Create: `packages/cli/test/planned-task-execution-e2e.test.ts`
-- Modify: `packages/cli/test/fixtures/fake-opencode-coding-agent.mjs` only if its current protocol cannot serve a fake planner response.
+- Modify: `packages/cli/test/fixtures/fake-opencode-dag-agent.mjs` to serve planner responses and TODO task implementations.
+- Modify: `packages/cli/src/application/store-backed-app-service.ts` so planning initializes/reconciles the lazy store before reading tasks.
+- Modify: `packages/cli/test/planning-cli.test.ts` to model the startup recovery interface used by planning.
 
 **Interfaces:**
 - Consumes: plan generation and approval CLI/application services from Tasks 5–7.
 - Produces: an automated fake-agent flow from goal through questions, plan approval, scheduler execution, verification, and integrated DONE state.
 
-- [ ] Add a small end-to-end test with two dependent tasks and a questions-first planning result; assert no task exists before approval and both tasks reach DONE after approval and run.
-- [ ] Run the focused test and confirm it fails before wiring is complete.
-- [ ] Reuse the existing fake agent and execution fixtures; add no second scheduler or special planner execution path.
-- [ ] Run the focused end-to-end test and existing `multi-task-dag-e2e.test.ts`.
+- [x] Add a small end-to-end test with two dependent tasks and a questions-first planning result; assert no task exists before approval and both tasks reach DONE after approval and run.
+- [x] Run the focused test and confirm it fails before wiring is complete.
+- [x] Reuse the existing fake agent and execution fixtures; add no second scheduler or special planner execution path.
+- [x] Run the focused end-to-end test and existing `multi-task-dag-e2e.test.ts`.
 
 ### Task 9: Run the planning workstream checks
 

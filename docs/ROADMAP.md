@@ -1,4 +1,4 @@
-# Agentic Dev Runner V0.1 Roadmap
+# Agentic Dev Runner V0.1 Technical Preview Roadmap
 
 ## M1 — Foundation
 
@@ -36,14 +36,14 @@
 - M016 — Read project configuration
 - M017 — Load `AGENTS.md`
 - M018 — Discover project documentation
-- M019 — Implement readiness analysis (Deferred to v0.2)
-- M020 — Generate missing-context questions (Deferred to v0.2)
-- M021 — Persist user decisions (Deferred to v0.2)
-- M022 — Generate bounded milestones (Deferred to v0.2)
-- M023 — Generate small tasks (Deferred to v0.2)
-- M024 — Build/validate dependency DAG (Deferred to v0.2)
-- M025 — Detect oversized tasks (Deferred to v0.2)
-- M026 — Validate task provenance (Deferred to v0.2)
+- M019 — Implement readiness analysis (v0.1 launch scope)
+- M020 — Generate missing-context questions (v0.1 launch scope)
+- M021 — Persist user decisions (v0.1 launch scope)
+- M022 — Generate bounded milestones (v0.1 launch scope)
+- M023 — Generate small tasks (v0.1 launch scope)
+- M024 — Build/validate dependency DAG (v0.1 launch scope)
+- M025 — Reject oversized plans before approval (v0.1 launch scope)
+- M026 — Validate task provenance (v0.1 launch scope)
 
 ---
 
@@ -116,7 +116,7 @@
 - M061 — Find runnable tasks
 - M062 — Implement deterministic scheduling priority
 - M063 — Implement rule-based agent routing
-- M064 — Add agent fallback/escalation (Deferred to v0.2)
+- M064 — Add automatic alternate-provider fallback (Deferred to v0.2; deterministic tier-floor escalation is in v0.1)
 - M065 — Enforce parallelism limits
 - M066 — Continue independent work after failures
 
@@ -127,8 +127,8 @@
 **Complete when:** the MVP is actually usable.
 
 - M067 — `agentic init`
-- M068 — `agentic analyze` (Deferred to v0.2)
-- M069 — `agentic plan` (Deferred to v0.2)
+- M068 — `agentic analyze` (v0.1 launch scope)
+- M069 — `agentic plan`, `plan show`, and `plan approve` (v0.1 launch scope)
 - M070 — `agentic tasks` (`tasks add`, `tasks` list) — Delivered in v0.1
 - M071 — `agentic run`
 - M072 — `agentic status`
@@ -153,25 +153,15 @@
 - M084 — Provider failure tests (`packages/cli/test/provider-failure-e2e.test.ts`)
 - M085 — Run a real 20+ task project (`packages/cli/test/roadmap-20-tasks-e2e.test.ts` and `docs/DOGFOOD.md`)
 - M086 — Documentation/install guide — Delivered in v0.1
-- M087 — Package V0.1 release — Delivered in v0.1
+- M087 — Package V0.1 release (release gate; see `docs/RELEASE.md`)
 
 ---
 
 ## Deferred to v0.2
 
-v0.1 launches with the proven execution core; deferred items require real usage feedback before design.
+V0.1 Technical Preview / Early Access includes bounded planning, decision-file discovery, explicit approval, and deterministic cheap-first routing. Publication and dogfood gates remain tracked separately.
 
 - **M006 structured logging**: JSON structured logging and log query subsystem.
-- **M019–M026 discovery & autonomous planning**:
-  - M019 — Implement readiness analysis
-  - M020 — Generate missing-context questions
-  - M021 — Persist user decisions
-  - M022 — Generate bounded milestones
-  - M023 — Generate small tasks
-  - M024 — Build/validate dependency DAG
-  - M025 — Detect oversized tasks
-  - M026 — Validate task provenance
-  - `tasks generate`
 - **M031 generic structured outputs**: schema enforcement on arbitrary agent outputs beyond adapter normalization.
 - **M034 token/cost telemetry + `agentic cost` (M077)**: live token counting, cost calculation, and `agentic cost` command.
 - **M037/M038/M040/M041 context extras**:
@@ -179,9 +169,7 @@ v0.1 launches with the proven execution core; deferred items require real usage 
   - M038 — Add contract/ADR relevance discovery
   - M040 — Support agent context requests
   - M041 — Add context-size/token limits
-- **M064 agent fallback/escalation**: dynamic fallback to alternate agents when preferred agent fails.
-- **M068 `agentic analyze`**: repository readiness and context assessment command.
-- **M069 `agentic plan`**: autonomous roadmap and task generation command.
+- **M064 automatic alternate-provider fallback**: switch to a different provider after a route or invocation failure; v0.1 only escalates the required tier and does not silently change provider.
 - **M075 `agentic pause/resume`**: in-flight run pausing and resumed execution.
 
 ---

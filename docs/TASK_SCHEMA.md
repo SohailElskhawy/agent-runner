@@ -238,9 +238,34 @@ large
 
 Complexity is a routing/planning hint, not an engineering-time guarantee.
 
+Generated plans use the same task contract as `agentic tasks add`. Before a
+plan can be approved, the runner validates all task fields, provenance,
+milestones, dependencies, cycles, configured verification names, ID collisions,
+and plan size. A task above medium complexity, with more than five acceptance
+criteria, or with more than eight allowed paths must be split before approval;
+there is no runtime `SPLIT_REQUIRED` task state.
+
 ## Routing Requirements
 
 Tasks should describe required capabilities rather than naming a specific provider whenever possible.
+
+Agent profiles may declare a relative `tier` in project configuration:
+
+```yaml
+agents:
+  profiles:
+    economical-coder:
+      adapter: opencode
+      tier: economy # economy | standard | strong; omitted means standard
+      capabilities: [typescript]
+```
+
+V0.1 chooses the cheapest available profile that satisfies both the task's
+capabilities and its minimum tier. Large or high/critical work requires
+`strong`, medium work requires `standard`, and other work requires `economy`.
+Every failed attempt raises the minimum by one tier, capped at `strong`,
+without increasing `limits.max_attempts`. If no profile meets the floor, the
+runner reports the routing failure instead of silently downgrading.
 
 Prefer:
 
@@ -305,6 +330,7 @@ Project policy may also impose approval regardless of task configuration.
 
 V0.1 approval semantics:
 
+- `agentic plan approve <plan-id>` revalidates an editable draft and imports its tasks plus durable plan approval atomically; unapproved drafts cannot be scheduled.
 - `agentic approve <task-id>` records a durable approval grant for the task.
 - Approval-required tasks stay unrunnable by the unattended scheduler until the grant exists; `agentic retry` is refused for them until then.
 - The grant survives failure and retry; it is not cleared when a task fails or returns to `READY`.
@@ -312,25 +338,9 @@ V0.1 approval semantics:
 
 ## Oversized Task Detection
 
-Status: v0.2 — not implemented in v0.1; `SPLIT_REQUIRED` is not produced yet.
-
-A task should be flagged for decomposition when it contains signals such as:
-
-- multiple independent capabilities
-- unrelated acceptance criteria
-- several subsystem boundaries
-- broad modification scope
-- many logical resources
-- implementation plus unrelated migration/UI/infrastructure work
-- independently rejectable deliverables
-
-The preferred outcome is:
-
-```text
-SPLIT_REQUIRED
-```
-
-before execution begins.
+Whole-plan validation rejects tasks above medium complexity, with over five
+acceptance criteria, or with over eight allowed paths and asks that they be
+split. V0.1 does not create a `SPLIT_REQUIRED` runtime state.
 
 ## Task vs Attempt
 

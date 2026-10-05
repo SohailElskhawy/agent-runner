@@ -83,10 +83,10 @@
 **Interfaces:**
 - Produces: commands to create isolated defined and nearly empty Git repositories under an ignored `.agentic-dogfood/` directory. The defined fixture contains enough written scope for a 10+ task plan; the empty fixture contains only a goal and no decisions. Both configure runner verification with Node's built-in test runner.
 
-- [ ] Add an assert-based fixture self-check for generated repository layout, Git initialization, verification command, and empty-vs-defined contents.
-- [ ] Run the self-check and confirm it fails before the generator exists.
-- [ ] Implement the smallest cross-platform Node script using `node:fs`, `node:path`, `node:os`, and direct `node:child_process` argument arrays.
-- [ ] Run the self-check and verify generated repositories remain ignored by the outer repository.
+- [x] Add an assert-based fixture self-check for generated repository layout, Git initialization, verification command, and empty-vs-defined contents.
+- [x] Run the self-check and confirm it fails before the generator exists.
+- [x] Implement the smallest cross-platform Node script using `node:fs`, `node:path`, `node:os`, and direct `node:child_process` argument arrays.
+- [x] Run the self-check and verify generated repositories remain ignored by the outer repository.
 
 ### Task 4: Run the defined-project real-agent dogfood (L012)
 
@@ -138,4 +138,3 @@
 - [ ] Inspect `.github/workflows/ci.yml`; use CI results for Windows/macOS/Linux and report any missing platform evidence accurately.
 - [ ] Mark each L001–L015 item in `docs/LAUNCH_SPRINT_ROADMAP.md` only after its acceptance evidence exists; leave L016 pending confirmation for each outward action.
 - [ ] Review `git diff`, ensure no generated scratch data or credentials are tracked, and report unresolved release blockers.
-

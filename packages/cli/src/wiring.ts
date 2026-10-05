@@ -39,6 +39,8 @@ export async function createServices(
     worktreesDir: resolveWorktreesDir({ projectRoot: root, stateDir }),
     configuration: appServices.configuration,
     configurationError: appServices.configurationError,
+    analyzeRepository: appServices.analyzeRepository,
+    planRepository: appServices.planRepository,
   });
   return Promise.resolve(service);
 }

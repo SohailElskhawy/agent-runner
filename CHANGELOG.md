@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.1.0 — 2026-09-24
+## Unreleased — v0.1 Technical Preview / Early Access
 
-Initial open-source release.
+The v0.1.0 package version is prepared in source. Public publication and the
+launch verification gates are still pending; this entry is not a release
+announcement.
 
 ### Added
 - Unified workflow execution for single-task and unattended runs, with integration verification before DONE.
@@ -10,6 +12,7 @@ Initial open-source release.
 - `agentic tasks` listing and `agentic doctor` preflight checks.
 - Publishable `agentic-dev-runner` npm package (bundled CLI, Node >= 24).
 - CI matrix for Linux, macOS, and Windows; 20-task roadmap e2e; forced-kill recovery e2e; provider-failure and parallel-stress coverage.
+- Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Deferred to v0.2
-- Autonomous discovery/planning (`analyze`, `plan`, task generation), token/cost telemetry (`cost`), `pause/resume`, structured logging, agent fallback/escalation, and context relevance discovery.
+- Token/cost analytics (`cost`), `pause/resume`, structured logging, automatic alternate-provider fallback, learned routing, and dynamic context relevance discovery.

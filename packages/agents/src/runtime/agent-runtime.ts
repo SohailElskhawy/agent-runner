@@ -13,6 +13,8 @@ export type AgentInvocation = {
   readonly worktreePath: string;
   readonly timeoutMs: number;
   readonly signal?: AbortSignal | undefined;
+  /** Runs with provider-enforced tool restrictions for read-only planning/review. */
+  readonly readOnly?: boolean | undefined;
   /**
    * Provider-independent stage directive (for example, the PLAN stage asks
    * for an implementation plan instead of source implementation). Adapters

@@ -1,4 +1,4 @@
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -144,6 +144,43 @@ describe("OpenCodeAdapter", () => {
     ]);
     expect(report.cwd).toBe(worktreePath);
     expect(report.contextContent).toBe(stableStringify(contextPack));
+  });
+
+  it("loads and cleans a unique read-only agent without overwriting project OpenCode config", async () => {
+    const configDir = join(worktreePath, ".opencode");
+    mkdirSync(configDir, { recursive: true });
+    const projectConfig = join(configDir, "opencode.json");
+    writeFileSync(projectConfig, '{"model":"project/model"}');
+    const configPaths: string[] = [];
+    const agentNames: string[] = [];
+    let args: readonly string[] = [];
+    const inspectingRunner: ProcessRunner = {
+      run: async (spec) => {
+        args = spec.args ?? [];
+        const index = args.indexOf("--agent");
+        const name = args[index + 1] ?? "";
+        const configPath = spec.env?.["OPENCODE_CONFIG"] ?? "";
+        configPaths.push(configPath);
+        agentNames.push(name);
+        expect(configPath).not.toContain(worktreePath);
+        expect(spec.env?.["PATH"]).toBe(process.env.PATH);
+        const config = JSON.parse(readFileSync(configPath, "utf8")) as { agent: Record<string, { permission: Record<string, string> }> };
+        expect(config.agent[name]?.permission).toEqual({ edit: "deny", bash: "deny", task: "deny", skill: "deny" });
+        return runner.run(spec);
+      },
+    };
+    const adapter = new OpenCodeAdapter(inspectingRunner, {
+      executable,
+      launcherArgs: [fixturePath("fake-opencode.mjs")],
+    });
+    expect((await adapter.invoke(makeInvocation({ readOnly: true }))).kind).toBe("success");
+    expect((await adapter.invoke(makeInvocation({ readOnly: true }))).kind).toBe("success");
+    expect(args).toContain("--pure");
+    expect(args).toContain("--agent");
+    expect(new Set(agentNames).size).toBe(2);
+    expect(readFileSync(projectConfig, "utf8")).toBe('{"model":"project/model"}');
+    expect(configPaths.every((path) => !existsSync(path))).toBe(true);
+    expect(existsSync(join(worktreePath, ".opencode", "agents"))).toBe(false);
   });
 
   it("captures stdout and stderr and normalizes success", async () => {

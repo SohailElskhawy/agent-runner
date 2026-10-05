@@ -82,10 +82,10 @@
 **Interfaces:**
 - Produces: `routeTaskAttempt({ task, store, agentProfiles, agents, adapters })`, which reads prior attempts, applies `requiredTierFor`, resolves a runtime, and writes `task.routing.decided` with profile, selected/minimum tier, count, and reason.
 
-- [ ] Add tests proving both execution paths route by the same persisted attempt count and successful selection writes exactly one durable event.
-- [ ] Run focused CLI routing tests and confirm new cases fail.
-- [ ] Implement the helper and replace direct profile selection in both paths; keep store access in application code.
-- [ ] Run focused tests and existing routed-run/workflow E2E tests.
+- [x] Add tests proving both execution paths route by the same persisted attempt count and successful selection writes exactly one durable event.
+- [x] Run focused CLI routing tests and confirm new cases fail.
+- [x] Implement the helper and replace direct profile selection in both paths; keep store access in application code.
+- [x] Run focused tests and existing routed-run/workflow E2E tests.
 
 ### Task 4: Show routing decisions and document tier configuration
 
@@ -98,10 +98,10 @@
 - Consumes: `task.routing.decided` event from Task 3.
 - Produces: a readable inspect line with selected profile/tier and reason; README documents tier behavior and bounded escalation.
 
-- [ ] Add an inspect assertion for a valid routing event and safe behavior for malformed/old event payloads.
-- [ ] Run the focused CLI render test and confirm it fails.
-- [ ] Render routing events in event order and document economy/standard/strong configuration plus retry limits.
-- [ ] Run the inspect/CLI tests and `pnpm --filter @agentic-dev-runner/cli typecheck`.
+- [x] Add an inspect assertion for a valid routing event and safe behavior for malformed/old event payloads.
+- [x] Run the focused CLI render test and confirm it fails.
+- [x] Render routing events in event order and document economy/standard/strong configuration plus retry limits.
+- [ ] Run the inspect/CLI tests and `pnpm --filter @agentic-dev-runner/cli typecheck` (tests pass; typecheck currently fails on unrelated `plan-approval.test.ts` changes).
 
 ### Task 5: Run routing workstream checks
 

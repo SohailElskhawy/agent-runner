@@ -44,26 +44,25 @@ A developer should eventually be able to run:
 ```bash
 agentic init
 agentic analyze
-agentic plan
+agentic plan --goal "..."
+agentic plan show
+agentic plan approve <plan-id>
 agentic run --parallel 3
 agentic status
 ```
 
 The runner:
 
-1. analyzes the project
-2. determines whether sufficient context exists
-3. requests missing decisions when necessary
-4. creates a bounded roadmap
-5. decomposes it into small tasks
-6. builds task dependencies
-7. selects appropriate coding agents
-8. executes tasks in isolated Git worktrees
-9. verifies changes
-10. reviews changes where required
-11. integrates successful work
-12. persists project state
-13. continues with newly unlocked tasks
+1. analyzes bounded project evidence
+2. assesses readiness with the project goal and requests important missing decisions when necessary
+3. uses human-recorded decisions to continue planning
+4. creates a bounded roadmap and task DAG
+5. validates and previews the draft
+6. waits for explicit plan approval
+7. selects the cheapest eligible agent profile meeting the task's tier floor
+8. executes approved tasks in isolated Git worktrees
+9. verifies changes, reviews where required, and integrates successful work
+10. persists state and continues with newly unlocked tasks
 
 ## Product Invariants
 
@@ -178,6 +177,14 @@ Routing may consider:
 
 V0.1 uses deterministic rule-based routing.
 
+Configured profiles may set `tier` to `economy`, `standard`, or `strong`;
+omitted tiers mean `standard`. Routing chooses the cheapest available profile
+that meets a deterministic task floor: `strong` for large/high/critical work,
+`standard` for medium work, and `economy` otherwise. Each failed attempt raises
+the floor by one tier, capped at `strong`; unavailability never triggers a
+silent downgrade. Learned performance routing and provider fallback remain
+future work.
+
 Adaptive routing based on historical performance is a future capability.
 
 ## Git Isolation
@@ -235,14 +242,20 @@ The user should always be able to determine:
 
 ## V0.1 Goal
 
-V0.1 proves reliable execution of a bounded engineering roadmap.
+V0.1 Technical Preview / Early Access covers the complete local workflow from
+repository and goal through analysis, lightweight discovery when needed,
+validated bounded planning, explicit approval, and reliable execution of the
+approved roadmap. Release and dogfood gates are tracked separately and are not
+implied complete by this scope statement.
 
 It must support:
 
 - existing local Git projects
 - project documentation ingestion
 - project readiness analysis
+- human-edited discovery decisions when important context is missing
 - bounded task planning
+- whole-plan validation and explicit approval before import/execution
 - durable task state
 - isolated worktrees
 - interchangeable agent adapters
@@ -251,7 +264,7 @@ It must support:
 - atomic integration
 - crash recovery
 - basic scheduling
-- basic routing
+- cheap-first deterministic tier routing and bounded escalation
 - progress reporting
 
 ## V0.1 Non-Goals
@@ -271,28 +284,12 @@ V0.1 does not require:
 - sophisticated ETA prediction
 - fully autonomous product design
 
-## Initial Vertical Slice
-
-Before implementing the full V0.1 roadmap, the first system milestone is:
-
-> Execute one manually defined engineering task from start to finish.
-
-The system must be able to:
-
-```text
-load task
-→ persist task state
-→ create isolated worktree
-→ construct fresh context
-→ invoke one coding agent
-→ inspect resulting change
-→ run verification
-→ create an atomic commit
-→ integrate the change
-→ persist DONE
-```
-
-This vertical slice establishes the execution foundation before planning, multi-agent routing, discovery, and parallelism are added.
+Manual task JSON ingestion remains available for advanced users. `tasks add`
+validates each task against the task schema, then manual tasks share the
+execution scheduler, worktree, verification, recovery, and integration
+lifecycle. Whole-plan DAG validation and `plan approve` apply only to generated
+plan drafts; per-task `approval.required` policy remains independently
+available for manual tasks.
 
 ## Success Definition
 

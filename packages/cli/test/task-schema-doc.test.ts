@@ -3,12 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { validateManualTaskInput } from "@agentic-dev-runner/core";
+import {
+  validateManualTaskInput,
+  validateProjectConfiguration,
+} from "@agentic-dev-runner/core";
 import { parseProjectConfigYaml } from "@agentic-dev-runner/config";
 import { readTaskFile } from "../src/application/task-file.js";
+import { parseArgs, USAGE } from "../src/parse-args.js";
 
 const DOC_PATH = fileURLToPath(
   new URL("../../../docs/TASK_SCHEMA.md", import.meta.url),
+);
+const README_PATH = fileURLToPath(
+  new URL("../../../README.md", import.meta.url),
 );
 
 const YAML_BLOCK_PATTERN = /```yaml\n([\s\S]*?)```/g;
@@ -135,4 +142,92 @@ describe("TASK_SCHEMA.md fragment examples stay valid in task context", () => {
       ).toBe(true);
     },
   );
+});
+
+describe("launch documentation matches current CLI and config contracts", () => {
+  it("documents only commands listed in CLI help", () => {
+    const readme = readFileSync(README_PATH, "utf8");
+    const reference =
+      readme.split("## Command reference")[1]?.split("## How it works")[0] ?? "";
+    const commands = [...reference.matchAll(/^\| `(agentic [^`]+)` \|/gm)].map(
+      (match) => match[1] ?? "",
+    );
+    expect(commands.length).toBeGreaterThan(0);
+    for (const command of commands) expect(USAGE).toContain(command);
+  });
+
+  it("installs from source and uses the CLI from the target project", () => {
+    const readme = readFileSync(README_PATH, "utf8");
+    const install = readme.split("## Install")[1]?.split("## Quickstart")[0] ?? "";
+    const quickstart =
+      readme.split("## Quickstart")[1]?.split("## Command reference")[0] ?? "";
+    expect(install).toContain("pnpm --filter agentic-dev-runner build");
+    expect(install).toContain(
+      "npm install --global ./packages/agentic-dev-runner",
+    );
+    expect(install).toContain(
+      "node packages/agentic-dev-runner/bundle/main.js help",
+    );
+    expect(quickstart).toContain("agentic init");
+    expect(quickstart).toContain("agentic plan --goal");
+    expect(quickstart).not.toContain("packages/agentic-dev-runner/bundle/main.js");
+  });
+
+  it("separates generated-file cleanup from plan approval before execution", () => {
+    const readme = readFileSync(README_PATH, "utf8");
+    const quickstart =
+      readme.split("## Quickstart")[1]?.split("## Command reference")[0] ?? "";
+    const approved = quickstart.indexOf("plan approve <plan-id>");
+    const cleanCheckout = quickstart.indexOf("git status --short");
+    const execution = quickstart.indexOf("run --parallel 3");
+    expect(quickstart).toContain("Plan approval authorizes the tasks");
+    expect(quickstart).toContain("requires a clean Git");
+    expect(approved).toBeGreaterThanOrEqual(0);
+    expect(cleanCheckout).toBeGreaterThan(approved);
+    expect(execution).toBeGreaterThan(cleanCheckout);
+  });
+
+  it.each([
+    ["analyze", ["analyze"]],
+    ["plan", ["plan", "--goal", "Build a small app"]],
+    ["plan show", ["plan", "show"]],
+    ["plan approve", ["plan", "approve", "plan-123"]],
+  ] as const)("README documents the supported %s command", (label, args) => {
+    const readme = readFileSync(README_PATH, "utf8");
+    expect(parseArgs(args).name).toBe(
+      label === "analyze" ? "analyze" : "plan",
+    );
+    expect(USAGE).toContain(`agentic ${label}`);
+    expect(readme).toContain(`agentic ${label}`);
+  });
+
+  it("documents a tier profile accepted by the project configuration validator", () => {
+    const tierExample = yamlBlocks().find((block) => block.includes("economical-coder"));
+    expect(tierExample).toBeDefined();
+    const parsed = parseProjectConfigYaml(
+      `verification:
+  checks:
+    unit:
+      command: node
+      args: []
+${tierExample ?? ""}`,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const config = validateProjectConfiguration(parsed.value);
+    expect(config.ok).toBe(true);
+    if (config.ok) expect(config.value.agentProfiles[0]?.tier).toBe("economy");
+  });
+
+  it("quickstart config selects a configured planning profile", () => {
+    const readme = readFileSync(README_PATH, "utf8");
+    const example = readme.match(/```yaml\n([\s\S]*?)```/)?.[1];
+    expect(example).toBeDefined();
+    const parsed = parseProjectConfigYaml(example ?? "");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const config = validateProjectConfiguration(parsed.value);
+    expect(config.ok).toBe(true);
+    if (config.ok) expect(config.value.planningProfileId).toBe("opencode");
+  });
 });

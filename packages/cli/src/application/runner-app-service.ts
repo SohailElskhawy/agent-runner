@@ -5,11 +5,15 @@ import type {
   WorkflowTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type { DoctorReport } from "./doctor.js";
+import type { PlanningInput } from "@agentic-dev-runner/core";
 import type {
   AddTaskResult,
   AgentStatusEntry,
   ApprovalCommandResult,
   InitResult,
+  PlanPreview,
+  PlanApprovalResult,
+  PlanningCommandResult,
   ProjectStatus,
   RetryCommandResult,
   RunResult,
@@ -39,6 +43,10 @@ export interface RunnerAppService {
   inspect(taskId: TaskId): Promise<TaskInspection | null>;
   listAgents(): Promise<readonly AgentStatusEntry[]>;
   doctor(): Promise<DoctorReport>;
+  analyze?(): Promise<PlanningInput>;
+  plan?(goal: string): Promise<PlanningCommandResult>;
+  showPlan?(planId?: string): Promise<PlanPreview | null>;
+  approvePlan?(planId: string): Promise<PlanApprovalResult>;
   close(): Promise<void>;
 }
 

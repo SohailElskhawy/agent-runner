@@ -1,6 +1,6 @@
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildContextPack, stableStringify, type Task } from "@agentic-dev-runner/context";
@@ -78,6 +78,7 @@ type FakeAgentReport = {
   argv: string[];
   cwd: string;
   contextContent: string | null;
+  contextPath: string | null;
 };
 
 describe("CodexAdapter", () => {
@@ -151,6 +152,21 @@ describe("CodexAdapter", () => {
     ]);
     expect(report.cwd).toBe(worktreePath);
     expect(report.contextContent).toBe(stableStringify(contextPack));
+  });
+
+  it("uses Codex read-only sandbox when requested", async () => {
+    const result = await makeAdapter().invoke(makeInvocation({ readOnly: true }));
+    expect(result.kind).toBe("success");
+    const report = JSON.parse(result.kind === "success" ? result.output.stdout ?? "" : "") as FakeAgentReport;
+    expect(report.argv.slice(0, 3)).toEqual(["exec", "--sandbox", "read-only"]);
+  });
+
+  it("makes the context pack readable inside the read-only worktree and removes it afterward", async () => {
+    const result = await makeAdapter().invoke(makeInvocation({ readOnly: true }));
+    expect(result.kind).toBe("success");
+    const report = JSON.parse(result.kind === "success" ? result.output.stdout ?? "" : "") as FakeAgentReport;
+    expect(relative(worktreePath, report.contextPath as string)).not.toMatch(/^\.\.(?:[/\\]|$)/);
+    expect(existsSync(report.contextPath as string)).toBe(false);
   });
 
   it("captures stdout and stderr and normalizes success", async () => {

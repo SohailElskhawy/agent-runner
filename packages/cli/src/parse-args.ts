@@ -10,6 +10,10 @@ export type ParsedCommand =
   | { readonly name: "retry"; readonly taskId: string }
   | { readonly name: "tasks"; readonly action: "list" }
   | { readonly name: "tasks"; readonly action: "add"; readonly taskFile: string }
+  | { readonly name: "analyze" }
+  | { readonly name: "plan"; readonly goal: string }
+  | { readonly name: "plan"; readonly action: "show"; readonly planId?: string }
+  | { readonly name: "plan"; readonly action: "approve"; readonly planId: string }
   | { readonly name: "doctor" }
   | { readonly name: "agents" }
   | { readonly name: "help" }
@@ -24,6 +28,8 @@ export const KNOWN_COMMANDS = [
   "approve",
   "retry",
   "tasks",
+  "analyze",
+  "plan",
   "doctor",
   "agents",
   "help",
@@ -54,6 +60,11 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return { name: "retry", taskId: requireTaskId(command, rest) };
     case "tasks":
       return parseTasksCommand(rest);
+    case "analyze":
+      requireNoExtraArguments(command, rest);
+      return { name: "analyze" };
+    case "plan":
+      return parsePlanCommand(rest);
     case "doctor":
       requireNoExtraArguments(command, rest);
       return { name: "doctor" };
@@ -180,6 +191,26 @@ function parseRunTaskId(rest: readonly string[], parallel: number | undefined): 
   return { name: "run", taskId };
 }
 
+function parsePlanCommand(rest: readonly string[]): ParsedCommand {
+  if (rest[0] === "show") {
+    const planId = rest[1];
+    if (rest.length > 2) throw new CliError('command "plan show" accepts at most one <plan-id> argument');
+    if (planId !== undefined && planId.trim().length === 0) throw new CliError('command "plan show" does not accept an empty <plan-id>');
+    return planId === undefined ? { name: "plan", action: "show" } : { name: "plan", action: "show", planId };
+  }
+  if (rest[0] === "approve") {
+    const planId = rest[1];
+    if (planId === undefined || planId.trim().length === 0) throw new CliError('command "plan approve" requires a <plan-id> argument');
+    if (rest.length > 2) throw new CliError('command "plan approve" accepts exactly one <plan-id> argument');
+    return { name: "plan", action: "approve", planId };
+  }
+  if (rest[0] !== "--goal") throw new CliError('command "plan" requires --goal <text> or "plan show [<plan-id>]"');
+  const goal = rest[1];
+  if (goal === undefined || goal.trim().length === 0) throw new CliError('command "plan" requires a non-empty value for --goal');
+  if (rest.length > 2) throw new CliError('command "plan --goal" accepts exactly one <text> argument');
+  return { name: "plan", goal };
+}
+
 const TASKS_SUBCOMMANDS = ["add"] as const;
 
 function parseTasksCommand(rest: readonly string[]): ParsedCommand {
@@ -222,6 +253,10 @@ export const USAGE = `Usage:
   agentic approve <task-id>
   agentic retry <task-id>
   agentic tasks [add <task-file>]
+  agentic analyze
+  agentic plan --goal <text>
+  agentic plan show [<plan-id>]
+  agentic plan approve <plan-id>
   agentic doctor
   agentic agents
   agentic help

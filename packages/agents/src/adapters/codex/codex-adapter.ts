@@ -1,5 +1,4 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessResult, ProcessRunner, ProcessSpec } from "@agentic-dev-runner/platform";
 import { stableStringify } from "@agentic-dev-runner/context";
@@ -65,7 +64,7 @@ export class CodexAdapter implements AgentRuntime {
       throw new CodexAdapterError("timeoutMs must be a positive finite number");
     }
 
-    const contextDir = await mkdtemp(join(tmpdir(), CONTEXT_DIR_PREFIX));
+    const contextDir = await mkdtemp(join(invocation.worktreePath, CONTEXT_DIR_PREFIX));
     try {
       const contextPackPath = join(contextDir, CONTEXT_FILE_NAME);
       await writeFile(
@@ -81,6 +80,7 @@ export class CodexAdapter implements AgentRuntime {
           ...buildExecArgs({
             model: invocation.agent.model ?? this.options.model,
             prompt: buildPrompt(contextPackPath, invocation.instruction),
+            readOnly: invocation.readOnly === true,
           }),
         ],
         cwd: invocation.worktreePath,
@@ -122,8 +122,9 @@ async function removeContextDir(path: string): Promise<void> {
 function buildExecArgs(input: {
   model?: string | undefined;
   prompt: string;
+  readOnly: boolean;
 }): string[] {
-  const args = ["exec", "--sandbox", "workspace-write"];
+  const args = ["exec", "--sandbox", input.readOnly ? "read-only" : "workspace-write"];
   if (input.model !== undefined) {
     args.push("--model", input.model);
   }

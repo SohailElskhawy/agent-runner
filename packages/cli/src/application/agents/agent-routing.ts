@@ -17,6 +17,7 @@
 import type {
   AgentProfile,
   AgentRouteRejection,
+  AgentTier,
 } from "@agentic-dev-runner/core";
 import { selectAgentProfile } from "@agentic-dev-runner/core";
 import type {
@@ -42,6 +43,7 @@ export type ResolveRoutedAgentInput = {
   readonly agentProfiles: readonly AgentProfile[];
   readonly agents: AgentRegistry;
   readonly adapters: AgentAdapterRegistry;
+  readonly minimumTier?: AgentTier | undefined;
 };
 
 export async function resolveRoutedAgent(
@@ -63,6 +65,7 @@ export async function resolveRoutedAgent(
       profile,
       availability: availabilityForProfile(profile, availabilityById),
     })),
+    ...(input.minimumTier === undefined ? {} : { minimumTier: input.minimumTier }),
   });
 
   if (!route.selected) {
@@ -118,6 +121,9 @@ function describeNoRoute(
       return availabilityById.has(adapterId)
         ? `profile "${rejection.profileId}" cannot run because its adapter "${adapterId}" is unavailable`
         : `profile "${rejection.profileId}" references unknown adapter "${adapterId}" with no discovery result`;
+    }
+    if (rejection.reason === "below-minimum-tier") {
+      return `profile "${rejection.profileId}" has tier "${rejection.tier}" below required minimum "${rejection.minimumTier}"`;
     }
     return `profile "${rejection.profileId}" is missing required capabilities: ${rejection.missingCapabilities.join(", ")}`;
   });

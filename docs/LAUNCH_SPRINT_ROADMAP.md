@@ -1,6 +1,7 @@
 # Agentic Dev Runner — Launch Sprint Roadmap
 
-**Target release:** Sunday, September 27, 2026  
+**Sprint target:** Sunday, September 27, 2026 (elapsed; verification status reviewed September 30, 2026)
+
 **Release type:** v0.1 Technical Preview / Early Access
 
 ## Product Goal
@@ -54,7 +55,7 @@ The planner may propose a roadmap, but once the developer approves it, Agentic D
 
 ## Launch-Sprint Scope
 
-This sprint is deliberately narrow. The goal is not to finish every future capability. The goal is to ship the first complete version of the product idea:
+This sprint is deliberately narrow. The goal is not to finish every future capability. The goal is to validate the first complete version of the product idea:
 
 > repository + goal → analyze → plan → approve → hands-free execution
 
@@ -535,6 +536,47 @@ Publish the first public Technical Preview.
 - next roadmap starts after release rather than expanding this sprint
 
 ---
+
+# Execution Status and Evidence
+
+**Reviewed:** September 30, 2026
+
+| Task | Status | Evidence |
+|---|---|---|
+| L001 | Complete | Product, architecture, scope, roadmap, task schema, release, and onboarding docs align on Technical Preview / Early Access. |
+| L002 | Complete | Provider-independent planning input and persistence are covered by planning tests. |
+| L003 | Complete | `agentic analyze` was exercised on the established project and nearly empty TODO fixture; bounded evidence is reported. |
+| L004 | Complete | Readiness tests cover `READY_FOR_PLANNING` and `NEEDS_DISCOVERY`. |
+| L005 | Complete | Empty-project dogfood asked a storage decision and persisted the answer before replanning. |
+| L006 | Complete | Planner generated inspectable bounded plans for both TODO fixtures. |
+| L007 | Complete | Generated plans passed task validation; the defined-project plan contained 10 tasks. |
+| L008 | Complete | DAG validation and rejection cases are covered by planning tests. |
+| L009 | Complete | Plan preview and durable approval were exercised in both live dogfood runs. |
+| L010 | Complete | Approved plans used the existing scheduler, verification, worktree, and integration flow. |
+| L011 | Complete | Cheap-first routing, bounded escalation, and inspect output are covered by tests; live runs recorded routing decisions. |
+| L012 | Complete | 10-task defined-project Codex dogfood finished with 10 DONE tasks and 10 completed integrations. See [DOGFOOD.md](DOGFOOD.md#planning-and-todo-app-dogfood-l012l013). |
+| L013 | Complete | Empty-project discovery, one-task Codex execution, integration verification, unit test, and Chromium interaction check passed. See [DOGFOOD.md](DOGFOOD.md#nearly-empty-project-l013). |
+| L014 | Complete | README quickstart, CLI help, planning preview, and operator commands are documented and covered by CLI tests. |
+| L015 | Open | Local lint, typecheck, build, full workspace tests, provider-failure/recovery/parallel stress suites, and packed install smoke passed. The live 20-task Codex run reached 20 DONE with 20 task commits, but T09 used direct execution, leaving 19 of 20 tasks in the serialized queue. Windows/macOS/Linux CI, a complete 20-entry queue run, and successful live execution through a second adapter remain outstanding. |
+| L016 | Pending | Wait for L015 and separate explicit authorization before pushing, tagging, publishing the GitHub release, or publishing to npm. |
+
+## Local Release Verification
+
+| Check | Result |
+|---|---|
+| `pnpm lint` | Pass |
+| `pnpm typecheck` | Pass |
+| `pnpm build` | Pass |
+| `AGENTIC_PACK_SMOKE=1 pnpm test` | Pass, including packed-install smoke |
+| `node scripts/dogfood/todo-app-fixture.mjs --check` | Pass |
+| Windows / macOS / Linux CI | Not run for this worktree |
+| Live 20-task real-agent dogfood | Partial: 20 DONE, 20 task commits, 40 tests pass; 19 completed queue entries, one task used direct execution |
+| Second live agent adapter | Not verified; Codex passed, but OpenCode Go quota was exhausted and no OpenCode task completed |
+
+The launch sprint implementation and both TODO dogfood paths have local
+evidence. Release verification remains open until cross-platform CI, successful
+live execution through a second adapter, and the complete 20-entry queue gate
+have results.
 
 # Target CLI Experience
 

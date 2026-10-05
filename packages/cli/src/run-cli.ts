@@ -9,6 +9,10 @@ import {
   executeApproveCommand,
   executeDoctorCommand,
   executeInitCommand,
+  executeAnalyzeCommand,
+  executePlanCommand,
+  executePlanShowCommand,
+  executePlanApproveCommand,
   executeInspectCommand,
   executeRetryCommand,
   executeRunCommand,
@@ -66,6 +70,8 @@ export async function runCli(
       case "approve":
       case "retry":
       case "tasks":
+      case "analyze":
+      case "plan":
       case "doctor":
       case "agents":
         return await withServices(
@@ -96,6 +102,15 @@ export async function runCli(
                   return command.action === "add"
                     ? await executeAddTaskCommand(command.taskFile, services, io)
                     : await executeTasksListCommand(services, io);
+                case "analyze":
+                  return await executeAnalyzeCommand(services, io);
+                case "plan":
+                  if ("action" in command) {
+                    return command.action === "show"
+                      ? await executePlanShowCommand(command.planId, services, io)
+                      : await executePlanApproveCommand(command.planId, services, io);
+                  }
+                  return await executePlanCommand(command.goal, services, io);
                 case "doctor":
                   return await executeDoctorCommand(services, io);
                 case "agents":

@@ -89,6 +89,8 @@ export type RunnableTaskSelectionInput = {
    * this selection never reads persistence.
    */
   readonly attemptCounts: ReadonlyMap<TaskId, number>;
+  /** Count of prior failed or timed-out attempts, used only for tier escalation. */
+  readonly failedAttemptCounts?: ReadonlyMap<TaskId, number>;
   /**
    * Agent routing candidates: each profile joined with its externally
    * discovered adapter availability, in the caller's deterministic order.
@@ -144,7 +146,10 @@ function firstIneligibilityOf(
   const route = selectAgentProfile({
     requiredCapabilities: task.routing.capabilities,
     candidates: input.agentCandidates,
-    minimumTier: requiredTierFor(task, attempts),
+    minimumTier: requiredTierFor(
+      task,
+      input.failedAttemptCounts?.get(task.id) ?? 0,
+    ),
   });
   if (!route.selected) {
     return { reason: "no-eligible-agent", rejections: route.rejections };

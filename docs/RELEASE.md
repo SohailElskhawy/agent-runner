@@ -1,6 +1,8 @@
 # Release Checklist and Procedure
 
-This document defines the release checklist, exact commands, evidence gates, and rollback procedures for `agentic-dev-runner` v0.1.0 and subsequent releases.
+This document defines verification and external-action gates for the v0.1
+Technical Preview / Early Access and subsequent releases. The `0.1.0` source
+version does not mean the package is published or the launch gates have passed.
 
 > **Important**: Publishing to npm, pushing Git tags, and creating GitHub releases are external actions with irreversible side effects. They must **never** be performed autonomously by an agent without explicit human approval at execution time.
 
@@ -9,6 +11,10 @@ This document defines the release checklist, exact commands, evidence gates, and
 ## Pre-Release Verification Gates
 
 Before publishing or tagging, all of the following evidence gates must be verified:
+
+Passing a local command does not complete a release gate until its result and
+commit are recorded. Keep unresolved CI, provider, dogfood, and platform
+checks explicit in `docs/LAUNCH_SPRINT_ROADMAP.md` and `docs/DOGFOOD.md`.
 
 ### 1. CI Green on All Platforms
 Verify that the release commit passes CI on all three supported operating systems:
@@ -38,7 +44,9 @@ $env:AGENTIC_PACK_SMOKE = "1"; pnpm --filter agentic-dev-runner test
 ---
 
 ### 3. Dogfood Verification
-Verify that `docs/DOGFOOD.md` contains the 20-task roadmap execution specification and transcript notes.
+Verify that `docs/DOGFOOD.md` records both the 20-task execution check and the
+defined-project and nearly-empty TODO dogfood outcomes. Automated fake-agent
+tests are not evidence of a successful real-provider dogfood run.
 To execute the automated 20-task DAG suite locally:
 ```bash
 pnpm test packages/cli/test/roadmap-20-tasks-e2e.test.ts

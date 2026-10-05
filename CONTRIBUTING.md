@@ -10,6 +10,7 @@ Before you start, read:
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — architecture invariants that must be preserved.
 - [`docs/ADRS.md`](./docs/ADRS.md) — approved decisions; architecture and ADRs take precedence over convenience.
 - [`docs/V0.1_SCOPE.md`](./docs/V0.1_SCOPE.md) — what is in and out of scope for v0.1.
+- [`docs/LAUNCH_SPRINT_ROADMAP.md`](./docs/LAUNCH_SPRINT_ROADMAP.md) — launch acceptance criteria and evidence status.
 
 ## Requirements
 
@@ -31,6 +32,10 @@ directly while developing:
 ```bash
 node packages/agentic-dev-runner/bundle/main.js --help
 ```
+
+For planning changes, verify `analyze`, `plan --goal`, `plan show`, and
+`plan approve` alongside the manual `tasks add` path. Planning drafts require
+explicit approval before entering the existing execution scheduler.
 
 ## Verification commands
 

@@ -5,9 +5,9 @@
  *
  * Routing order per task:
  * 1. read the task and resolve its `workflow` definition
- * 2. join configured agent profiles with discovered adapter availability
- * 3. select a profile with the pure core router
- * 4. resolve the selected adapter and hand it, the task, and the resolved
+ * 2. route through the shared `routeTaskAttempt` application helper, which
+ *    reads attempts, calls `resolveRoutedAgent`, and records the decision
+ * 3. resolve the selected adapter and hand it, the task, and the resolved
  *    workflow to a fresh `WorkflowTaskExecutor`
  *
  * When the task is missing, its workflow id is unknown, or no profile can
@@ -26,7 +26,7 @@ import type {
   WorkflowTaskRunOutcome,
 } from "@agentic-dev-runner/orchestrator";
 import type { AgentAdapterRegistry } from "./agent-adapter-registry.js";
-import { resolveRoutedAgent } from "./agent-routing.js";
+import { routeTaskAttempt } from "./task-routing.js";
 
 export interface RoutedTaskOrchestrator {
   run(taskId: TaskId): Promise<WorkflowTaskRunOutcome>;
@@ -97,8 +97,9 @@ class RoutedTaskOrchestratorImpl implements RoutedTaskOrchestrator {
         taskStatus: task.status,
       };
     }
-    const selection = await resolveRoutedAgent({
-      requiredCapabilities: task.routing.capabilities,
+    const selection = await routeTaskAttempt({
+      task,
+      store: this.store,
       agentProfiles: this.agentProfiles,
       agents: this.agents,
       adapters: this.adapters,

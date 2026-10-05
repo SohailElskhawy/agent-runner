@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
+import type { ManualTaskInput, PlanningInput, PlanningResult } from "@agentic-dev-runner/core";
 import { createSqliteRunnerStore } from "@agentic-dev-runner/persistence";
 import { runCli } from "../src/run-cli.js";
 import { createAppServices } from "../src/application/app-services.js";
@@ -10,6 +11,7 @@ import {
   resolveStorePath,
 } from "../src/application/defaults.js";
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
+import { writePlanDraft } from "../src/application/planning/plan-files.js";
 import {
   captureIo,
   createFixtureAttempt,
@@ -428,6 +430,44 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     const runExit = await runCli(["run", "M999"], { io, servicesFactory: async () => services });
     expect(runExit).toBe(1);
     expect(errors.join("\n")).toContain("rejected");
+  });
+
+  it("approves a reviewed plan through the CLI and persists its tasks and event", async () => {
+    const { io: initIo } = captureIo();
+    expect(await runCli(["init"], { io: initIo, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) })).toBe(0);
+    const planningInput: PlanningInput = {
+      repositoryRoot: repositoryPath, goal: "Build a TODO app", baseRevision: fixtureHeadRevision,
+      repositoryEvidence: [], knownDecisions: [], answeredQuestionIds: [], existingTaskIds: [],
+    };
+    const planningResult: PlanningResult = {
+      version: 1, kind: "READY_FOR_PLANNING",
+      milestones: [{ id: "M1", title: "Core", completionCriteria: ["Tasks persist"] }],
+      tasks: [{ id: "T010" }],
+    };
+    const plannedTask: ManualTaskInput = {
+      id: "T010", title: "Add a TODO task", milestone: "M1", status: "READY", priority: "P0", risk: "low",
+      type: "implementation", objective: "Allow adding TODOs", acceptanceCriteria: ["Task is listed"],
+      dependsOn: [], provenance: { kind: "roadmap_criterion", source: "M1" },
+      scope: { allowedPaths: ["packages/cli/**"], forbiddenPaths: [] }, resources: [], workflow: "simple",
+      routing: { complexity: "small", capabilities: [] }, verification: { required: [] },
+      limits: { maxAttempts: 3, maxReviewCycles: 2 }, approval: { required: false },
+    };
+    const { planId } = await writePlanDraft(repositoryPath, planningInput, planningResult, [plannedTask]);
+    const { io, lines } = captureIo();
+    const approvalExit = await runCli(["plan", "approve", planId], {
+      io,
+      servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()),
+    });
+    expect(approvalExit).toBe(0);
+    expect(lines.join("\n")).toContain(`approved plan "${planId}"`);
+
+    store = await openRepositoryStore();
+    expect((await store.getTask("T010"))?.title).toBe("Add a TODO task");
+    const events = await store.listEvents({ type: "plan.approved" });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({ planId, taskIds: ["T010"] });
+    await store.close();
+    store = undefined;
   });
 
   it("rejects tasks whose required verification checks have no configured command", async () => {

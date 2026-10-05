@@ -63,10 +63,14 @@ describe("forced-kill recovery", { timeout: 120_000 }, () => {
         join(shimDir, "opencode.cmd"),
         `@echo off\r\nnode "${KILL_AGENT_FIXTURE}" %*\r\n`,
       );
+      writeFileSync(join(shimDir, "codex.cmd"), "@echo off\r\nexit /b 1\r\n");
     } else {
       const shim = join(shimDir, "opencode");
       writeFileSync(shim, `#!/bin/sh\nexec node "${KILL_AGENT_FIXTURE}" "$@"\n`);
       execFileSync("chmod", ["+x", shim]);
+      const codexShim = join(shimDir, "codex");
+      writeFileSync(codexShim, "#!/bin/sh\nexit 1\n");
+      execFileSync("chmod", ["+x", codexShim]);
     }
 
     childEnv = {

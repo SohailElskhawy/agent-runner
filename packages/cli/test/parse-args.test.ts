@@ -48,6 +48,27 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  it("parses analyze and plan commands", () => {
+    expect(parseArgs(["analyze"])).toEqual({ name: "analyze" });
+    expect(parseArgs(["plan", "--goal", "Ship a TODO app"])).toEqual({ name: "plan", goal: "Ship a TODO app" });
+    expect(parseArgs(["plan", "show"])).toEqual({ name: "plan", action: "show" });
+    expect(parseArgs(["plan", "show", "plan-0123456789abcdef"])).toEqual({ name: "plan", action: "show", planId: "plan-0123456789abcdef" });
+    expect(parseArgs(["plan", "approve", "plan-0123456789abcdef"])).toEqual({ name: "plan", action: "approve", planId: "plan-0123456789abcdef" });
+  });
+
+  it("rejects missing planning arguments and extra arguments", () => {
+    expect(() => parseArgs(["analyze", "extra"])).toThrow(CliError);
+    expect(() => parseArgs(["plan"])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "--goal"])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "--goal", "   "])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "--goal", "x", "extra"])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "show", ""])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "show", "x", "extra"])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "unknown"])).toThrow(CliError);
+    expect(() => parseArgs(["plan", "approve"])).toThrow(/requires a <plan-id>/);
+    expect(() => parseArgs(["plan", "approve", "plan-0123456789abcdef", "extra"])).toThrow(CliError);
+  });
+
   it("parses status", () => {
     expect(parseArgs(["status"])).toEqual({ name: "status" });
   });

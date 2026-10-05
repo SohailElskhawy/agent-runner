@@ -1,0 +1,407 @@
+# Review package: b9fc85f..04fc6ec
+
+## Commits
+04fc6ec Add planning input and profile configuration
+
+## Files changed
+ .../task-1-report.md                               | 35 +++++++++
+ packages/config/test/project-config-file.test.ts   | 30 ++++++++
+ packages/core/src/domain/index.ts                  |  1 +
+ packages/core/src/domain/planning-input.ts         | 83 ++++++++++++++++++++++
+ packages/core/src/domain/project-config.ts         | 34 +++++++++
+ packages/core/test/planning-input.test.ts          | 34 +++++++++
+ packages/core/test/project-config.test.ts          | 24 +++++++
+ 7 files changed, 241 insertions(+)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-09-30-launch-planning-discovery/task-1-report.md b/.superpowers/sdd/2026-09-30-launch-planning-discovery/task-1-report.md
+new file mode 100644
+index 0000000..c59787b
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-30-launch-planning-discovery/task-1-report.md
+@@ -0,0 +1,35 @@
++# Task 1 Report: Planning Contracts and Configuration
++
++## Summary
++
++Added a provider-independent `PlanningInput` type and validator, preserving repository evidence order and allowing empty evidence/decision/task lists. Added optional `planning.profile` configuration, validating it as a non-empty reference to a configured agent profile. Configurations without `planning` retain their prior normalized shape.
++
++## Files changed
++
++- `packages/core/src/domain/planning-input.ts` (new)
++- `packages/core/src/domain/index.ts`
++- `packages/core/src/domain/project-config.ts`
++- `packages/core/test/planning-input.test.ts` (new)
++- `packages/core/test/project-config.test.ts`
++- `packages/config/test/project-config-file.test.ts`
++
++## TDD evidence
++
++- **RED:** Ran `pnpm --filter @agentic-dev-runner/core exec vitest run test/planning-input.test.ts test/project-config.test.ts`. New contract tests failed because `validatePlanningInput` was unavailable; planner config test failed because `planning` was rejected. Existing core config cases passed.
++- **GREEN:** Implemented the contract/config parser and reran focused core and config tests successfully.
++
++## Verification
++
++- Core package tests: 16 files, 236 tests passed.
++- Config package tests: 1 file, 21 tests passed.
++- Focused core tests: 2 files, 30 tests passed.
++- Focused config test: 1 file, 21 tests passed.
++- Core typecheck: passed.
++- Config typecheck: passed.
++- ESLint on changed source and test files: passed.
++- `git diff --check`: passed.
++
++## Concerns and deviations
++
++- `packages/core/src/domain/agent-profile.ts` was not changed: Task 1's interfaces do not require a profile-domain change, and planning profile references reuse existing `AgentProfile.id` values.
++- No architecture or V0.1 scope deviations.
+diff --git a/packages/config/test/project-config-file.test.ts b/packages/config/test/project-config-file.test.ts
+index 5b74d98..c4c4e15 100644
+--- a/packages/config/test/project-config-file.test.ts
++++ b/packages/config/test/project-config-file.test.ts
+@@ -581,10 +581,40 @@ agents:
+ 
+     if (result.ok) {
+       throw new Error("expected load to fail");
+     }
+     if (result.reason !== "INVALID") {
+       throw new Error(`expected INVALID, got: ${result.reason}`);
+     }
+     expect(result.issues.join(" ")).toContain('unknown field "timeoutMs"');
+   });
+ });
++
++describe("loadProjectConfiguration planning profile", () => {
++  beforeEach(() => {
++    projectRoot = mkdtempSync(join(tmpdir(), "agentic-planning-config-"));
++  });
++  afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
++
++  it("loads the planner profile id from YAML", async () => {
++    writeFileSync(
++      configPath(),
++      `${CANONICAL_YAML}agents:\n  profiles:\n    planner:\n      adapter: opencode\n      capabilities: []\nplanning:\n  profile: planner\n`,
++      "utf8",
++    );
++    const result = await loadProjectConfiguration(projectRoot);
++    expect(result.ok && result.config.planningProfileId).toBe("planner");
++  });
++
++  it("rejects invalid and unknown planner profile references", async () => {
++    for (const profile of ["", "   ", "missing"]) {
++      writeFileSync(
++        configPath(),
++        `${CANONICAL_YAML}agents:\n  profiles:\n    planner:\n      adapter: opencode\n      capabilities: []\nplanning:\n  profile: ${JSON.stringify(profile)}\n`,
++        "utf8",
++      );
++      const result = await loadProjectConfiguration(projectRoot);
++      expect(result.ok).toBe(false);
++      rmSync(configPath(), { force: true });
++    }
++  });
++});
+diff --git a/packages/core/src/domain/index.ts b/packages/core/src/domain/index.ts
+index 0919a10..0d024f9 100644
+--- a/packages/core/src/domain/index.ts
++++ b/packages/core/src/domain/index.ts
+@@ -14,14 +14,15 @@ export * from "./task-conflicts.js";
+ export * from "./integration-queue.js";
+ export * from "./integration-drift.js";
+ export * from "./parallelism-capacity.js";
+ export * from "./context-manifest.js";
+ export * from "./context-pack.js";
+ export * from "./attempt.js";
+ export * from "./execution-claim.js";
+ export * from "./stage-run.js";
+ export * from "./verification-result.js";
+ export * from "./project-config.js";
++export * from "./planning-input.js";
+ export * from "./task-state-machine.js";
+ export * from "./workflow-definition.js";
+ export * from "./workflow-resolver.js";
+ export * from "./review-cycle-policy.js";
+diff --git a/packages/core/src/domain/planning-input.ts b/packages/core/src/domain/planning-input.ts
+new file mode 100644
+index 0000000..b991b3b
+--- /dev/null
++++ b/packages/core/src/domain/planning-input.ts
+@@ -0,0 +1,83 @@
++export type RepositoryEvidence =
++  | { readonly path: string; readonly status: "present"; readonly content: string }
++  | { readonly path: string; readonly status: "absent" };
++
++export type PlanningInput = {
++  readonly repositoryRoot: string;
++  readonly goal: string;
++  readonly baseRevision: string;
++  readonly repositoryEvidence: readonly RepositoryEvidence[];
++  readonly knownDecisions: readonly string[];
++  readonly existingTaskIds: readonly string[];
++};
++
++export type PlanningInputValidationResult =
++  | { readonly ok: true; readonly value: PlanningInput }
++  | { readonly ok: false; readonly issues: readonly string[] };
++
++export function validatePlanningInput(input: unknown): PlanningInputValidationResult {
++  const issues: string[] = [];
++  if (!isRecord(input)) return { ok: false, issues: ["planning input: must be an object"] };
++  const repositoryRoot = requireString(input, "repositoryRoot", issues);
++  const goal = requireString(input, "goal", issues);
++  const baseRevision = requireString(input, "baseRevision", issues);
++  const repositoryEvidence = requireArray(input, "repositoryEvidence", issues, (entry, index) => {
++    if (!isRecord(entry) || !isNonEmptyString(entry["path"])) {
++      issues.push(`planning input.repositoryEvidence[${index}]: must have a non-empty path`);
++      return undefined;
++    }
++    if (entry["status"] === "absent") return { path: entry["path"], status: "absent" as const };
++    if (entry["status"] === "present" && typeof entry["content"] === "string") {
++      return { path: entry["path"], status: "present" as const, content: entry["content"] };
++    }
++    issues.push(`planning input.repositoryEvidence[${index}]: must be present with content or absent`);
++    return undefined;
++  });
++  const knownDecisions = requireArray(input, "knownDecisions", issues, (entry, index) =>
++    requireArrayString(entry, `knownDecisions[${index}]`, issues));
++  const existingTaskIds = requireArray(input, "existingTaskIds", issues, (entry, index) =>
++    requireArrayString(entry, `existingTaskIds[${index}]`, issues));
++  if (issues.length || repositoryRoot === undefined || goal === undefined || baseRevision === undefined || repositoryEvidence === undefined || knownDecisions === undefined || existingTaskIds === undefined) {
++    return { ok: false, issues };
++  }
++  return { ok: true, value: { repositoryRoot, goal, baseRevision, repositoryEvidence, knownDecisions, existingTaskIds } };
++}
++
++function requireString(source: Record<string, unknown>, key: string, issues: string[]): string | undefined {
++  const value = source[key];
++  if (!isNonEmptyString(value)) {
++    issues.push(`planning input.${key}: must be a non-empty string`);
++    return undefined;
++  }
++  return value;
++}
++
++function requireArray<T>(source: Record<string, unknown>, key: string, issues: string[], parse: (value: unknown, index: number) => T | undefined): T[] | undefined {
++  const value = source[key];
++  if (!Array.isArray(value)) {
++    issues.push(`planning input.${key}: must be an array`);
++    return undefined;
++  }
++  const parsed: T[] = [];
++  value.forEach((entry: unknown, index: number) => {
++    const item = parse(entry, index);
++    if (item !== undefined) parsed.push(item);
++  });
++  return parsed;
++}
++
++function requireArrayString(value: unknown, path: string, issues: string[]): string | undefined {
++  if (!isNonEmptyString(value)) {
++    issues.push(`planning input.${path}: must be a non-empty string`);
++    return undefined;
++  }
++  return value;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === "object" && value !== null && !Array.isArray(value);
++}
++
++function isNonEmptyString(value: unknown): value is string {
++  return typeof value === "string" && value.trim().length > 0;
++}
+diff --git a/packages/core/src/domain/project-config.ts b/packages/core/src/domain/project-config.ts
+index fda3b5b..0768222 100644
+--- a/packages/core/src/domain/project-config.ts
++++ b/packages/core/src/domain/project-config.ts
+@@ -3,68 +3,102 @@ import { validateAgentProfile } from "./agent-profile.js";
+ 
+ export type VerificationCheckDefinition = {
+   readonly name: string;
+   readonly command: string;
+   readonly args: readonly string[];
+ };
+ 
+ export type ProjectConfiguration = {
+   readonly verificationChecks: readonly VerificationCheckDefinition[];
+   readonly agentProfiles: readonly AgentProfile[];
++  readonly planningProfileId?: string;
+ };
+ 
+ export type ProjectConfigurationValidationResult =
+   | { readonly ok: true; readonly value: ProjectConfiguration }
+   | { readonly ok: false; readonly issues: readonly string[] };
+ 
+ const PROJECT_CONFIG_ROOT = "project configuration";
+ 
+ const PROJECT_CONFIG_KEYS: ReadonlySet<string> = new Set([
+   "verification",
+   "agents",
++  "planning",
+ ]);
+ 
+ const VERIFICATION_SECTION_KEYS: ReadonlySet<string> = new Set(["checks"]);
+ 
+ const CHECK_KEYS: ReadonlySet<string> = new Set(["command", "args"]);
+ 
+ const AGENTS_SECTION_KEYS: ReadonlySet<string> = new Set(["profiles"]);
++const PLANNING_SECTION_KEYS: ReadonlySet<string> = new Set(["profile"]);
+ 
+ export function validateProjectConfiguration(
+   input: unknown,
+ ): ProjectConfigurationValidationResult {
+   if (!isRecord(input)) {
+     return {
+       ok: false,
+       issues: [`${PROJECT_CONFIG_ROOT}: must be an object with a verification section`],
+     };
+   }
+   const issues: string[] = [];
+   rejectUnknownFields(input, PROJECT_CONFIG_KEYS, PROJECT_CONFIG_ROOT, issues);
+   const verification = requireVerificationSection(input, issues);
+   const agentProfiles = requireAgentProfiles(input, issues);
++  const planningProfileId = requirePlanningProfileId(
++    input,
++    agentProfiles ?? [],
++    issues,
++  );
+   if (
+     verification === undefined ||
+     agentProfiles === undefined ||
+     issues.length > 0
+   ) {
+     return { ok: false, issues };
+   }
+   return {
+     ok: true,
+     value: {
+       verificationChecks: defined(verification),
+       agentProfiles: defined(agentProfiles),
++      ...(planningProfileId === undefined ? {} : { planningProfileId }),
+     },
+   };
+ }
+ 
++function requirePlanningProfileId(
++  source: Record<string, unknown>,
++  profiles: readonly AgentProfile[],
++  issues: string[],
++): string | undefined {
++  const planning = source["planning"];
++  if (planning === undefined) return undefined;
++  const path = fieldPath("planning");
++  if (!isRecord(planning)) {
++    issues.push(`${path}: must be an object with a profile id`);
++    return undefined;
++  }
++  rejectUnknownFields(planning, PLANNING_SECTION_KEYS, path, issues);
++  const profile = planning["profile"];
++  if (!isNonEmptyString(profile)) {
++    issues.push(`${path}.profile: must be a non-empty string profile id`);
++    return undefined;
++  }
++  if (!profiles.some((candidate) => candidate.id === profile)) {
++    issues.push(`${path}.profile: references unknown agent profile "${profile}"`);
++    return undefined;
++  }
++  return profile;
++}
++
+ function requireVerificationSection(
+   source: Record<string, unknown>,
+   issues: string[],
+ ): readonly VerificationCheckDefinition[] | undefined {
+   const parentPath = fieldPath("verification");
+   const value = source["verification"];
+   if (!isRecord(value)) {
+     issues.push(`${parentPath}: must be an object with named checks`);
+     return undefined;
+   }
+diff --git a/packages/core/test/planning-input.test.ts b/packages/core/test/planning-input.test.ts
+new file mode 100644
+index 0000000..ffd9e35
+--- /dev/null
++++ b/packages/core/test/planning-input.test.ts
+@@ -0,0 +1,34 @@
++import { describe, expect, it } from "vitest";
++import { validatePlanningInput } from "@agentic-dev-runner/core";
++
++describe("validatePlanningInput", () => {
++  it("accepts an empty repository and preserves evidence order", () => {
++    const empty = validatePlanningInput({
++      repositoryRoot: "/project", goal: "Build it", baseRevision: "abc",
++      repositoryEvidence: [], knownDecisions: [], existingTaskIds: [],
++    });
++    expect(empty).toEqual({ ok: true, value: {
++      repositoryRoot: "/project", goal: "Build it", baseRevision: "abc",
++      repositoryEvidence: [], knownDecisions: [], existingTaskIds: [],
++    } });
++
++    const evidence = [
++      { path: "AGENTS.md", status: "present", content: "first" },
++      { path: "docs/ADR.md", status: "absent" },
++    ];
++    const result = validatePlanningInput({
++      repositoryRoot: "/project", goal: "Build it", baseRevision: "abc",
++      repositoryEvidence: evidence, knownDecisions: ["Use SQLite"], existingTaskIds: ["T1"],
++    });
++    expect(result.ok && result.value.repositoryEvidence).toEqual(evidence);
++  });
++
++  it("rejects malformed required fields and evidence records", () => {
++    const result = validatePlanningInput({
++      repositoryRoot: " ", goal: "", baseRevision: "abc",
++      repositoryEvidence: [{ path: "x", status: "present" }],
++      knownDecisions: [3], existingTaskIds: [""],
++    });
++    expect(result.ok).toBe(false);
++  });
++});
+diff --git a/packages/core/test/project-config.test.ts b/packages/core/test/project-config.test.ts
+index b359805..d2e2163 100644
+--- a/packages/core/test/project-config.test.ts
++++ b/packages/core/test/project-config.test.ts
+@@ -44,20 +44,44 @@ function expectIssues(
+ describe("validateProjectConfiguration", () => {
+   it("accepts the canonical configuration shape", () => {
+     const value = validate(canonicalConfig());
+     expect(value.verificationChecks).toHaveLength(2);
+     expect(value.verificationChecks).toEqual([
+       { name: "typecheck", command: "pnpm", args: ["typecheck"] },
+       { name: "unit", command: "pnpm", args: ["test"] },
+     ]);
+   });
+ 
++  it("accepts and resolves a configured planning profile", () => {
++    const result = validateProjectConfiguration({
++      ...canonicalConfig(),
++      agents: {
++        profiles: { planner: { adapter: "opencode", capabilities: [] } },
++      },
++      planning: { profile: "planner" },
++    });
++    expect(result.ok && result.value.planningProfileId).toBe("planner");
++  });
++
++  it("rejects invalid or unknown planning profile references", () => {
++    for (const profile of ["", "  ", 7, null, "missing"]) {
++      const result = validateProjectConfiguration({
++        ...canonicalConfig(),
++        agents: {
++          profiles: { planner: { adapter: "opencode", capabilities: [] } },
++        },
++        planning: { profile },
++      });
++      expect(result.ok).toBe(false);
++    }
++  });
++
+   it("normalizes into a representation-independent result", () => {
+     const input = canonicalConfig();
+     const value = validate(input);
+     expect(value).toEqual({
+       agentProfiles: [],
+       verificationChecks: [
+         { name: "typecheck", command: "pnpm", args: ["typecheck"] },
+         { name: "unit", command: "pnpm", args: ["test"] },
+       ],
+     });

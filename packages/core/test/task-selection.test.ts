@@ -86,11 +86,13 @@ function candidate(
 function selection(overrides?: {
   tasks?: readonly Task[];
   attemptCounts?: ReadonlyMap<string, number>;
+  failedAttemptCounts?: ReadonlyMap<string, number>;
   agentCandidates?: readonly AgentRouteCandidate[];
 }) {
   return selectRunnableTasks({
     tasks: overrides?.tasks ?? [makeTask()],
     attemptCounts: overrides?.attemptCounts ?? new Map(),
+    failedAttemptCounts: overrides?.failedAttemptCounts ?? new Map(),
     agentCandidates: overrides?.agentCandidates ?? [candidate()],
   });
 }
@@ -229,11 +231,24 @@ describe("selectRunnableTasks", () => {
     const task = makeTask({ maxAttempts: 4 });
     const low = candidate({ id: "economy", tier: "economy" });
     const standard = candidate({ id: "standard", tier: "standard" });
-    expect(selection({ tasks: [task], attemptCounts: new Map([["M001", 1]]), agentCandidates: [low] }).ineligible[0]?.ineligibility).toEqual({
+    expect(selection({ tasks: [task], attemptCounts: new Map([["M001", 1]]), failedAttemptCounts: new Map([["M001", 1]]), agentCandidates: [low] }).ineligible[0]?.ineligibility).toEqual({
       reason: "no-eligible-agent",
       rejections: [{ reason: "below-minimum-tier", profileId: "economy", tier: "economy", minimumTier: "standard" }],
     });
-    expect(selection({ tasks: [task], attemptCounts: new Map([["M001", 1]]), agentCandidates: [low, standard] }).runnable).toEqual([task]);
+    expect(selection({ tasks: [task], attemptCounts: new Map([["M001", 1]]), failedAttemptCounts: new Map([["M001", 1]]), agentCandidates: [low, standard] }).runnable).toEqual([task]);
+  });
+
+  it("does not escalate admission for cancelled, running, or successful attempts", () => {
+    const task = makeTask({ maxAttempts: 4 });
+    const low = candidate({ id: "economy", tier: "economy" });
+    const result = selection({
+      tasks: [task],
+      attemptCounts: new Map([["M001", 1]]),
+      failedAttemptCounts: new Map(),
+      agentCandidates: [low],
+    });
+
+    expect(result.runnable).toEqual([task]);
   });
 
   it("does not select a task whose maxAttempts budget is exhausted", () => {

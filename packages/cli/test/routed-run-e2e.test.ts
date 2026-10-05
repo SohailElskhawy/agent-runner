@@ -16,7 +16,7 @@ import { createAgentAdapterRegistry } from "../src/application/agents/agent-adap
 import { resolveStorePath } from "../src/application/defaults.js";
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
 import type { RunnerAppService } from "../src/application/runner-app-service.js";
-import { captureIo } from "./fixtures.js";
+import { captureIo, createFixtureAttempt } from "./fixtures.js";
 
 const FAKE_AGENT_SCRIPT = fileURLToPath(
   new URL("./fixtures/fake-opencode-coding-agent.mjs", import.meta.url),
@@ -54,6 +54,28 @@ const PROJECT_CONFIG_YAML = [
 ].join("\n");
 
 const PROJECT_CONFIG_WITHOUT_PROFILES_YAML = VERIFICATION_YAML;
+
+const PROJECT_CONFIG_WITH_TIERS_YAML = [
+  VERIFICATION_YAML,
+  "agents:",
+  "  profiles:",
+  "    economy-profile:",
+  "      adapter: opencode",
+  "      tier: economy",
+  "      capabilities:",
+  "        - javascript",
+  "    standard-profile:",
+  "      adapter: opencode",
+  "      tier: standard",
+  "      capabilities:",
+  "        - javascript",
+  "    strong-profile:",
+  "      adapter: opencode",
+  "      tier: strong",
+  "      capabilities:",
+  "        - javascript",
+  "",
+].join("\n");
 
 const PROJECT_CONFIG_WITH_UNKNOWN_ADAPTER_YAML = [
   VERIFICATION_YAML,
@@ -210,6 +232,8 @@ describe("M063b routed agentic run through the CLI entry point", () => {
         orchestrator: appServices.orchestrator,
         recovery: appServices.recovery,
         agents: appServices.agents,
+        scheduler: appServices.scheduler,
+        maxParallelism: appServices.maxParallelism,
       });
     })();
   }
@@ -222,9 +246,10 @@ describe("M063b routed agentic run through the CLI entry point", () => {
     return seeded;
   }
 
-  async function seedTask(): Promise<void> {
+  async function seedTask(priorAttempt?: ReturnType<typeof createFixtureAttempt>): Promise<void> {
     store = await openRepositoryStore();
     await store.putTask(routedTask());
+    if (priorAttempt !== undefined) await store.putAttempt(priorAttempt);
     await store.close();
     store = undefined;
   }
@@ -256,9 +281,43 @@ describe("M063b routed agentic run through the CLI entry point", () => {
     expect(attempts[0]?.agent).toBe("opencode");
     expect(attempts[0]?.model).toBe("fake/gpt-5");
     expect(attempts[0]?.status).toBe("SUCCEEDED");
+    const routingEvents = await reopened.listEvents({ taskId: TASK_ID, type: "task.routing.decided" });
+    expect(routingEvents).toHaveLength(1);
+    expect(routingEvents[0]?.payload).toMatchObject({
+      profileId: "opencode-fixture",
+      selectedTier: "standard",
+      minimumTier: "economy",
+      attemptCount: 0,
+    });
     expect(readFileSync(join(repositoryPath, CLAMP_SOURCE), "utf8")).toContain(
       "module.exports = { clamp };",
     );
+  }, 60_000);
+
+  it("records the shared routing decision during unattended scheduling", async () => {
+    await createFixtureRepository(PROJECT_CONFIG_WITH_TIERS_YAML);
+    const initIo = captureIo();
+    expect(await runCli(["init"], { io: initIo.io, servicesFactory: services })).toBe(0);
+    await seedTask(
+      createFixtureAttempt({ id: "att_R001_1", taskId: TASK_ID, number: 1, status: "FAILED" }),
+    );
+
+    const app = await services();
+    const result = await app.runUnattended();
+    expect(result.kind).toBe("completed");
+    await app.close();
+
+    const reopened = await openRepositoryStore();
+    store = reopened;
+    expect((await reopened.getTask(TASK_ID))?.status).toBe("DONE");
+    const routingEvents = await reopened.listEvents({ taskId: TASK_ID, type: "task.routing.decided" });
+    expect(routingEvents).toHaveLength(1);
+    expect(routingEvents[0]?.payload).toMatchObject({
+      profileId: "standard-profile",
+      selectedTier: "standard",
+      minimumTier: "standard",
+      attemptCount: 1,
+    });
   }, 60_000);
 
   it("fails the run with routing diagnostics and starts no attempt when no profiles are configured", async () => {
