@@ -14,5 +14,8 @@ announcement.
 - CI matrix for Linux, macOS, and Windows; 20-task roadmap e2e; forced-kill recovery e2e; provider-failure and parallel-stress coverage.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
+### Fixed
+- Corrected Codex context cleanup tests to inspect artifacts in the task worktree.
+
 ### Deferred to v0.2
 - Token/cost analytics (`cost`), `pause/resume`, structured logging, automatic alternate-provider fallback, learned routing, and dynamic context relevance discovery.
