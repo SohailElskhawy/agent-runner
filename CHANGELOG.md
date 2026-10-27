@@ -16,6 +16,7 @@ announcement.
 
 ### Fixed
 - CI and the documented verification workflow now run `pnpm build` before `pnpm typecheck`; a clean checkout previously failed typecheck with TS2307 because package exports reference the generated `dist` output.
+- Corrected Codex context cleanup tests to inspect artifacts in the task worktree.
 
 ### Deferred to v0.2
 - Token/cost analytics (`cost`), `pause/resume`, structured logging, automatic alternate-provider fallback, learned routing, and dynamic context relevance discovery.
