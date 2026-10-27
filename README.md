@@ -9,6 +9,8 @@ Agentic Dev Runner is a local-first orchestration engine that executes a bounded
 - **Provider-agnostic.** Provider behavior lives behind adapters; v0.1 ships `opencode` and `codex`.
 - **Cross-platform.** macOS, Linux, and Windows are first-class targets, with no Bash, `/tmp`, shell-quoting, or signal assumptions.
 
+See [examples](examples/README.md) for runnable source-checkout walkthroughs.
+
 ## Status: v0.1 Technical Preview / Early Access
 
 Planning and cheap-first routing are part of the v0.1 scope. The Technical

@@ -2,6 +2,8 @@
 
 ## Unreleased — v0.1 Technical Preview / Early Access
 
+- Add a WIP JSONL error-report example harness for the OpenCode adapter; the live run remains pending.
+
 The v0.1.0 package version is prepared in source. Public publication and the
 launch verification gates are still pending; this entry is not a release
 announcement.
