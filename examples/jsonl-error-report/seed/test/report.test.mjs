@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const cli = join(__dirname, '..', 'src', 'report.cjs');
+const cli = join(__dirname, '..', 'src', 'report.mjs');
 function run(input) {
   return spawnSync(process.execPath, [cli], { input, encoding: 'utf8' });
 }
@@ -33,4 +33,16 @@ test('reports the bundled service log', () => {
   const result = run(readFileSync(join(__dirname, '..', 'data', 'service.jsonl'), 'utf8'));
   assert.equal(result.status, 0);
   assert.equal(result.stdout.trim(), '{"api":1,"worker":2}');
+});
+
+test('sorts numeric names lexicographically and preserves prototype-like names', () => {
+  const result = run(['2', '10', '__proto__', 'constructor'].map(service => JSON.stringify({ service, level: 'error' })).join('\n'));
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '{"10":1,"2":1,"__proto__":1,"constructor":1}\n');
+});
+
+test('prints an empty object when no errors occur', () => {
+  const result = run('{"service":"api","level":"info"}\n');
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '{}\n');
 });

@@ -1,6 +1,6 @@
-# JSONL error report (WIP)
+# JSONL error report
 
-**Not yet recorded or verified end to end.** The guarded build could not acquire the machine-wide heavy-job lock before the live-start cutoff. No provider invocation has been made; the harness and final implementation still require a real run and review. See [run notes](runs/opencode-2026-10-27/README.md).
+A real OpenCode subscription run completed with six passing acceptance tests, runner `DONE`, one completed integration queue entry and a clean checkout. [Recorded evidence](runs/opencode-2026-10-27/README.md) includes the first run and defects found by additional checks, plus the corrected final run.
 
 This example runs a bounded manual task against a small Node.js service-log report. It uses the real OpenCode adapter and `opencode-go/glm-5.3-flash`; it requires an already authenticated OpenCode subscription for that model. There is no paid-provider fallback. The seed has no implementation, so its immutable acceptance tests fail until the task is implemented.
 
@@ -19,7 +19,7 @@ The report reads JSONL on standard input and prints compact JSON counts of `erro
 ```sh
 cd /path/to/new-example-directory/repo
 node --test test/report.test.mjs
-node src/report.cjs < data/service.jsonl
+node src/report.mjs < data/service.jsonl
 ```
 
 `runs/opencode-2026-10-27/` records the actual run and its limitations. `output/`, when present, contains only the resulting source, tests, and example input/output; no runtime database or credentials are included.

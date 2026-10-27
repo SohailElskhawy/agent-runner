@@ -1,7 +1,7 @@
-# WIP — live run not performed
+# Recorded OpenCode runs — 2026-10-27
 
-On 2026-10-27, CEO slot approval was present. The seed acceptance tests failed as expected before implementation (`seed-red.txt`); the existing-target refusal check passed (`refusal.txt`). Focused ESLint and Node syntax checks passed.
+[Final run](final/README.md): real subscription execution, DONE, one COMPLETED integration queue entry, six passing acceptance tests, clean checkout, and output in ../../output/.
 
-`<autopilot>/bin/heavy pnpm install --frozen-lockfile` succeeded after waiting for the heavy-job lock. `<autopilot>/bin/heavy pnpm build` then timed out waiting for that lock (exit 75). Another machine-wide heavy job held it through the 19:45 Istanbul live-start cutoff. The guard also refused earlier attempts when available memory was below 3 GiB.
+[First run](attempt-1/README.md) passed its original four checks but failed CEO probes for numeric and prototype-like service names. Its original inputs, generated source, transcript and failed probes are retained. Acceptance was strengthened and a fresh run produced the final implementation; no task budget was reset in either sandbox.
 
-No OpenCode agent was launched, no runtime task/queue/Git integration evidence exists, and there is no generated `output/`. The harness requires a successful source build and an approved live window before it can be validated. Do not treat this as a recorded successful example. No SQLite database or provider data is included.
+Preparation logs retain the earlier seed/refusal checks and resource-blocked build. The final run reused verified build c297775; see the final notes for exact provenance and the import-only harness relocation. Full branch/integration gates remain pending the shared heavy lock.

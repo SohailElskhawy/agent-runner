@@ -1,0 +1,2 @@
+numeric-order: expected {"10":1,"2":1}; actual {"2":1,"10":1}; exit=0; match=False
+prototype-name: expected {"__proto__":1}; actual {}; exit=0; match=False
