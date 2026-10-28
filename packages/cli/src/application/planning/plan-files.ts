@@ -15,7 +15,10 @@ export type PlanDraft = {
 
 export async function writeDiscoveryQuestions(projectRoot: string, questions: readonly PlanningQuestion[]): Promise<void> {
   const path = join(projectRoot, ".agentic", "decisions.md");
-  const previous = await readFile(path, "utf8").catch(() => "");
+  const previous = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+    return "";
+  });
   const answers = new Map<string, string>();
   const answeredBlocks = new Map<string, string[]>();
   let id: string | undefined;
