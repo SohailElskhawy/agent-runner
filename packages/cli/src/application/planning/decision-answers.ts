@@ -1,6 +1,7 @@
 type DecisionAnswer = { value: string; start: number; end: number };
 type DecisionBlock = {
   id: string;
+  readerId: string | undefined;
   form: "heading" | "question-id";
   readerEligible: boolean;
   start: number;
@@ -39,11 +40,12 @@ export function scanDecisionBlocks(text: string, { truncated }: { truncated: boo
     const question = /^\s*Question ID:\s*(\S+)\s*$/.exec(line);
     const heading = /^\s*#{1,6}\s+([^\s:]+)\s*(?::|—|-)\s*/.exec(line);
     const id = question?.[1] ?? heading?.[1];
+    const readerId = question?.[1] ?? /^\s*#{1,6}\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s*(?::|—|-)\s*.+$/.exec(line)?.[1];
     if (id !== undefined) {
       if (block !== undefined) block.end = start;
       block = {
-        id, form: question ? "question-id" : "heading",
-        readerEligible: question !== null || /^\s*#{1,6}\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s*(?::|—|-)\s*.+$/.test(line),
+        id, readerId, form: question ? "question-id" : "heading",
+        readerEligible: readerId !== undefined,
         start, end: text.length, answers: [], open: false,
       };
       blocks.push(block);

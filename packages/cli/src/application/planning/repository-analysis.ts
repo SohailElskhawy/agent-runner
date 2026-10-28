@@ -122,7 +122,7 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
     }
     const answers = selectAnswers(blocks.flatMap((block) => {
       const answer = block.answers[0]?.value;
-      return block.readerEligible && answer ? [{ id: block.id, answer }] : [];
+      return block.readerId !== undefined && answer ? [{ id: block.readerId, answer }] : [];
     }), answerBudget);
     const inputShell = {
       repositoryRoot: projectRoot,

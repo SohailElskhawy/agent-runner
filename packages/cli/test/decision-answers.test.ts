@@ -34,6 +34,15 @@ describe("decision answer scanner", () => {
     expect(blocks.map((block) => text.slice(block.start, block.end)).join("")).toBe(text);
   });
 
+  it("keeps writer IDs and legacy reader IDs separately", () => {
+    const text = "## id-é: x\nAnswer: one\n## foo—bar: x\nAnswer: two\nQuestion ID: _id\nAnswer: three\n## _hidden: x\nAnswer: hidden\n";
+    const { blocks } = scanDecisionBlocks(text, { truncated: false });
+    expect(blocks.map((block) => [block.id, block.readerId, block.readerEligible])).toEqual([
+      ["id-é", "id", true], ["foo—bar", "foo", true], ["_id", "_id", true], ["_hidden", undefined, false],
+    ]);
+    expect(blocks.map((block) => text.slice(block.start, block.end)).join("")).toBe(text);
+  });
+
   it("re-examines one-space and tab-indented markers after an answer, but keeps two-space markers as content", () => {
     const text = "### A: prompt\nAnswer: a\n  ### fake: content\n ### B: prompt\nAnswer: b\n\tQuestion ID: C\nAnswer: c\n";
     const { blocks } = scanDecisionBlocks(text, { truncated: false });

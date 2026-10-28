@@ -200,6 +200,15 @@ describe("repository analysis", () => {
     expect(input.answeredQuestionIds).toEqual(["A", "A"]);
   });
 
+  it("returns legacy heading IDs while retaining Question ID values", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), "## id-é: x\nAnswer: one\n## foo—bar: x\nAnswer: two\nQuestion ID: _id\nAnswer: three\n## _hidden: x\nAnswer: hidden\n");
+    const input = await analyzer(root);
+    expect(input.answeredQuestionIds).toEqual(["id", "foo", "_id"]);
+    expect(input.knownDecisions).toEqual(["one", "two", "three"]);
+  });
+
   it("does not attribute an ineligible heading's answer to the preceding question", async () => {
     const root = repo();
     mkdirSync(join(root, ".agentic"));
@@ -225,11 +234,13 @@ describe("repository analysis", () => {
     mkdirSync(join(root, ".agentic"));
     const path = join(root, ".agentic", "decisions.md");
     const prefix = "### LAST: question\nAnswer: yes\n";
-    const exact = prefix + "  ".padEnd(65_536 - Buffer.byteLength(prefix), "x");
+    const finalAnswer = "### LAST: question\nAnswer: yes";
+    const exact = "x".repeat(65_536 - Buffer.byteLength(finalAnswer) - 1) + "\n" + finalAnswer;
     expect(Buffer.byteLength(exact)).toBe(65_536);
     writeFileSync(path, exact);
     const input = await analyzer(root);
-    expect(input.answeredQuestionIds).toEqual([]); // The complete answer exceeds the serialized answer budget.
+    expect(input.answeredQuestionIds).toEqual(["LAST"]);
+    expect(input.knownDecisions).toEqual(["yes"]);
     const sentinel = " ".repeat(65_536 - Buffer.byteLength(prefix) - 1) + "\n" + prefix + "#";
     expect(Buffer.byteLength(sentinel)).toBe(65_537);
     writeFileSync(path, sentinel);
