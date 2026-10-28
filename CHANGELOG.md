@@ -18,6 +18,7 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Discovery regeneration preserves the raw blocks of answered decisions, including multiline answers, CRLF, and `Question ID:` blocks, without accumulating blank lines.
 - Repository analysis preserves legacy parsed heading IDs while retaining broader block IDs for future decision-file preservation.
 - Repository analysis reads two-space-indented decision answer continuations, treats marker-like lines indented by at least two spaces within an answer as content, and stops planning when an answer remains open at the 65,536-byte read limit.
 - Discovery writes decisions through a temporary file before replacement, preserving the original if writing or replacement fails.

@@ -75,7 +75,7 @@ it("leaves no temporary file after a successful replacement", async () => {
   const directory = join(projectRoot, ".agentic");
   try {
     await writeDiscoveryQuestions(projectRoot, []);
-    expect(readFileSync(join(directory, "decisions.md"), "utf8")).toBe("# Planning decisions\n");
+    expect(readFileSync(join(directory, "decisions.md"), "utf8")).toBe("# Planning decisions\n\nContinue multi-line answers on lines indented by two spaces.\n\n");
     expect(readdirSync(directory)).toEqual(["decisions.md"]);
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });

@@ -143,7 +143,13 @@ agentic plan --goal "Implement the project described in docs/PROJECT_SPEC.md"
 ```
 
 If planning reports `NEEDS_DISCOVERY`, edit the generated
-`.agentic/decisions.md` answers and rerun the plan command. Review the draft,
+`.agentic/decisions.md` answers and rerun the plan command. For multiline answers,
+indent continuation lines by two spaces; even lines resembling question markers
+are answer text when indented this way. Unindented follow-on prose is preserved
+in the file but is not included in the answer used by planning. If a block has
+multiple `Answer:` lines, planning reads only the first, even if it is empty;
+put the answer there. Answered blocks retain their original wording when questions
+are regenerated. Review the draft,
 then explicitly approve it before execution:
 
 ```bash

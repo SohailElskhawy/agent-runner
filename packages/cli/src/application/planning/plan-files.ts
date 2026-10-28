@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ManualTaskInput, PlanningInput, PlanningQuestion, PlanningResult } from "@agentic-dev-runner/core";
+import { scanDecisionBlocks } from "./decision-answers.js";
 
 export type PlanDraft = {
   readonly version: 1;
@@ -19,41 +20,36 @@ export async function writeDiscoveryQuestions(projectRoot: string, questions: re
     if (error.code !== "ENOENT") throw error;
     return "";
   });
-  const answers = new Map<string, string>();
-  const answeredBlocks = new Map<string, string[]>();
-  let id: string | undefined;
-  let block: string[] = [];
-  for (const line of previous.split(/\r?\n/)) {
-    const heading = /^\s*#{1,6}\s+([^\s:]+)\s*(?::|—|-)\s*/.exec(line);
-    if (heading?.[1] !== undefined) {
-      if (id !== undefined && answers.has(id)) answeredBlocks.set(id, block);
-      id = heading[1];
-      block = [line];
-    } else if (id !== undefined) {
-      block.push(line);
-    }
-    const answer = /^\s*Answer:\s*(.*)$/.exec(line);
-    if (answer !== null && id !== undefined) {
-      if (answer[1]?.trim()) answers.set(id, answer[1].trim());
-    }
+  const { blocks } = scanDecisionBlocks(previous, { truncated: false });
+  const answeredBlocks = new Map<string, (typeof blocks)[number]>();
+  for (const block of blocks) {
+    if (block.answers.some((answer) => answer.value)) answeredBlocks.set(block.id, block);
   }
-  if (id !== undefined && answers.has(id)) answeredBlocks.set(id, block);
   const currentIds = new Set(questions.map((question) => question.id));
-  const previousDecisions = [...answeredBlocks]
-    .filter(([questionId]) => !currentIds.has(questionId))
-    .flatMap(([, lines]) => [...lines, ""]);
-  const lines = ["# Planning decisions", "", ...previousDecisions, ...questions.flatMap((question) => [
-    `### ${question.id}: ${question.prompt.replace(/[\r\n]+/g, " ")}`,
-    `Why: ${question.reason.replace(/[\r\n]+/g, " ")}`,
-    `Choices: ${question.choices.map((choice) => choice.replace(/[\r\n]+/g, " ")).join(" | ")}`,
-    `Answer: ${answers.get(question.id) ?? ""}`,
-    "",
-  ])];
+  const rawBlock = (block: (typeof blocks)[number]): string => {
+    const raw = previous.slice(block.start, block.end);
+    return raw.endsWith("\n") ? raw : `${raw}\n`;
+  };
+  const previousDecisions = blocks
+    .filter((block) => !currentIds.has(block.id) && answeredBlocks.get(block.id) === block)
+    .map(rawBlock);
+  const content = ["# Planning decisions\n\nContinue multi-line answers on lines indented by two spaces.\n\n", ...previousDecisions, ...questions.map((question) => {
+    const block = answeredBlocks.get(question.id);
+    if (block !== undefined) return rawBlock(block);
+    return [
+      `### ${question.id}: ${question.prompt.replace(/[\r\n]+/g, " ")}`,
+      `Why: ${question.reason.replace(/[\r\n]+/g, " ")}`,
+      `Choices: ${question.choices.map((choice) => choice.replace(/[\r\n]+/g, " ")).join(" | ")}`,
+      "Answer: ",
+      "",
+      "",
+    ].join("\n");
+  })].join("");
   await mkdir(join(projectRoot, ".agentic"), { recursive: true });
   const temporaryPath = join(projectRoot, ".agentic", `decisions.${randomUUID()}.tmp`);
   let written = false;
   try {
-    await writeFile(temporaryPath, lines.join("\n"), { encoding: "utf8", flag: "wx" });
+    await writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
     written = true;
     await rename(temporaryPath, path);
   } catch (error) {
