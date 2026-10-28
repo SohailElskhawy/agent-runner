@@ -1,11 +1,36 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdtempSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitManager } from "@agentic-dev-runner/git";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRepositoryAnalyzer } from "../src/application/planning/repository-analysis.js";
+
+const fileReads = vi.hoisted(() => vi.fn());
+const fileAccess = vi.hoisted(() => ({ reads: [] as { path: string; length: number }[], closed: [] as string[], fail: "" }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readFile: (...args: Parameters<typeof actual.readFile>) => {
+    fileReads(args[0]);
+    return actual.readFile(...args);
+  }, open: async (...args: Parameters<typeof actual.open>) => {
+    const file = await actual.open(...args);
+    const path = String(args[0]);
+    return new Proxy(file, { get(target, property) {
+      if (property === "read") return (...readArgs: unknown[]) => {
+        fileAccess.reads.push({ path, length: Number(readArgs[2]) });
+        if (path === fileAccess.fail) throw new Error("simulated read failure");
+        return Reflect.apply(target.read, target, readArgs);
+      };
+      if (property === "close") return () => {
+        fileAccess.closed.push(path);
+        return target.close();
+      };
+      return Reflect.get(target, property, target);
+    } });
+  } };
+});
 
 const roots: string[] = [];
 const analyzer = createRepositoryAnalyzer({ git: createGitManager({ runner: createNodeProcessRunner() }), runner: createNodeProcessRunner() });
@@ -22,7 +47,7 @@ function unbornRepo(): string {
   execFileSync("git", ["init", "-q", root]);
   return root;
 }
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { fileAccess.fail = ""; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("repository analysis", () => {
   it("collects project docs, manifests, and test inventory for an established repository", async () => {
@@ -75,6 +100,61 @@ describe("repository analysis", () => {
     const content = input.repositoryEvidence.flatMap((entry) => entry.status === "present" ? [entry.content] : []).join("");
     expect(Buffer.byteLength(content)).toBeLessThanOrEqual(65_536);
     expect(content).toContain("omitted");
+  });
+
+  it("bounds candidate reads and ignores a truncated decision line", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    const decisions = join(root, ".agentic", "decisions.md");
+    const prefix = "### FIRST: question\nAnswer: keep\n### SECOND: question\nAnswer: ";
+    writeFileSync(decisions, prefix + "x".repeat(65_536));
+    const manifest = join(root, "package.json");
+    const fd = openSync(manifest, "w");
+    ftruncateSync(fd, 16 * 1024 * 1024);
+    closeSync(fd);
+    fileReads.mockClear();
+    fileAccess.reads.length = 0;
+    fileAccess.closed.length = 0;
+    const input = await analyzer(root);
+    expect(fileReads.mock.calls.map(([path]) => path)).not.toContain(decisions);
+    expect(fileReads.mock.calls.map(([path]) => path)).not.toContain(manifest);
+    for (const path of [decisions, manifest]) {
+      expect(fileAccess.reads.filter((read) => read.path === path).reduce((sum, read) => sum + read.length, 0)).toBeLessThanOrEqual(65_537);
+      expect(fileAccess.closed).toContain(path);
+    }
+    expect(input.knownDecisions).toEqual(["keep"]);
+    expect(input.answeredQuestionIds).toEqual(["FIRST"]);
+    expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
+  });
+
+  it("closes a candidate after a read failure and propagates the error", async () => {
+    const root = repo();
+    const path = join(root, "AGENTS.md");
+    writeFileSync(path, "rules");
+    fileAccess.closed.length = 0;
+    fileAccess.fail = path;
+    await expect(analyzer(root)).rejects.toThrow("simulated read failure");
+    expect(fileAccess.closed).toContain(path);
+  });
+
+  it("does not split UTF-8 characters at the read or serialized boundaries", async () => {
+    const root = repo();
+    writeFileSync(join(root, "AGENTS.md"), "😀".repeat(20_000));
+    const input = await analyzer(root);
+    const content = input.repositoryEvidence.find((entry) => entry.path === "AGENTS.md");
+    expect(content?.status === "present" && content.content).toContain("omitted");
+    expect(content?.status === "present" && content.content).not.toContain("�");
+    expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
+  });
+
+  it("keeps a complete final decision when the file is exactly at the read limit", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    const answer = "### LAST: question\nAnswer: yes";
+    writeFileSync(join(root, ".agentic", "decisions.md"), " ".repeat(65_536 - Buffer.byteLength(answer) - 1) + "\n" + answer);
+    const input = await analyzer(root);
+    expect(input.knownDecisions).toEqual(["yes"]);
+    expect(input.answeredQuestionIds).toEqual(["LAST"]);
   });
 
   it("caps the tracked path inventory", async () => {

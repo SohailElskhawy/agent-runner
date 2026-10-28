@@ -1,4 +1,5 @@
-import { readFile, readdir } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
+import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
 import type { GitManager } from "@agentic-dev-runner/git";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
@@ -61,10 +62,29 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
       if ((parts.length <= 2 || ((parts[0] === "packages" || parts[0] === "apps") && parts.length === 3)) && MANIFEST_NAMES.has(parts.at(-1) ?? "")) candidates.add(path);
     }
     const evidence = new Map<string, string | null>();
+    let decisions = "";
     for (const path of [...candidates].sort(comparePaths)) {
       try {
-        const data = await readFile(join(projectRoot, path));
-        evidence.set(path, data.toString("utf8"));
+        const file = await open(join(projectRoot, path), "r");
+        let bytesRead = 0;
+        const data = Buffer.alloc(MAX_EVIDENCE_BYTES + 1);
+        try {
+          while (bytesRead < data.length) {
+            const result = await file.read(data, bytesRead, data.length - bytesRead, null);
+            if (result.bytesRead === 0) break;
+            bytesRead += result.bytesRead;
+          }
+        } finally {
+          await file.close();
+        }
+        const truncated = bytesRead > MAX_EVIDENCE_BYTES;
+        const content = truncated
+          ? new StringDecoder("utf8").write(data.subarray(0, MAX_EVIDENCE_BYTES))
+          : data.subarray(0, bytesRead).toString("utf8");
+        if (path === ".agentic/decisions.md") {
+          decisions = truncated ? content.slice(0, content.lastIndexOf("\n") + 1) : content;
+        }
+        evidence.set(path, truncated ? content + OMITTED : content);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
         evidence.set(path, null);
@@ -92,7 +112,7 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
       existingTaskIds: [...existingTaskIds],
     };
     const answerBudget = Math.max(0, Math.min(MAX_ANSWER_BYTES, MAX_EVIDENCE_BYTES - Buffer.byteLength(JSON.stringify(metadataShell))));
-    const answers = selectAnswers(parseAnswers(evidence.get(".agentic/decisions.md") ?? ""), answerBudget);
+    const answers = selectAnswers(parseAnswers(decisions), answerBudget);
     const inputShell = {
       repositoryRoot: projectRoot,
       goal,
@@ -200,9 +220,7 @@ function truncateUtf8(bytes: Buffer, budget: number): string {
   if (budget <= 0) return "";
   if (budget <= Buffer.byteLength(OMITTED)) return OMITTED.slice(0, budget);
   const prefixBytes = budget - Buffer.byteLength(OMITTED);
-  let prefix = bytes.subarray(0, prefixBytes).toString("utf8");
-  while (Buffer.byteLength(prefix) > prefixBytes) prefix = Array.from(prefix).slice(0, -1).join("");
-  return prefix + OMITTED;
+  return new StringDecoder("utf8").write(bytes.subarray(0, prefixBytes)) + OMITTED;
 }
 
 function isTestPath(path: string): boolean {
