@@ -1,0 +1,4 @@
+{"timestamp":"2026-10-27T08:11:02Z","service":"api","level":"info","message":"request completed"}
+{"timestamp":"2026-10-27T08:11:04Z","service":"worker","level":"error","message":"job timed out"}
+{"timestamp":"2026-10-27T08:11:05Z","service":"api","level":"error","message":"upstream unavailable"}
+{"timestamp":"2026-10-27T08:11:07Z","service":"worker","level":"error","message":"retry failed"}

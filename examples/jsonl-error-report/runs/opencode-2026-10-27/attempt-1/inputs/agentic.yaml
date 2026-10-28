@@ -1,0 +1,14 @@
+verification:
+  checks:
+    unit:
+      command: node
+      args:
+        - --test
+        - test/report.test.mjs
+agents:
+  profiles:
+    opencode:
+      adapter: opencode
+      model: opencode-go/glm-5.3-flash
+      capabilities:
+        - javascript

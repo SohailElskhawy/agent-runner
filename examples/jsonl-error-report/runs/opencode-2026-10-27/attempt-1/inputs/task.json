@@ -1,0 +1,20 @@
+{
+  "id": "JSONL1",
+  "title": "Report errors by service",
+  "milestone": "example",
+  "status": "ready",
+  "priority": "P1",
+  "risk": "low",
+  "type": "implementation",
+  "objective": "Implement src/report.cjs as a dependency-free Node CLI reading JSONL from stdin. Ignore blank lines. Each nonempty line must be a JSON object with string service and level fields. Count records whose level is exactly error by service and write a compact JSON object with service keys sorted lexicographically, followed by a newline. For malformed JSON or invalid records, write an error mentioning the physical line number to stderr and exit nonzero.",
+  "acceptance_criteria": ["The immutable test/report.test.mjs passes.", "Only src/** changes."],
+  "depends_on": [],
+  "provenance": {"kind": "user_request", "source": "JSONL example"},
+  "scope": {"allowed_paths": ["src/**"], "forbidden_paths": ["test/**", "agentic.yaml", "AGENTS.md", "task.json", "data/**"]},
+  "resources": ["jsonl-report"],
+  "workflow": "simple",
+  "routing": {"complexity": "small", "capabilities": ["javascript"]},
+  "verification": {"required": ["unit"]},
+  "limits": {"max_attempts": 1, "max_review_cycles": 1},
+  "approval": {"required": false}
+}
