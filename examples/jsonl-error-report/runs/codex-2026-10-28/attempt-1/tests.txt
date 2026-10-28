@@ -1,0 +1,14 @@
+✔ counts error events by service in sorted JSON (29.014891ms)
+✔ ignores blank lines (26.745497ms)
+✔ rejects malformed and invalid records with the physical line number (124.715764ms)
+✔ reports the bundled service log (29.460184ms)
+✔ sorts numeric names lexicographically and preserves prototype-like names (23.110436ms)
+✔ prints an empty object when no errors occur (24.98322ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 302.167471

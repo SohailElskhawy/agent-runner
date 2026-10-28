@@ -1,0 +1,91 @@
+$ git init -b autopilot/example-jsonl
+Initialized empty Git repository in <sandbox>/repo/.git/
+$ git config user.name Example Runner
+$ git config user.email example@example.invalid
+$ git add .
+$ git commit -m Seed JSONL error report
+[autopilot/example-jsonl (root-commit) 5bcf7ef] Seed JSONL error report
+ 5 files changed, 122 insertions(+)
+ create mode 100644 AGENTS.md
+ create mode 100644 agentic.yaml
+ create mode 100644 data/service.jsonl
+ create mode 100644 task.json
+ create mode 100644 test/report.test.mjs
+$ agentic init
+runner state initialized
+  project: proj-local
+  root: <sandbox>/repo
+  state: <sandbox>/state/state.db
+exit: 0
+$ agentic tasks add <sandbox>/repo/task.json
+task "JSONL1" added to project "proj-local"
+  title: Report errors by service
+  status: READY
+exit: 0
+$ agentic run --parallel 1
+unattended run reached quiescence after 2 cycle(s); final persisted task state: 1 FAILED
+exit: 0
+$ agentic status
+project: proj-local
+  name: repo
+  root: <sandbox>/repo
+tasks:
+  JSONL1 [FAILED] Report errors by service
+    updated: 2026-10-28T09:09:33.177Z
+    attempts: 1
+    latest attempt: #1 att_JSONL1_1 [FAILED]
+      started: 2026-10-28T09:09:17.261Z
+      finished: 2026-10-28T09:09:33.177Z
+      failure: task scope violation: the following changed paths are outside the task scope: .serena/.gitignore (no allowed path pattern matched); .serena/project.yml (no allowed path pattern matched)
+task totals: 1 FAILED
+active tasks: (none)
+failed tasks: JSONL1
+blocked tasks: (none)
+recovery required: (none)
+active execution claims: (none)
+integration queue: 0 pending, 0 integrating, 0 completed, 0 failed
+parallel capacity: 1 configured, 0 active, 1 available
+exit: 0
+$ agentic inspect JSONL1
+task: JSONL1
+  title: Report errors by service
+  project: proj-local
+  milestone: example
+  status: FAILED
+  workflow: simple
+  updated: 2026-10-28T09:09:33.177Z
+  failure reason: task scope violation: the following changed paths are outside the task scope: .serena/.gitignore (no allowed path pattern matched); .serena/project.yml (no allowed path pattern matched)
+attempts:
+  #1 att_JSONL1_1 [FAILED]
+    agent: codex (gpt-6.1-terra)
+    base revision: 5bcf7efe9813a103f5837786a7d7cc55c22428e9
+    started: 2026-10-28T09:09:17.261Z
+    finished: 2026-10-28T09:09:33.177Z
+    failure: error: task scope violation: the following changed paths are outside the task scope: .serena/.gitignore (no allowed path pattern matched); .serena/project.yml (no allowed path pattern matched)
+    stages:
+      IMPLEMENT [SUCCEEDED] (2026-10-28T09:09:17.281Z -> 2026-10-28T09:09:33.167Z)
+execution claims:
+  exec_68702634-84d8-45b5-af51-41b95c176f1e [FAILED] claimed 2026-10-28T09:09:17.104Z, lease until 2026-10-28T09:09:57.247Z
+integration queue:
+  (none)
+recovery events:
+  #6 recovery.startup.worktree @ 2026-10-28T09:09:33.298Z
+  #7 recovery.startup.worktree @ 2026-10-28T09:09:33.341Z
+events:
+  #1 task.routing.decided @ 2026-10-28T09:09:17.244Z
+    routing: profile "codex" (tier standard; minimum economy; attempts 0) — risk low and complexity small require minimum tier economy
+  #2 attempt.started @ 2026-10-28T09:09:17.261Z
+  #3 task.transitioned @ 2026-10-28T09:09:17.262Z
+  #4 worktree.created @ 2026-10-28T09:09:17.279Z
+  #5 task.transitioned @ 2026-10-28T09:09:33.177Z
+  #6 recovery.startup.worktree @ 2026-10-28T09:09:33.298Z
+  #7 recovery.startup.worktree @ 2026-10-28T09:09:33.341Z
+exit: 0
+assertion: task=FAILED queue=empty
+$ git log --oneline --decorate -3
+5bcf7ef (HEAD -> autopilot/example-jsonl, task/JSONL1/attempt-1) Seed JSONL error report
+$ git status --short --branch
+## autopilot/example-jsonl
+$ git worktree list
+<sandbox>/repo                             5bcf7ef [autopilot/example-jsonl]
+<sandbox>/state/worktrees/JSONL1/attempt-1 5bcf7ef [task/JSONL1/attempt-1]

@@ -12,7 +12,7 @@ pnpm build
 node examples/jsonl-error-report/run.mjs /path/to/new-example-directory
 ```
 
-For an authenticated Codex subscription using `gpt-6.1-terra`, select Codex explicitly:
+For an authenticated Codex subscription using `gpt-6.1-terra`, select Codex explicitly. Two live attempts failed the runner scope gate because `.serena` files appeared in the task worktree; see [Codex evidence](runs/codex-2026-10-28/README.md).
 
 ```sh
 node examples/jsonl-error-report/run.mjs /path/to/new-example-directory codex

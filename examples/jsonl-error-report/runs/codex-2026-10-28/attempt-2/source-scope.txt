@@ -1,0 +1,4 @@
+$ git status --short (task worktree)
+A  .serena/.gitignore
+A  .serena/project.yml
+A  src/report.mjs

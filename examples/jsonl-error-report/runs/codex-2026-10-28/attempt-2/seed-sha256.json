@@ -1,0 +1,22 @@
+{
+  "AGENTS.md": {
+    "seed_commit": "734baa253bcb22fd0a6f7e3a39cea597ebc4536f83d9cd4a2daaac8cf20d02c4",
+    "attempt_worktree": "734baa253bcb22fd0a6f7e3a39cea597ebc4536f83d9cd4a2daaac8cf20d02c4"
+  },
+  "agentic.yaml": {
+    "seed_commit": "bd14e3cfefdc90ab26a77f6bb5980f61cefe946ae401a842e79809a2e99691a3",
+    "attempt_worktree": "bd14e3cfefdc90ab26a77f6bb5980f61cefe946ae401a842e79809a2e99691a3"
+  },
+  "task.json": {
+    "seed_commit": "9c4aa213911307ca534fcad9412a5dda9c9b1198070ac57feab9fc8f963b43dd",
+    "attempt_worktree": "9c4aa213911307ca534fcad9412a5dda9c9b1198070ac57feab9fc8f963b43dd"
+  },
+  "data/service.jsonl": {
+    "seed_commit": "263e96ab9e4287856e55bbfb81c7b808dd0c6a54d705fd4178083b84eb1739fc",
+    "attempt_worktree": "263e96ab9e4287856e55bbfb81c7b808dd0c6a54d705fd4178083b84eb1739fc"
+  },
+  "test/report.test.mjs": {
+    "seed_commit": "95503e019569a5d042698dc4b693c64ea47afa0ebb9502c598f827004caac124",
+    "attempt_worktree": "95503e019569a5d042698dc4b693c64ea47afa0ebb9502c598f827004caac124"
+  }
+}

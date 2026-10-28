@@ -1,0 +1,11 @@
+# Codex live attempts — unsuccessful
+
+On 2026-10-28, two fresh targets ran the production example harness at runner revision `bfea19f7b80ae942c52d270e9d1e91a01ac59662` with the authenticated Codex subscription profile `gpt-6.1-terra`, one attempt per target and a 120-second timeout. The earlier revision changed only example harness, configuration, tests, README and changelog; it did not change production runner code. No fake agent or OpenCode output was used.
+
+Both runs initialized and added JSONL1, and both implementation stages succeeded. The runner then failed each task because `.serena/.gitignore` and `.serena/project.yml` were staged outside the permitted scope alongside `src/report.mjs`. Neither attempt reached task verification, integration verification, a task commit, DONE, or a completed integration queue entry. The integration checkout remained clean; the failed task worktrees were retained for investigation. See each transcript and source-scope file. This evidence does not establish why the `.serena` files were created.
+
+The seed tests failed before either run because the implementation was absent. After each failure, `node --test test/report.test.mjs` ran in that attempt's actual retained task worktree and passed all six tests; this manual check is not a runner verification gate. Each `output/src/report.mjs` is that attempt's generated source, and `inputs/` records the actual committed configuration and seed. The SHA-256 files compare each committed seed input with its corresponding task worktree; all match. The Codex config was copied over the OpenCode seed config before the seed commit.
+
+The transcripts record actual init, tasks add, run, status, inspect and Git output. Provider stdout is included after path sanitization; stderr is omitted because it was not reviewed for safe publication. Runtime databases and credentials are excluded. Paths are replaced with placeholders. The original OpenCode output and evidence are unchanged. No Windows or macOS execution is claimed.
+
+To reproduce after installing dependencies and building, run `node examples/jsonl-error-report/run.mjs /path/to/new-target codex`. The parent must exist, the target must not exist, and Codex must already be authenticated. A nonzero exit or a result other than DONE with one COMPLETED queue entry is a failure. Failed targets are retained.

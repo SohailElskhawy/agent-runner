@@ -1,0 +1,157 @@
+✖ counts error events by service in sorted JSON (27.994643ms)
+✖ ignores blank lines (19.231456ms)
+✖ rejects malformed and invalid records with the physical line number (20.548367ms)
+✖ reports the bundled service log (18.982211ms)
+✖ sorts numeric names lexicographically and preserves prototype-like names (21.865776ms)
+✖ prints an empty object when no errors occur (18.537933ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 171.523047
+
+✖ failing tests:
+
+test at examples/jsonl-error-report/seed/test/report.test.mjs:14:1
+✖ counts error events by service in sorted JSON (27.994643ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file://<checkout>/examples/jsonl-error-report/seed/test/report.test.mjs:16:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at examples/jsonl-error-report/seed/test/report.test.mjs:19:1
+✖ ignores blank lines (19.231456ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file://<checkout>/examples/jsonl-error-report/seed/test/report.test.mjs:21:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at examples/jsonl-error-report/seed/test/report.test.mjs:24:1
+✖ rejects malformed and invalid records with the physical line number (20.548367ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /line\s+2\b/i. Input:
+
+  'node:internal/modules/cjs/loader:1573\n' +
+    '  throw err;\n' +
+    '  ^\n' +
+    '\n' +
+    "Error: Cannot find module '<checkout>/examples/jsonl-error-report/seed/src/report.mjs'\n" +
+    '    at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)\n' +
+    '    at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)\n' +
+    '    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1147:10)\n' +
+    '    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1174:12)\n' +
+    '    at Module._load (node:internal/modules/cjs/loader:1346:5)\n' +
+    '    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\n' +
+    '    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\n' +
+    '    at node:internal/main/run_main_module:33:47 {\n' +
+    "  code: 'MODULE_NOT_FOUND',\n" +
+    '  requireStack: []\n' +
+    '}\n' +
+    '\n' +
+    'Node.js v26.8.2\n'
+
+      at TestContext.<anonymous> (file://<checkout>/examples/jsonl-error-report/seed/test/report.test.mjs:28:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "node:internal/modules/cjs/loader:1573\n  throw err;\n  ^\n\nError: Cannot find module '<checkout>/examples/jsonl-error-report/seed/src/report.mjs'\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)\n    at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)\n    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1147:10)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1174:12)\n    at Module._load (node:internal/modules/cjs/loader:1346:5)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)\n    at node:internal/main/run_main_module:33:47 {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: []\n}\n\nNode.js v26.8.2\n",
+    expected: /line\s+2\b/i,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at examples/jsonl-error-report/seed/test/report.test.mjs:32:1
+✖ reports the bundled service log (18.982211ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file://<checkout>/examples/jsonl-error-report/seed/test/report.test.mjs:34:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at examples/jsonl-error-report/seed/test/report.test.mjs:38:1
+✖ sorts numeric names lexicographically and preserves prototype-like names (21.865776ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file://<checkout>/examples/jsonl-error-report/seed/test/report.test.mjs:40:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at examples/jsonl-error-report/seed/test/report.test.mjs:44:1
+✖ prints an empty object when no errors occur (18.537933ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file://<checkout>/examples/jsonl-error-report/seed/test/report.test.mjs:46:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
