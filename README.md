@@ -38,7 +38,7 @@ V0.1 limitations and deferrals:
 - Learned routing and automatic fallback to a different provider are v0.2. V0.1 routing deterministically selects the cheapest eligible configured profile that meets the task's minimum tier and escalates that minimum after failed attempts.
 - Timeout and cancellation terminate the direct agent process only, not its whole process tree. A terminated agent can leave orphaned child processes behind on the host.
 - The runner is local-only: one engine per machine, no remote workers, no cloud control plane, no GUI.
-- macOS, Linux, and Windows are supported targets; the CI matrix runs lint, typecheck, build, and the full test suite on all three.
+- macOS, Linux, and Windows are supported targets; the CI matrix runs lint, build, typecheck, and the full test suite on all three (build runs before typecheck so a clean checkout typechecks against generated `dist` output).
 
 ## Requirements
 
