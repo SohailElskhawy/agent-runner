@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { GitManager } from "@agentic-dev-runner/git";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import type { PlanningInput, RepositoryEvidence } from "@agentic-dev-runner/core";
+import { scanDecisionBlocks } from "./decision-answers.js";
 
 const MAX_EVIDENCE_BYTES = 65_536;
 const MAX_ANSWER_BYTES = MAX_EVIDENCE_BYTES / 2;
@@ -63,6 +64,7 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
     }
     const evidence = new Map<string, string | null>();
     let decisions = "";
+    let decisionsTruncated = false;
     for (const path of [...candidates].sort(comparePaths)) {
       try {
         const file = await open(join(projectRoot, path), "r");
@@ -83,6 +85,7 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
           : data.subarray(0, bytesRead).toString("utf8");
         if (path === ".agentic/decisions.md") {
           decisions = truncated ? content.slice(0, content.lastIndexOf("\n") + 1) : content;
+          decisionsTruncated = truncated;
         }
         evidence.set(path, truncated ? content + OMITTED : content);
       } catch (error) {
@@ -112,7 +115,15 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
       existingTaskIds: [...existingTaskIds],
     };
     const answerBudget = Math.max(0, Math.min(MAX_ANSWER_BYTES, MAX_EVIDENCE_BYTES - Buffer.byteLength(JSON.stringify(metadataShell))));
-    const answers = selectAnswers(parseAnswers(decisions), answerBudget);
+    const { blocks } = scanDecisionBlocks(decisions, { truncated: decisionsTruncated });
+    const openBlock = blocks.find((block) => block.open);
+    if (openBlock !== undefined) {
+      throw new Error(`.agentic/decisions.md: the answer for "${openBlock.id}" runs past the 65536-byte read limit; shorten the file so the answer ends before it.`);
+    }
+    const answers = selectAnswers(blocks.flatMap((block) => {
+      const answer = block.answers[0]?.value;
+      return block.readerEligible && answer ? [{ id: block.id, answer }] : [];
+    }), answerBudget);
     const inputShell = {
       repositoryRoot: projectRoot,
       goal,
@@ -149,26 +160,6 @@ export function createRepositoryAnalyzer(options: { readonly git: GitManager; re
       existingTaskIds: [...existingTaskIds],
     };
   };
-}
-
-function parseAnswers(content: string): { id: string; answer: string }[] {
-  let id: string | undefined;
-  const answers: { id: string; answer: string }[] = [];
-  for (const line of content.split(/\r?\n/)) {
-    const question = /^\s*Question ID:\s*(\S+)\s*$/.exec(line)
-      ?? /^\s*#{1,6}\s+([A-Za-z0-9][A-Za-z0-9_.-]*)\s*(?::|—|-)\s*.+$/.exec(line);
-    if (question?.[1] !== undefined) {
-      id = question[1];
-      continue;
-    }
-    const answerLine = /^\s*Answer:(.*)$/.exec(line);
-    if (answerLine !== null) {
-      const answer = answerLine[1]?.trim() ?? "";
-      if (id !== undefined && answer.length > 0) answers.push({ id, answer });
-      id = undefined;
-    }
-  }
-  return answers;
 }
 
 function selectAnswers(answers: readonly { id: string; answer: string }[], budget: number): { id: string; answer: string }[] {
