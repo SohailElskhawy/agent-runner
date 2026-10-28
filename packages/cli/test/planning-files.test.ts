@@ -45,6 +45,16 @@ describe("planning files", () => {
     expect(readFileSync(path, "utf8")).toBe(`# Planning decisions\n\nContinue multi-line answers on lines indented by two spaces.\n\n### _x:\nAnswer: x\n\n### café: \nAnswer: coffee\nQuestion ID: AUTH\nAnswer: yes\n\n`);
   });
 
+  it("uses the writer ID when it differs from the legacy reader ID", async () => {
+    const projectRoot = root();
+    mkdirSync(join(projectRoot, ".agentic"));
+    const path = join(projectRoot, ".agentic", "decisions.md");
+    const block = "## id-é: old\nAnswer: preserved\n";
+    writeFileSync(path, block);
+    await writeDiscoveryQuestions(projectRoot, [{ ...questions[0]!, id: "id" }]);
+    expect(readFileSync(path, "utf8")).toContain(`${block}### id: How should sign-in work?`);
+  });
+
   it("retains CRLF and blank lines without growth across two regenerations", async () => {
     const projectRoot = root();
     mkdirSync(join(projectRoot, ".agentic"));
@@ -95,7 +105,7 @@ describe("planning files", () => {
     writeFileSync(join(projectRoot, ".agentic", "decisions.md"), "# Decisions\n\n### AUTH: old wording\nAnswer: Email only\n");
     await writeDiscoveryQuestions(projectRoot, questions);
     const markdown = readFileSync(join(projectRoot, ".agentic", "decisions.md"), "utf8");
-    expect(markdown).toContain("### AUTH: How should sign-in work?");
+    expect(markdown).toContain("### AUTH: old wording");
     expect(markdown).toContain("Answer: Email only");
   });
 

@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { closeSync, ftruncateSync, mkdtempSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdtempSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitManager } from "@agentic-dev-runner/git";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRepositoryAnalyzer } from "../src/application/planning/repository-analysis.js";
+import { writeDiscoveryQuestions } from "../src/application/planning/plan-files.js";
 
 const fileReads = vi.hoisted(() => vi.fn());
 const fileAccess = vi.hoisted(() => ({ reads: [] as { path: string; length: number }[], closed: [] as string[], fail: "" }));
@@ -198,6 +199,31 @@ describe("repository analysis", () => {
     const input = await analyzer(root);
     expect(input.knownDecisions).toEqual(["first\nsecond\n\nthird", "body"]);
     expect(input.answeredQuestionIds).toEqual(["A", "A"]);
+  });
+
+  it("preserves a later nonempty answer but the analyzer still uses the empty first answer", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    const path = join(root, ".agentic", "decisions.md");
+    const block = "### AUTH: old\nAnswer:\nNote: later answer follows\nAnswer: yes\n";
+    writeFileSync(path, block);
+    await writeDiscoveryQuestions(root, [{ id: "AUTH", prompt: "New?", reason: "Reason", choices: [], importance: "important" }]);
+    const input = await analyzer(root);
+    expect(input.answeredQuestionIds).not.toContain("AUTH");
+    expect(input.knownDecisions).not.toContain("yes");
+    expect(readFileSync(path, "utf8")).toContain(block);
+  });
+
+  it("preserves an over-budget answer when its question is asked again", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    const path = join(root, ".agentic", "decisions.md");
+    const block = `### BIG: old\nAnswer:\n  ${"x".repeat(33_000)}\n`;
+    writeFileSync(path, block);
+    expect((await analyzer(root)).answeredQuestionIds).not.toContain("BIG");
+    await writeDiscoveryQuestions(root, [{ id: "BIG", prompt: "New?", reason: "Reason", choices: [], importance: "important" }]);
+    expect(readFileSync(path, "utf8")).toContain(block);
+    expect((await analyzer(root)).answeredQuestionIds).not.toContain("BIG");
   });
 
   it("returns legacy heading IDs while retaining Question ID values", async () => {
