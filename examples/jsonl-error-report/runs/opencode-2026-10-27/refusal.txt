@@ -1,0 +1,17 @@
+$ node examples/jsonl-error-report/run.mjs <sandbox>/jsonl-refusal-check
+node:internal/fs/promises:1632
+  return await PromisePrototypeThen(
+         ^
+
+Error: EEXIST: file already exists, mkdir '<sandbox>/jsonl-refusal-check'
+    at async mkdir (node:internal/fs/promises:1632:10)
+    at async file://<checkout>/examples/jsonl-error-report/run.mjs:10:1 {
+  errno: -17,
+  code: 'EEXIST',
+  syscall: 'mkdir',
+  path: '<sandbox>/jsonl-refusal-check'
+}
+
+Node.js v26.8.2
+
+exit: 1; sentinel unchanged; no additional files
