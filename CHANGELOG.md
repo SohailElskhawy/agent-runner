@@ -16,6 +16,7 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- CI and the documented verification workflow now run `pnpm build` before `pnpm typecheck`; a clean checkout previously failed typecheck with TS2307 because package exports reference the generated `dist` output.
 - Discovery preserves existing decisions and reports read failures instead of treating them as a missing file.
 - Corrected Codex context cleanup tests to inspect artifacts in the task worktree.
 

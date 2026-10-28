@@ -43,10 +43,14 @@ Run these from the repository root. A change is only complete when they pass:
 
 ```bash
 pnpm lint        # ESLint over the whole workspace
-pnpm typecheck   # TypeScript checks for every package
 pnpm build       # Bundle the CLI (packages/agentic-dev-runner)
+pnpm typecheck   # TypeScript checks for every package
 pnpm test        # Vitest suites for every package
 ```
+
+Run `pnpm build` before `pnpm typecheck` on a clean checkout: workspace
+package exports point at generated `dist` output, so typecheck alone fails
+with TS2307 until the packages are built once.
 
 The packaged-CLI smoke test is opt-in because it packs the tarball, installs
 it into a temporary directory, and runs a real task end to end:
