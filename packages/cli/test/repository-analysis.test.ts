@@ -191,6 +191,76 @@ describe("repository analysis", () => {
     expect(tests?.status === "present" && tests.content).toContain("omitted: test path limit");
   });
 
+  it("reads multiline values while retaining legacy eligibility, first answers, and duplicate IDs", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), "### A: prompt\r\nAnswer: first\r\n  second\r\n\r\n  third\r\nAnswer: ignored\r\n### _hidden: prompt\r\nAnswer: hidden\r\nQuestion ID: A\r\nAnswer:\r\n  body\r\n### EMPTY: prompt\r\nAnswer:\r\nWhy: end\r\nAnswer: ignored\r\n");
+    const input = await analyzer(root);
+    expect(input.knownDecisions).toEqual(["first\nsecond\n\nthird", "body"]);
+    expect(input.answeredQuestionIds).toEqual(["A", "A"]);
+  });
+
+  it("returns legacy heading IDs while retaining Question ID values", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), "## id-é: x\nAnswer: one\n## foo—bar: x\nAnswer: two\nQuestion ID: _id\nAnswer: three\n## _hidden: x\nAnswer: hidden\n");
+    const input = await analyzer(root);
+    expect(input.answeredQuestionIds).toEqual(["id", "foo", "_id"]);
+    expect(input.knownDecisions).toEqual(["one", "two", "three"]);
+  });
+
+  it("does not attribute an ineligible heading's answer to the preceding question", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), "### PREVIOUS: prompt\n### _hidden: prompt\nAnswer: hidden\n### LAST:\nAnswer: no prompt\nQuestion ID: valid\nAnswer: yes\n");
+    const input = await analyzer(root);
+    expect(input.knownDecisions).toEqual(["yes"]);
+    expect(input.answeredQuestionIds).toEqual(["valid"]);
+  });
+
+  it("rejects an open truncated answer without reading beyond the sentinel", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    const path = join(root, ".agentic", "decisions.md");
+    const prefix = "### FIRST: question\nAnswer: keep\nWhy: end\n### OPEN: question\nAnswer: value\n";
+    writeFileSync(path, prefix + "  ".padEnd(65_536 - Buffer.byteLength(prefix), "x") + "é");
+    fileAccess.reads.length = 0;
+    await expect(analyzer(root)).rejects.toThrow(/OPEN.*65536.*shorten/i);
+    expect(fileAccess.reads.filter((read) => read.path === path).reduce((sum, read) => sum + read.length, 0)).toBe(65_537);
+  });
+
+  it("distinguishes true EOF from a 65537-byte truncation with a split UTF-8 character", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    const path = join(root, ".agentic", "decisions.md");
+    const prefix = "### LAST: question\nAnswer: yes\n";
+    const finalAnswer = "### LAST: question\nAnswer: yes";
+    const exact = "x".repeat(65_536 - Buffer.byteLength(finalAnswer) - 1) + "\n" + finalAnswer;
+    expect(Buffer.byteLength(exact)).toBe(65_536);
+    writeFileSync(path, exact);
+    const input = await analyzer(root);
+    expect(input.answeredQuestionIds).toEqual(["LAST"]);
+    expect(input.knownDecisions).toEqual(["yes"]);
+    const sentinel = " ".repeat(65_536 - Buffer.byteLength(prefix) - 1) + "\n" + prefix + "#";
+    expect(Buffer.byteLength(sentinel)).toBe(65_537);
+    writeFileSync(path, sentinel);
+    await expect(analyzer(root)).rejects.toThrow(/LAST.*65536.*shorten/i);
+    const split = prefix + "  ".padEnd(65_535 - Buffer.byteLength(prefix), "x") + "é";
+    expect(Buffer.byteLength(split)).toBe(65_537);
+    writeFileSync(path, split);
+    await expect(analyzer(root)).rejects.toThrow(/LAST.*65536.*shorten/i);
+  });
+
+  it("omits an over-budget multiline answer whole while retaining a later small answer", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".agentic"));
+    writeFileSync(join(root, ".agentic", "decisions.md"), `### BIG: question\nAnswer:\n  ${"x".repeat(33_000)}\n### SMALL: question\nAnswer: yes`);
+    const input = await analyzer(root);
+    expect(input.knownDecisions).toEqual(["yes"]);
+    expect(input.answeredQuestionIds).toEqual(["SMALL"]);
+    expect(Buffer.byteLength(JSON.stringify(input))).toBeLessThanOrEqual(65_536);
+  });
+
   it("extracts only answered decision lines", async () => {
     const root = repo();
     mkdirSync(join(root, ".agentic"));

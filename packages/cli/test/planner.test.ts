@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import type { AgentProfile, PlanningInput } from "@agentic-dev-runner/core";
 import { createGitManager } from "@agentic-dev-runner/git";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
+import { createRepositoryAnalyzer } from "../src/application/planning/repository-analysis.js";
 import { createRepositoryPlanner } from "../src/application/planning/planner.js";
 
 const roots: string[] = [];
@@ -45,6 +46,33 @@ class FakeRuntime implements AgentRuntime {
 }
 
 describe("repository planner", () => {
+  it("aborts planning before invoking the planner or writing an open truncated answer", async () => {
+    const { createSqliteRunnerStore } = await import("@agentic-dev-runner/persistence");
+    const { createStoreBackedAppService } = await import("../src/application/store-backed-app-service.js");
+    const projectRoot = repo();
+    mkdirSync(join(projectRoot, ".agentic"));
+    const path = join(projectRoot, ".agentic", "decisions.md");
+    const original = Buffer.from("### FIRST: prompt\nAnswer: yes\nWhy: done\n### OPEN: prompt\nAnswer: yes\n  " + "x".repeat(65_536));
+    writeFileSync(path, original);
+    const git = createGitManager({ runner: runtime });
+    const agent = new FakeRuntime([valid]);
+    const planner = createRepositoryPlanner({ git, runner: runtime, agent, profile, worktreesDir: join(tmpdir(), "agentic-planner-worktrees"), timeoutMs: 5000, configuredVerificationChecks: [] });
+    const store = createSqliteRunnerStore({ path: ":memory:" });
+    const service = createStoreBackedAppService({
+      storePath: ":memory:", projectRoot, store,
+      orchestrator: {} as never, recovery: { reconcileUnfinished: async () => [] } as never, agents: {} as never,
+      analyzeRepository: createRepositoryAnalyzer({ git, runner: runtime }), planRepository: planner,
+    });
+    try {
+      await store.initialize();
+      await expect(service.plan!("goal")).rejects.toThrow(/OPEN.*65536.*shorten/i);
+      expect(agent.invocations).toHaveLength(0);
+      expect(readFileSync(path)).toEqual(original);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("allows read-only context access while prohibiting planner edits and Git", async () => {
     const projectRoot = repo();
     const agent = new FakeRuntime([valid]);
