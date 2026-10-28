@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ManualTaskInput, PlanningInput, PlanningQuestion, PlanningResult } from "@agentic-dev-runner/core";
 
@@ -50,7 +50,18 @@ export async function writeDiscoveryQuestions(projectRoot: string, questions: re
     "",
   ])];
   await mkdir(join(projectRoot, ".agentic"), { recursive: true });
-  await writeFile(path, lines.join("\n"), "utf8");
+  const temporaryPath = join(projectRoot, ".agentic", `decisions.${randomUUID()}.tmp`);
+  let written = false;
+  try {
+    await writeFile(temporaryPath, lines.join("\n"), { encoding: "utf8", flag: "wx" });
+    written = true;
+    await rename(temporaryPath, path);
+  } catch (error) {
+    if (written || (error as NodeJS.ErrnoException).code !== "EEXIST") {
+      await rm(temporaryPath, { force: true }).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export async function writePlanDraft(

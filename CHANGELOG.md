@@ -18,6 +18,7 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Discovery writes decisions through a temporary file before replacement, preserving the original if writing or replacement fails.
 - Repository analysis bounds each candidate file read and ignores incomplete decision lines at the read limit.
 - CI and the documented verification workflow now run `pnpm build` before `pnpm typecheck`; a clean checkout previously failed typecheck with TS2307 because package exports reference the generated `dist` output.
 - Discovery preserves existing decisions and reports read failures instead of treating them as a missing file.
