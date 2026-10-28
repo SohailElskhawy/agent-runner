@@ -17,6 +17,8 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Worktree detection resolves directory aliases (symlinks on macOS/Linux, junctions and Windows short names) so registered worktrees are found regardless of the path form used to register them, while missing directories keep matching their stale registration.
+- Platform tests compare the child's canonical working-directory path, which macOS reports as `/private/var/...` for `/var/...` temp directories.
 - Repository analysis bounds each candidate file read and ignores incomplete decision lines at the read limit.
 - CI and the documented verification workflow now run `pnpm build` before `pnpm typecheck`; a clean checkout previously failed typecheck with TS2307 because package exports reference the generated `dist` output.
 - Discovery preserves existing decisions and reports read failures instead of treating them as a missing file.

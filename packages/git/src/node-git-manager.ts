@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import type {
   ProcessOutcome,
@@ -142,10 +143,13 @@ export class NodeGitManager implements GitManager {
     const args = ["worktree", "list", "--porcelain"];
     this.requireNonEmpty(worktreePath, "worktreeExists", "worktree path", args);
     const result = await this.runGit(cwd, args, "worktreeExists");
-    const target = normalizeWorktreePath(worktreePath);
-    return parseWorktreeList(result.stdout).some(
-      (entry) => normalizeWorktreePath(entry) === target,
+    const target = await canonicalizeWorktreePath(worktreePath);
+    const registered = await Promise.all(
+      parseWorktreeList(result.stdout).map((entry) =>
+        canonicalizeWorktreePath(entry),
+      ),
     );
+    return registered.some((entry) => entry === target);
   }
 
   async createBranch(cwd: string, branchName: string): Promise<void> {
@@ -364,12 +368,33 @@ export function parseWorktreeList(output: string): string[] {
   return paths;
 }
 
-function normalizeWorktreePath(worktreePath: string): string {
+async function canonicalizeWorktreePath(worktreePath: string): Promise<string> {
   const absolute = isAbsolute(worktreePath)
     ? worktreePath
     : resolve(worktreePath);
   const normalized = resolve(absolute);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  let canonical: string;
+  try {
+    // Git registers worktrees under their canonical path, with symlinks and
+    // Windows short names already resolved, so compare the same form.
+    canonical = await realpath(normalized);
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error;
+    }
+    // A deleted directory keeps its (possibly stale) registration, so
+    // compare on the resolved form instead of failing the lookup.
+    canonical = normalized;
+  }
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 export function parsePorcelainStatus(output: string): GitStatus {
