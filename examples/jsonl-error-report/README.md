@@ -12,7 +12,13 @@ pnpm build
 node examples/jsonl-error-report/run.mjs /path/to/new-example-directory
 ```
 
-Use a **new** target whose parent already exists. The harness refuses an existing target before writing anything. It copies only `seed/` to `target/repo`, initializes branch `autopilot/example-jsonl`, commits the seed, and invokes `init`, `tasks add`, `run --parallel 1`, `status`, and `inspect JSONL1` through `runCli`. It uses the production service factory and adapter, scheduler, Git and verification machinery; no agent is substituted. The explicit `target/state` keeps the SQLite database and worktrees under the target instead of the CLI's default user state directory. The task has one attempt and a 120-second agent timeout. A nonzero harness exit or a task other than `DONE` with exactly one completed integration queue entry is not success. Inspect the output on failures; the target is retained for investigation.
+For an authenticated Codex subscription using `gpt-6.1-terra`, select Codex explicitly:
+
+```sh
+node examples/jsonl-error-report/run.mjs /path/to/new-example-directory codex
+```
+
+Use a **new** target whose parent already exists. The harness refuses an existing target before writing anything. It copies `seed/` to `target/repo`, replaces `agentic.yaml` with the adjacent Codex configuration when selected, initializes branch `autopilot/example-jsonl`, commits the seed, and invokes `init`, `tasks add`, `run --parallel 1`, `status`, and `inspect JSONL1` through `runCli`. It uses the production service factory and adapter, scheduler, Git and verification machinery; no agent is substituted. The explicit `target/state` keeps the SQLite database and worktrees under the target instead of the CLI's default user state directory. The task has one attempt and a 120-second agent timeout. A nonzero harness exit or a task other than `DONE` with exactly one completed integration queue entry is not success. Inspect the output on failures; the target is retained for investigation.
 
 The report reads JSONL on standard input and prints compact JSON counts of `error` events by service in sorted order. After a successful run:
 

@@ -4,13 +4,14 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-if (process.argv.length !== 3) throw new Error('Usage: node run.mjs <new-target-directory>');
+if (process.argv.length < 3 || process.argv.length > 4 || (process.argv[3] !== undefined && process.argv[3] !== 'codex')) throw new Error('Usage: node run.mjs <new-target-directory> [codex]');
 const target = resolve(process.argv[2]);
 // Non-recursive creation atomically rejects an existing target before any writes.
 await mkdir(target);
 const projectRoot = join(target, 'repo');
 const stateDir = join(target, 'state');
 await cp(join(here, 'seed'), projectRoot, { recursive: true });
+if (process.argv[3] === 'codex') await cp(join(here, 'agentic.codex.yaml'), join(projectRoot, 'agentic.yaml'));
 function git(...args) {
   console.log(`$ git ${args.join(' ')}`);
   const result = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf8' });

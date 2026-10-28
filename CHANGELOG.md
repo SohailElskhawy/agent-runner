@@ -7,6 +7,7 @@ launch verification gates are still pending; this entry is not a release
 announcement.
 
 ### Added
+- Optional Codex subscription provider for the JSONL error-report example.
 - Recorded OpenCode JSONL log-report example with isolated state, immutable acceptance tests, real execution transcripts and verified final output.
 - Run the existing CI matrix on pushes to `autopilot/main`.
 - Unified workflow execution for single-task and unattended runs, with integration verification before DONE.
