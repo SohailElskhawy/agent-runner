@@ -18,6 +18,8 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Repository analysis preserves legacy parsed heading IDs while retaining broader block IDs for future decision-file preservation.
+- Repository analysis reads two-space-indented decision answer continuations, treats marker-like lines indented by at least two spaces within an answer as content, and stops planning when an answer remains open at the 65,536-byte read limit.
 - Discovery writes decisions through a temporary file before replacement, preserving the original if writing or replacement fails.
 - Repository analysis bounds each candidate file read and ignores incomplete decision lines at the read limit.
 - CI and the documented verification workflow now run `pnpm build` before `pnpm typecheck`; a clean checkout previously failed typecheck with TS2307 because package exports reference the generated `dist` output.
