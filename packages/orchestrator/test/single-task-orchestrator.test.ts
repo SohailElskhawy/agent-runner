@@ -71,11 +71,13 @@ let baseRevision: string;
 let agent: FakeAgentRuntime;
 let verification: FakeVerificationEngine;
 let orchestrator: SingleTaskOrchestrator;
+let inFlightRuns: Promise<unknown>[] = [];
 
 type WireOptions = {
   readonly storeOverride?: RunnerStore | undefined;
   readonly agent?: AgentBehavior | undefined;
   readonly verification?: VerificationResponse | undefined;
+  readonly gitOverride?: GitManager | undefined;
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
   readonly projectRoot?: string | undefined;
   readonly signal?: AbortSignal | undefined;
@@ -88,9 +90,9 @@ function wireOrchestrator(options: WireOptions = {}): void {
   );
   const effectiveGit =
     options.gitFailures === undefined
-      ? git
-      : injectGitFailures(git, options.gitFailures);
-  orchestrator = createSingleTaskOrchestrator({
+      ? options.gitOverride ?? git
+      : injectGitFailures(options.gitOverride ?? git, options.gitFailures);
+  const delegate = createSingleTaskOrchestrator({
     store: options.storeOverride ?? store,
     git: effectiveGit,
     agent,
@@ -104,6 +106,13 @@ function wireOrchestrator(options: WireOptions = {}): void {
     agentTimeoutMs: 5_000,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
+  orchestrator = {
+    run(taskId) {
+      const promise = delegate.run(taskId);
+      inFlightRuns.push(promise);
+      return promise;
+    },
+  };
 }
 
 async function storedTask(id: string = taskId): Promise<Task> {
@@ -227,8 +236,9 @@ function expectRejected(
   }
 }
 
-describe("SingleTaskOrchestrator", () => {
+describe("SingleTaskOrchestrator", { timeout: 20_000 }, () => {
   beforeEach(async () => {
+    inFlightRuns = [];
     directory = mkdtempSync(join(tmpdir(), "agentic-runner-vs011-"));
     repoPath = join(directory, "project repo");
     worktreesDir = join(directory, "worktrees");
@@ -248,8 +258,9 @@ describe("SingleTaskOrchestrator", () => {
   });
 
   afterEach(async () => {
+    await Promise.allSettled(inFlightRuns);
     await store.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("rejects when pause wins immediately before attempt admission", async () => {
@@ -859,7 +870,6 @@ describe("SingleTaskOrchestrator", () => {
   });
 
   it("matches repository-relative scope patterns against Windows-style host paths", async () => {
-    wireOrchestrator({ agent: agentAppliesChange(change) });
     const scopedGit = withExtraStatusEntries(git, [
       {
         indexStatus: "?",
@@ -867,19 +877,7 @@ describe("SingleTaskOrchestrator", () => {
         path: "docs\\secret.md",
       },
     ]);
-    orchestrator = createSingleTaskOrchestrator({
-      store,
-      git: scopedGit,
-      agent,
-      verification,
-      verificationChecks: [
-        { name: "typecheck", executable: "node", args: ["--version"] },
-        { name: "unit", executable: "node", args: ["--version"] },
-      ],
-      projectRoot: repoPath,
-      worktreesDir,
-      agentTimeoutMs: 5_000,
-    });
+    wireOrchestrator({ agent: agentAppliesChange(change), gitOverride: scopedGit });
 
     const outcome = await orchestrator.run(taskId);
 
@@ -894,20 +892,7 @@ describe("SingleTaskOrchestrator", () => {
     const scopedGit = withExtraStatusEntries(git, [
       { indexStatus: "M", worktreeStatus: "M", path: "src\\utils.ts" },
     ]);
-    wireOrchestrator({ agent: agentAppliesChange(change) });
-    orchestrator = createSingleTaskOrchestrator({
-      store,
-      git: scopedGit,
-      agent,
-      verification,
-      verificationChecks: [
-        { name: "typecheck", executable: "node", args: ["--version"] },
-        { name: "unit", executable: "node", args: ["--version"] },
-      ],
-      projectRoot: repoPath,
-      worktreesDir,
-      agentTimeoutMs: 5_000,
-    });
+    wireOrchestrator({ agent: agentAppliesChange(change), gitOverride: scopedGit });
 
     const outcome = await orchestrator.run(taskId);
 
