@@ -7,6 +7,7 @@ launch verification gates are still pending; this entry is not a release
 announcement.
 
 ### Added
+- Neutral invocation usage observation contract (D-AP-6 slice 1, per ADR-020): provider-reported per-invocation usage evidence types with unknown/partial/complete/inconsistent status, distinct optional counters, exact reported cost with currency and provenance, and strict safe validation. Contract only; not persisted, not wired to invocations, no provider parsing, no display.
 - Packed-install smoke coverage for durable pause/resume and paused execution refusal using separate CLI processes and a fake provider.
 - V0.2 M075: durable CLI pause/resume, atomic control events and admission, and scheduler drain with startup recovery preserved. In-flight agents are not interrupted. Pause and resume require initialization; existing run-before-init behavior remains unchanged.
 - Dated release-gate evidence snapshot (2026-10-28) with explicit claim limits in the launch roadmap, linked from the release and dogfood docs.
@@ -20,6 +21,7 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Invocation usage observation validation rejects unknown keys on `cost` and `cost.provenance` (per ADR-020 strict-shape contract) instead of silently stripping estimated/derived/unknown metadata; such evidence is now safely rejected rather than passing through as plain provider-reported cost.
 - Single-task orchestrator tests allow bounded time for Windows Git operations and await complete runs before closing the store and retrying fixture cleanup.
 - Windows E2E fixtures compare canonical worktree paths and allow the 20-task Git workflow more time, waiting for the test run before cleanup.
 - Default project state paths resolve directory aliases, including Windows short names, and missing descendants through their nearest existing ancestor; Windows and macOS case folding is preserved, and existing state is not migrated. Workflow executor tests await Git processes and retry cleanup on Windows.
