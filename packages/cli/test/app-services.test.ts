@@ -1,7 +1,7 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SingleTaskRunOutcome } from "@agentic-dev-runner/orchestrator";
 import type { SingleTaskOrchestrator } from "@agentic-dev-runner/orchestrator";
 import type { RunnerStore } from "@agentic-dev-runner/persistence";
@@ -85,16 +85,32 @@ describe("createAppServices wiring", () => {
     expect(projectKey(directory)).toBe(projectKey(join(directory, ".")));
     if (CASE_INSENSITIVE_PLATFORM) {
       expect(normalizeProjectRootForIdentity(directory)).toBe(
-        resolve(directory).toLowerCase(),
+        realpathSync.native(directory).toLowerCase(),
       );
     } else {
-      expect(normalizeProjectRootForIdentity(directory)).toBe(resolve(directory));
+      expect(normalizeProjectRootForIdentity(directory)).toBe(realpathSync.native(directory));
     }
   });
 
-  it("folds path casing on case-insensitive platforms only", () => {
-    const upper = directory.toUpperCase();
-    const lower = directory.toLowerCase();
+  it.each([
+    ["existing directory", []],
+    ["missing descendants", ["missing", "child"]],
+  ])("uses the same default state paths through a directory alias for %s", (_label, suffix) => {
+    const target = join(directory, "target");
+    const alias = join(directory, "alias");
+    mkdirSync(target);
+    symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir");
+
+    const realRoot = join(target, ...suffix);
+    const aliasRoot = join(alias, ...suffix);
+    expect(defaultStateDir(aliasRoot)).toBe(defaultStateDir(realRoot));
+    expect(resolveStorePath({ projectRoot: aliasRoot })).toBe(resolveStorePath({ projectRoot: realRoot }));
+    expect(resolveWorktreesDir({ projectRoot: aliasRoot })).toBe(resolveWorktreesDir({ projectRoot: realRoot }));
+  });
+
+  it("folds path casing on Windows and macOS", () => {
+    const upper = join(directory, "MISSING");
+    const lower = join(directory, "missing");
     if (CASE_INSENSITIVE_PLATFORM) {
       expect(projectKey(upper)).toBe(projectKey(lower));
       expect(defaultStateDir(upper)).toBe(defaultStateDir(lower));
@@ -103,6 +119,39 @@ describe("createAppServices wiring", () => {
       );
     } else {
       expect(projectKey(upper)).not.toBe(projectKey(lower));
+    }
+  });
+
+  it("preserves macOS case folding for missing descendants", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    try {
+      expect(projectKey(join(directory, "MISSING"))).toBe(projectKey(join(directory, "missing")));
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  });
+
+  it("uses the native resolver for path aliases", () => {
+    const shortPath = join(directory, "SHORT~1");
+    const longPath = join(directory, "Long directory name");
+    const native = vi.spyOn(realpathSync, "native").mockReturnValue(longPath);
+    try {
+      const expected = CASE_INSENSITIVE_PLATFORM ? longPath.toLowerCase() : longPath;
+      expect(normalizeProjectRootForIdentity(shortPath)).toBe(expected);
+      expect(native).toHaveBeenCalledWith(shortPath);
+    } finally {
+      native.mockRestore();
+    }
+  });
+
+  it("propagates native resolver permission errors", () => {
+    const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const native = vi.spyOn(realpathSync, "native").mockImplementation(() => { throw error; });
+    try {
+      expect(() => projectKey(directory)).toThrow(error);
+    } finally {
+      native.mockRestore();
     }
   });
 

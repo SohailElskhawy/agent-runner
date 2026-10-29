@@ -19,6 +19,7 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Default project state paths resolve directory aliases, including Windows short names, and missing descendants through their nearest existing ancestor; Windows and macOS case folding is preserved, and existing state is not migrated. Workflow executor tests await Git processes and retry cleanup on Windows.
 - Cross-platform verification, agent, orchestrator, and Git test suites canonicalize temporary working directories, await in-flight Git child processes before Windows directory cleanup, and use a 300ms lease window in heartbeat renewal settlement tests.
 - `writeDiscoveryQuestions` deduplicates repeated question IDs in first-seen order so preserved or generated decision blocks are not emitted twice in `.agentic/decisions.md`.
 - Worktree detection resolves directory aliases (symlinks on macOS/Linux, junctions and Windows short names) using nearest-existing-ancestor path reconstruction when worktree directories are deleted, so registered and stale worktrees are found regardless of the path alias form used to register them.

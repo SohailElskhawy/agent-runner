@@ -68,6 +68,7 @@ let repoPath: string;
 let worktreesDir: string;
 let dbPath: string;
 let runner: ProcessRunner;
+let inFlightRuns: Promise<unknown>[] = [];
 let store: RunnerStore;
 let git: GitManager;
 let agent: FakeAgentRuntime;
@@ -277,13 +278,21 @@ function eventsOfType(
   return events.filter((event) => event.type === type);
 }
 
-describe("WorkflowTaskExecutor", () => {
+describe("WorkflowTaskExecutor", { timeout: 20_000 }, () => {
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), "agentic-runner-m051b-"));
     repoPath = join(directory, "project repo");
     worktreesDir = join(directory, "worktrees");
     dbPath = join(directory, "state.db");
-    runner = createNodeProcessRunner();
+    inFlightRuns = [];
+    const delegateRunner = createNodeProcessRunner();
+    runner = {
+      run(spec) {
+        const promise = delegateRunner.run(spec);
+        inFlightRuns.push(promise);
+        return promise;
+      },
+    };
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
     git = createGitManager({ runner });
@@ -297,8 +306,9 @@ describe("WorkflowTaskExecutor", () => {
   });
 
   afterEach(async () => {
+    await Promise.allSettled(inFlightRuns);
     await store.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("runs the default workflow end-to-end and persists DONE only after successful integration", async () => {
