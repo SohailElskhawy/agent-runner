@@ -166,11 +166,14 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     await store.putTask(createFixtureTask({ projectId: "proj-local" }));
     await store.close();
     store = undefined;
-    expect(await runCli(["pause", "--reason", "maintenance"], { io: output.io, servicesFactory: factory })).toBe(0);
+    const reason = "maintenance\u001b[31m\n";
+    expect(await runCli(["pause", "--reason", reason], { io: output.io, servicesFactory: factory })).toBe(0);
     expect(await runCli(["pause"], { io: output.io, servicesFactory: factory })).toBe(0);
     expect(await runCli(["status"], { io: output.io, servicesFactory: factory })).toBe(0);
     expect(output.lines.join(" ")).toContain("PAUSED");
     expect(output.lines.join(" ")).toContain("maintenance");
+    expect(output.lines).toContain(`  reason: ${JSON.stringify(reason)}`);
+    expect(output.lines.join(" ")).not.toContain("\u001b");
     expect(await runCli(["run", "M001"], { io: output.io, servicesFactory: factory })).toBe(1);
     expect(await runCli(["run"], { io: output.io, servicesFactory: factory })).toBe(1);
     expect(agent.invocations).toHaveLength(0);

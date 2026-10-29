@@ -12,7 +12,7 @@ export function renderProjectStatus(io: CliIo, status: ProjectStatus): void {
   if (control !== null) {
     io.writeLine(`runner state: ${control.state}`);
     if (control.pausedAt !== undefined) io.writeLine(`  paused since: ${control.pausedAt}`);
-    if (control.pauseReason !== undefined) io.writeLine(`  reason: ${control.pauseReason}`);
+    if (control.pauseReason !== undefined) io.writeLine(`  reason: ${JSON.stringify(control.pauseReason)}`);
     if (control.state === "PAUSED") io.writeLine(`  draining active claims: ${String(status.scheduler.activeClaims.length)}`);
   }
   io.writeLine(`project: ${project.id}`);
