@@ -120,6 +120,21 @@ describe("planning files", () => {
     expect(markdown).toContain("### UI: Which UI style?");
   });
 
+  it("emits a duplicate question ID's block only once, answered and unanswered", async () => {
+    const projectRoot = root();
+    mkdirSync(join(projectRoot, ".agentic"));
+    const path = join(projectRoot, ".agentic", "decisions.md");
+    // answered: duplicate ID backed by a preserved block
+    writeFileSync(path, "### DUP: old wording\nAnswer: preserved\n");
+    await writeDiscoveryQuestions(projectRoot, [{ ...questions[0]!, id: "DUP" }, { ...questions[0]!, id: "DUP" }]);
+    expect(readFileSync(path, "utf8").split("### DUP: old wording").length - 1).toBe(1);
+    // unanswered: duplicate ID with no preserved block, alongside another question
+    await writeDiscoveryQuestions(projectRoot, [{ ...questions[0]!, id: "NEW" }, { ...questions[0]!, id: "NEW" }]);
+    const markdown = readFileSync(path, "utf8");
+    expect(markdown.split("### NEW:").length - 1).toBe(1);
+    expect(markdown).toContain("### DUP: old wording");
+  });
+
   it("writes deterministic digest and plan ID and reads edited draft JSON", async () => {
     const projectRoot = root();
     const first = await writePlanDraft(projectRoot, input, result, []);

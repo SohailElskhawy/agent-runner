@@ -33,9 +33,12 @@ export async function writeDiscoveryQuestions(projectRoot: string, questions: re
   const previousDecisions = blocks
     .filter((block) => !currentIds.has(block.id) && answeredBlocks.get(block.id) === block)
     .map(rawBlock);
-  const content = ["# Planning decisions\n\nContinue multi-line answers on lines indented by two spaces.\n\n", ...previousDecisions, ...questions.map((question) => {
+  const emittedQuestionIds = new Set<string>();
+  const content = ["# Planning decisions\n\nContinue multi-line answers on lines indented by two spaces.\n\n", ...previousDecisions, ...questions.flatMap((question) => {
+    if (emittedQuestionIds.has(question.id)) return [];
+    emittedQuestionIds.add(question.id);
     const block = answeredBlocks.get(question.id);
-    if (block !== undefined) return rawBlock(block);
+    if (block !== undefined) return [rawBlock(block)];
     return [
       `### ${question.id}: ${question.prompt.replace(/[\r\n]+/g, " ")}`,
       `Why: ${question.reason.replace(/[\r\n]+/g, " ")}`,
