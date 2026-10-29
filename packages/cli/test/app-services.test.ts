@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,7 +22,7 @@ import {
 } from "../src/application/defaults.js";
 import { createFixtureProject, temporaryDirectory, writeProjectConfiguration } from "./fixtures.js";
 
-const CASE_INSENSITIVE_PLATFORM = process.platform === "win32" || process.platform === "darwin";
+const CASE_INSENSITIVE_PLATFORM = process.platform === "win32";
 
 class RecordingOrchestrator implements SingleTaskOrchestrator {
   readonly calls: string[] = [];
@@ -85,16 +85,32 @@ describe("createAppServices wiring", () => {
     expect(projectKey(directory)).toBe(projectKey(join(directory, ".")));
     if (CASE_INSENSITIVE_PLATFORM) {
       expect(normalizeProjectRootForIdentity(directory)).toBe(
-        resolve(directory).toLowerCase(),
+        realpathSync(directory).toLowerCase(),
       );
     } else {
-      expect(normalizeProjectRootForIdentity(directory)).toBe(resolve(directory));
+      expect(normalizeProjectRootForIdentity(directory)).toBe(realpathSync(directory));
     }
   });
 
-  it("folds path casing on case-insensitive platforms only", () => {
-    const upper = directory.toUpperCase();
-    const lower = directory.toLowerCase();
+  it.each([
+    ["existing directory", []],
+    ["missing descendants", ["missing", "child"]],
+  ])("uses the same default state paths through a directory alias for %s", (_label, suffix) => {
+    const target = join(directory, "target");
+    const alias = join(directory, "alias");
+    mkdirSync(target);
+    symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir");
+
+    const realRoot = join(target, ...suffix);
+    const aliasRoot = join(alias, ...suffix);
+    expect(defaultStateDir(aliasRoot)).toBe(defaultStateDir(realRoot));
+    expect(resolveStorePath({ projectRoot: aliasRoot })).toBe(resolveStorePath({ projectRoot: realRoot }));
+    expect(resolveWorktreesDir({ projectRoot: aliasRoot })).toBe(resolveWorktreesDir({ projectRoot: realRoot }));
+  });
+
+  it("folds path casing on Windows only", () => {
+    const upper = join(directory, "MISSING");
+    const lower = join(directory, "missing");
     if (CASE_INSENSITIVE_PLATFORM) {
       expect(projectKey(upper)).toBe(projectKey(lower));
       expect(defaultStateDir(upper)).toBe(defaultStateDir(lower));

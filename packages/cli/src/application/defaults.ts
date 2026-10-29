@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { VerificationCheckSpec } from "@agentic-dev-runner/verification";
 
 export type AppServicesOptions = {
@@ -32,20 +33,31 @@ export const DEFAULT_PROJECT_ID = "proj-local";
 export const DEFAULT_AGENT_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_MAX_PARALLELISM = 1;
 
-const CASE_INSENSITIVE_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set([
-  "win32",
-  "darwin",
-]);
-
 export function resolveProjectRoot(projectRoot: string): string {
   return resolve(projectRoot);
 }
 
 export function normalizeProjectRootForIdentity(projectRoot: string): string {
   const absolute = resolveProjectRoot(projectRoot);
-  return CASE_INSENSITIVE_PLATFORMS.has(process.platform)
-    ? absolute.toLowerCase()
-    : absolute;
+  let current = absolute;
+  let canonical: string;
+  while (true) {
+    try {
+      canonical = join(realpathSync(current), relative(current, absolute));
+      break;
+    } catch (error) {
+      if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "ENOENT") {
+        throw error;
+      }
+      const parent = dirname(current);
+      if (parent === current) {
+        canonical = absolute;
+        break;
+      }
+      current = parent;
+    }
+  }
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
 export function projectKey(projectRoot: string): string {
