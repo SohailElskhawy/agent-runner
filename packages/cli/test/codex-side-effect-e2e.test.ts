@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexAdapter, type AgentRegistry } from "@agentic-dev-runner/agents";
 import { createSqliteRunnerStore, type RunnerStore } from "@agentic-dev-runner/persistence";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
@@ -22,6 +22,20 @@ const config = [
   "verification:", "  checks:", "    unit:", "      command: node", "      args:", "        - --check", "        - src/report.mjs",
   "agents:", "  profiles:", "    fixture:", "      adapter: codex", "      capabilities:", "        - typescript", "",
 ].join("\n");
+
+function registeredWorktreePath(path: string): string {
+  return realpathSync.native(path).replaceAll("\\", "/");
+}
+
+it("compares a registered worktree using its canonical path", () => {
+  const native = vi.spyOn(realpathSync, "native").mockReturnValue("C:\\Users\\runneradmin\\worktree");
+  try {
+    expect(registeredWorktreePath("C:\\Users\\RUNNER~1\\worktree"))
+      .toBe("C:/Users/runneradmin/worktree");
+  } finally {
+    native.mockRestore();
+  }
+});
 
 describe("Codex child side effects at the workflow scope gate", () => {
   let directory: string;
@@ -114,7 +128,7 @@ describe("Codex child side effects at the workflow scope gate", () => {
       expect(readFileSync(join(worktree, ".serena", "project.yml"), "utf8")).toBe("fixture: retained\n");
       expect(readFileSync(join(worktree, "src", "report.mjs"), "utf8")).toBe("export const report = 'fixture';\n");
       expect(await git(["show", ":.serena/project.yml"], worktree)).toBe("fixture: retained");
-      expect((await git(["worktree", "list", "--porcelain"])).replaceAll("\\", "/")).toContain(`worktree ${worktree.replaceAll("\\", "/")}`);
+      expect((await git(["worktree", "list", "--porcelain"])).replaceAll("\\", "/")).toContain(`worktree ${registeredWorktreePath(worktree)}`);
       expect(await git(["rev-parse", "HEAD"], worktree)).toBe(base);
       expect(await git(["rev-parse", "HEAD"])).toBe(base);
     } else {
