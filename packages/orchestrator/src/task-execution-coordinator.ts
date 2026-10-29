@@ -42,6 +42,7 @@ export type TaskAdmission = {
   readonly taskId: TaskId;
   readonly kind: "admitted" | "deferred";
   readonly reason?:
+    | "runner-paused"
     | "capacity-exhausted"
     | "conflict"
     | "already-claimed"
@@ -199,7 +200,9 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       });
       if (claim.kind !== "claimed") {
         const reason =
-          claim.kind === "capacity-exhausted"
+          claim.kind === "runner-paused"
+            ? "runner-paused"
+            : claim.kind === "capacity-exhausted"
             ? "capacity-exhausted"
             : claim.kind === "already-claimed"
               ? "already-claimed"
@@ -207,7 +210,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
                 ? "lock-unavailable"
                 : "conflict";
         admissions.push({ taskId: task.id, kind: "deferred", reason });
-        if (claim.kind === "capacity-exhausted") {
+        if (claim.kind === "capacity-exhausted" || claim.kind === "runner-paused") {
           break;
         }
         continue;

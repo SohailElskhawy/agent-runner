@@ -233,6 +233,19 @@ export function applyTaskApprovalSchema(db: SchemaMigrationDatabase): void {
   for (const statement of SCHEMA_V10_STATEMENTS) db.exec(statement);
 }
 
+function applyRunnerControlSchema(db: SchemaMigrationDatabase): void {
+  db.exec(`CREATE TABLE runner_control (
+    project_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK (state IN ('RUNNING', 'PAUSED')),
+    paused_at TEXT,
+    pause_reason TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK ((state = 'RUNNING' AND paused_at IS NULL AND pause_reason IS NULL)
+      OR (state = 'PAUSED' AND paused_at IS NOT NULL)),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  ) STRICT`);
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -284,6 +297,7 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     name: "add-task-approval-state",
     up: applyTaskApprovalSchema,
   },
+  { version: 11, name: "add-runner-control-state", up: applyRunnerControlSchema },
 ];
 
 export const SCHEMA_VERSION: number =

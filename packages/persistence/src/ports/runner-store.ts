@@ -11,6 +11,7 @@ import type {
   Project,
   ProjectId,
   ResourceLock,
+  RunnerControlStatus,
   StageRun,
   Task,
   TaskId,
@@ -60,6 +61,7 @@ export type TaskExecutionClaimResult =
   | { readonly kind: "claimed"; readonly claim: ExecutionClaim }
   | {
       readonly kind:
+        | "runner-paused"
         | "task-not-ready"
         | "already-claimed"
         | "capacity-exhausted"
@@ -84,6 +86,10 @@ export interface RunnerStore {
   getProject(id: ProjectId): Promise<Project | null>;
   listProjects(): Promise<Project[]>;
   putProject(project: Project): Promise<void>;
+
+  getRunnerControl(projectId: ProjectId): Promise<RunnerControlStatus>;
+  pauseRunner(projectId: ProjectId, pausedAt: IsoTimestamp, reason?: string): Promise<{ changed: boolean; control: RunnerControlStatus }>;
+  resumeRunner(projectId: ProjectId, resumedAt: IsoTimestamp): Promise<{ changed: boolean; control: RunnerControlStatus }>;
 
   getTask(id: TaskId): Promise<Task | null>;
   listTasks(filter?: TaskFilter): Promise<Task[]>;

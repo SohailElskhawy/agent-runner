@@ -5,6 +5,7 @@ export * from "./agent-router.js";
 export * from "./ids.js";
 export * from "./timestamp.js";
 export * from "./project.js";
+export * from "./runner-control.js";
 export * from "./task-status.js";
 export * from "./task-contract.js";
 export * from "./task.js";
