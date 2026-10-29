@@ -7,6 +7,7 @@ import type {
   Task,
   TaskId,
   TaskStatus,
+  RunnerControlStatus,
 } from "@agentic-dev-runner/core";
 
 export type InitResult = {
@@ -23,11 +24,14 @@ export type AddTaskResult = {
 };
 
 export type RunResult =
+  | { readonly kind: "paused"; readonly message: string }
   | { readonly kind: "completed"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "cancelled"; readonly message: string }
   | { readonly kind: "blocked"; readonly message: string }
   | { readonly kind: "rejected"; readonly message: string };
+
+export type ControlCommandResult = { readonly changed: boolean; readonly message: string };
 
 export type ApprovalCommandResult = {
   readonly kind: "granted" | "already-granted" | "rejected";
@@ -55,6 +59,7 @@ export type AgentStatusEntry = {
 
 export type ProjectStatus = {
   readonly project: Project | null;
+  readonly runnerControl: RunnerControlStatus | null;
   readonly tasks: readonly TaskStatusEntry[];
   readonly scheduler: SchedulerStatus;
 };

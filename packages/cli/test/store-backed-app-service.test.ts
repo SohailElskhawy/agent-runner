@@ -71,7 +71,7 @@ class StubRecovery implements CrashRecovery {
 class StubUnattendedScheduler {
   readonly runCalls: { maxParallelism?: number | undefined }[] = [];
 
-  constructor(private readonly kind: "quiescent" | "blocked") {}
+  constructor(private readonly kind: "quiescent" | "blocked" | "paused") {}
 
   async run(options: { maxParallelism?: number } = {}) {
     this.runCalls.push(options);
@@ -203,6 +203,33 @@ describe("StoreBackedAppService", () => {
     }
     return { service: serviceWithOutcome(completedOutcome), store };
   }
+
+  it("performs startup reconciliation before refusing a paused run", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.pauseRunner("proj-local", new Date().toISOString());
+    const log: string[] = [];
+    const orchestrator = new StubOrchestrator(completedOutcome, log);
+    const service = createStoreBackedAppService({ storePath, projectRoot: directory, store, orchestrator, recovery: new RecordingRecovery(log), agents: stubAgents });
+    expect((await service.run("M001")).kind).toBe("paused");
+    expect(log).toEqual(["reconcileUnfinished"]);
+    expect(orchestrator.calls).toEqual([]);
+  });
+
+  it("rolls back a pause when its event cannot be appended and remains usable", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    const failing = new Proxy(store, { get(target, property) {
+      if (property === "appendEvents") return async () => { throw new Error("event write failed"); };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const service = createStoreBackedAppService({ storePath, projectRoot: directory, store: failing, orchestrator: new StubOrchestrator(completedOutcome), recovery: new StubRecovery(), agents: stubAgents });
+    await expect(service.pause("maintenance")).rejects.toThrow("event write failed");
+    expect((await store.getRunnerControl("proj-local")).state).toBe("RUNNING");
+    expect(await store.listEvents({ type: "runner.paused" })).toEqual([]);
+    expect((await serviceWithOutcome(completedOutcome).pause()).changed).toBe(true);
+  });
 
   it("delegates run exactly once to the orchestrator and maps the outcome", async () => {
     const orchestrator = new StubOrchestrator(completedOutcome);
@@ -564,6 +591,17 @@ describe("StoreBackedAppService", () => {
     expect(result.message).toContain("quiescence");
     expect(result.message).toContain("1 DONE");
     expect(result.message).toContain("1 READY");
+  });
+
+  it("maps a scheduler drain to paused and a nonzero CLI exit", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    const scheduler = new StubUnattendedScheduler("paused");
+    const service = createStoreBackedAppService({ storePath, projectRoot: directory, store, orchestrator: new StubOrchestrator(completedOutcome), recovery: new StubRecovery(), agents: stubAgents, scheduler: scheduler as unknown as never });
+    expect((await service.runUnattended()).kind).toBe("paused");
+    const { io, errors } = captureIo();
+    expect(await runCli(["run"], { io, servicesFactory: () => service })).toBe(1);
+    expect(errors.join(" ")).toContain("paused");
   });
 
   it("reports a blocked unattended run as failed with the final persisted state", async () => {

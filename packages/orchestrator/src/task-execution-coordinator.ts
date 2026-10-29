@@ -30,6 +30,7 @@ export type TaskExecutionCoordinatorOptions = {
   readonly maxParallelism: number;
   /** Bounded durable liveness window for a scheduler execution. */
   readonly leaseDurationMs?: number | undefined;
+  /** Enables idle pause detection; claims remain gated when omitted. */
   readonly projectId?: string | undefined;
   readonly createExecutor: (
     task: Task,

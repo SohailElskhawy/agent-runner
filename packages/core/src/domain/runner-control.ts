@@ -8,5 +8,5 @@ export type RunnerControlStatus = {
   readonly state: RunnerControlState;
   readonly pausedAt?: IsoTimestamp | undefined;
   readonly pauseReason?: string | undefined;
-  readonly updatedAt: IsoTimestamp;
+  readonly updatedAt?: IsoTimestamp | undefined;
 };

@@ -222,6 +222,6 @@ write transaction that acquires claims and locks. Task and integration queue
 states remain unchanged. Existing admitted work is not interrupted.
 
 **Delivery:** AR031 implements the persistence contract and claim gate. AR032 adds
-coordinator admission and scheduler drain, preserving startup recovery. Event
-names are defined but emission and CLI commands (AR033) remain outstanding;
-this decision does not claim end-to-end pause/resume availability.
+coordinator admission and scheduler drain, preserving startup recovery. AR033 delivers
+CLI control and atomic transition events, with direct execution admission gated.
+Pause drains admitted work and does not interrupt in-flight agents.

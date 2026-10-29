@@ -200,6 +200,7 @@ class SequentialTaskOrchestrator implements SingleTaskOrchestrator {
 
     try {
       await this.store.transaction(async () => {
+        if ((await this.store.getRunnerControl(task.projectId)).state === "PAUSED") throw new Error('runner is paused; run "agentic resume" to continue');
         await this.store.putAttempt(attempt);
         await this.store.appendEvents([
           {

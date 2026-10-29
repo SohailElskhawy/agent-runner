@@ -34,7 +34,7 @@ V0.1 limitations and deferrals:
 
 - Planning uses bounded repository evidence and a human-edited `.agentic/decisions.md`; it is not an interactive design session or a guarantee of product completeness. Manual JSON tasks remain supported for advanced users.
 - Token and cost telemetry are v0.2; there is no `agentic cost` command yet.
-- `pause`/`resume` are v0.2. A run either continues to completion or is interrupted and recovered on the next invocation.
+- `agentic pause [--reason <text>]` and `agentic resume` provide v0.2 durable runner control. Pause stops new admissions while in-flight tasks and queued integrations drain; it does not interrupt agents. `agentic status` shows the control state and active claims.
 - Learned routing and automatic fallback to a different provider are v0.2. V0.1 routing deterministically selects the cheapest eligible configured profile that meets the task's minimum tier and escalates that minimum after failed attempts.
 - Timeout and cancellation terminate the direct agent process only, not its whole process tree. A terminated agent can leave orphaned child processes behind on the host.
 - The runner is local-only: one engine per machine, no remote workers, no cloud control plane, no GUI.

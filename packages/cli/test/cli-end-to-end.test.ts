@@ -154,6 +154,38 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
     expect(exit, `tasks add ${id} failed: ${errors.join("\n")}`).toBe(0);
   }
 
+  it("pauses durably, refuses execution, and resumes a task", async () => {
+    const agent = new RecordingAgentRuntime();
+    const factory = () => servicesForRepository(agent);
+    const output = captureIo();
+    expect(await runCli(["pause"], { io: output.io, servicesFactory: factory })).toBe(1);
+    expect(output.errors.join(" ")).toContain("agentic init");
+    expect(await runCli(["resume"], { io: output.io, servicesFactory: factory })).toBe(1);
+    expect(await runCli(["init"], { io: output.io, servicesFactory: factory })).toBe(0);
+    store = await openRepositoryStore();
+    await store.putTask(createFixtureTask({ projectId: "proj-local" }));
+    await store.close();
+    store = undefined;
+    const reason = "maintenance\u001b[31m\n";
+    expect(await runCli(["pause", "--reason", reason], { io: output.io, servicesFactory: factory })).toBe(0);
+    expect(await runCli(["pause"], { io: output.io, servicesFactory: factory })).toBe(0);
+    expect(await runCli(["status"], { io: output.io, servicesFactory: factory })).toBe(0);
+    expect(output.lines.join(" ")).toContain("PAUSED");
+    expect(output.lines.join(" ")).toContain("maintenance");
+    expect(output.lines).toContain(`  reason: ${JSON.stringify(reason)}`);
+    expect(output.lines.join(" ")).not.toContain("\u001b");
+    expect(await runCli(["run", "M001"], { io: output.io, servicesFactory: factory })).toBe(1);
+    expect(await runCli(["run"], { io: output.io, servicesFactory: factory })).toBe(1);
+    expect(agent.invocations).toHaveLength(0);
+    expect(await runCli(["resume"], { io: output.io, servicesFactory: factory })).toBe(0);
+    expect(await runCli(["resume"], { io: output.io, servicesFactory: factory })).toBe(0);
+    expect(await runCli(["run", "M001"], { io: output.io, servicesFactory: factory })).toBe(0);
+    store = await openRepositoryStore();
+    const events = (await store.listEvents()).filter(e => e.type.startsWith("runner."));
+    expect(events.map(e => e.type)).toEqual(["runner.paused", "runner.resumed"]);
+    expect(events.every(e => e.taskId === null && (e.payload as { projectId: string }).projectId === "proj-local")).toBe(true);
+  });
+
   it("init persists runner state idempotently", async () => {
     const { io, lines } = captureIo();
     const first = await runCli(["init"], { io, servicesFactory: () => servicesForRepository(new RecordingAgentRuntime()) });

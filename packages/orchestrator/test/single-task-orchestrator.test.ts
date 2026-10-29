@@ -73,6 +73,7 @@ let verification: FakeVerificationEngine;
 let orchestrator: SingleTaskOrchestrator;
 
 type WireOptions = {
+  readonly storeOverride?: RunnerStore | undefined;
   readonly agent?: AgentBehavior | undefined;
   readonly verification?: VerificationResponse | undefined;
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
@@ -90,7 +91,7 @@ function wireOrchestrator(options: WireOptions = {}): void {
       ? git
       : injectGitFailures(git, options.gitFailures);
   orchestrator = createSingleTaskOrchestrator({
-    store,
+    store: options.storeOverride ?? store,
     git: effectiveGit,
     agent,
     verification,
@@ -249,6 +250,31 @@ describe("SingleTaskOrchestrator", () => {
   afterEach(async () => {
     await store.close();
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("rejects when pause wins immediately before attempt admission", async () => {
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "transaction") return async (body: () => Promise<unknown>) => {
+        await target.pauseRunner("proj-1", new Date().toISOString());
+        return target.transaction(body);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const outcome = await (wireOrchestrator({ storeOverride: intercepted }), orchestrator.run(taskId));
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
+  });
+
+  it("refuses a paused direct run before creating an attempt or worktree", async () => {
+    await store.pauseRunner("proj-1", new Date().toISOString());
+    const outcome = await orchestrator.run(taskId);
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
   });
 
   it("runs one READY task end-to-end and persists DONE only after integration", async () => {

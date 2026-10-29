@@ -3,6 +3,15 @@ import { parseArgs } from "../src/parse-args.js";
 import { CliError } from "../src/errors.js";
 
 describe("CLI argument parsing", () => {
+  it("parses pause and resume and rejects empty reasons", () => {
+    expect(parseArgs(["pause", "--reason", "maintenance"])).toEqual({ name: "pause", reason: "maintenance" });
+    expect(parseArgs(["resume"])).toEqual({ name: "resume" });
+    expect(() => parseArgs(["pause", "--reason", "  "])).toThrow(CliError);
+    expect(() => parseArgs(["pause", "--reason"])).toThrow(CliError);
+    expect(() => parseArgs(["pause", "extra"])).toThrow(CliError);
+    expect(() => parseArgs(["resume", "extra"])).toThrow(CliError);
+  });
+
   it("parses init", () => {
     expect(parseArgs(["init"])).toEqual({ name: "init" });
   });
