@@ -7,6 +7,7 @@ launch verification gates are still pending; this entry is not a release
 announcement.
 
 ### Added
+- Neutral invocation usage observation contract (D-AP-6 slice 1, per ADR-020): provider-reported per-invocation usage evidence types with unknown/partial/complete/inconsistent status, distinct optional counters, exact reported cost with currency and provenance, and strict safe validation. Contract only; not persisted, not wired to invocations, no provider parsing, no display.
 - Packed-install smoke coverage for durable pause/resume and paused execution refusal using separate CLI processes and a fake provider.
 - V0.2 M075: durable CLI pause/resume, atomic control events and admission, and scheduler drain with startup recovery preserved. In-flight agents are not interrupted. Pause and resume require initialization; existing run-before-init behavior remains unchanged.
 - Dated release-gate evidence snapshot (2026-10-28) with explicit claim limits in the launch roadmap, linked from the release and dogfood docs.

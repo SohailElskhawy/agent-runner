@@ -225,3 +225,49 @@ states remain unchanged. Existing admitted work is not interrupted.
 coordinator admission and scheduler drain, preserving startup recovery. AR033 delivers
 CLI control and atomic transition events, with direct execution admission gated.
 Pause drains admitted work and does not interrupt in-flight agents.
+
+---
+
+### ADR-020 — Trustworthy Per-Invocation Usage Observation Contract (D-AP-6)
+
+**Status:** PROVISIONAL — D-AP-6 (Panel unanimous 3–0, CEO approved; owner confirmation pending; AR037 evidence limits apply).
+
+**Decision:** The runner records at most one neutral, provider-independent usage
+observation per distinct invocation (stage run or separately identified
+single-task invocation), validated by `packages/core/src/domain/invocation-usage.ts`.
+The contract is provider-agnostic: it stores only what a provider reported
+(exact provider-reported counter values with their own currency and provenance
+for money) and explicit well-formedness statuses:
+
+- `unknown` — nothing usable was reported (no result, crash gap, unusable
+  output). Unknown is never zero.
+- `partial` — some evidence reported, coverage incomplete.
+- `complete` — the caller asserts full invocation coverage.
+- `inconsistent` — reported values contradict; evidence is retained with
+  required reasons and never repaired.
+
+Counters are independently optional nonnegative safe integers
+(input, output, reasoning, cache read, cache write, and a provider-reported
+total only); omission is distinct from an explicit zero, cache counts are
+labelled (`subset`/`independent` or absent for no claim) and never merged into
+input. Money is an exact decimal string with verbatim provider-reported
+currency and provenance; absent unless the provider explicitly reported it.
+No prices, derived costs, inferred subscription costs or assumed currency are
+invented at this layer, and per AR037 upstream may coerce missing usage to
+zero, so no numeric observation is trusted without an approved provider
+evidence model.
+
+Validation is strict and safe: malformed values, unknown fields, unknown
+statuses, future schema versions, and status/content contradictions return
+null (never throw) and are rejected as evidence, never guessed around.
+
+**Scope reconciliation (what this slice does NOT do — AR040+ slices):**
+slice 1 adds only the observation contract, exports, validation and focused
+compatibility tests. It does not persist observations (schema/migration belongs
+to a later slice), wire observations into invocation creation, agent results,
+stage finalizers or crash recovery, parse any provider output (adapter parsing
+remains behind the adapter boundary per ADR-009), or render usage in any CLI
+view (`inspect --usage` and any display are separate approved slices). Legacy
+attempt `tokenUsage`/`cost` fields remain readable but unverified and are not
+reinterpreted as trustworthy evidence. Planning invocations are excluded and
+visibly documented in later slices per D-AP-6.
