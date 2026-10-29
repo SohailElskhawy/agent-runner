@@ -61,6 +61,12 @@ npm install --global ./packages/agentic-dev-runner
 agentic help
 ```
 
+`corepack` is bundled with Node.js 24 but was removed from the Node.js
+distribution in Node.js 25+. If `corepack: command not found`, install pnpm
+directly (for example `npm install --global pnpm@12.4.1`, matching the pinned
+`packageManager` version) and run the same commands as
+`pnpm install && pnpm --filter agentic-dev-runner build`.
+
 To run the CLI directly without installing it, from the source checkout root:
 
 ```bash
@@ -120,8 +126,10 @@ for `adapter: codex` to use the Codex CLI instead.
 `planning.profile` is required for `agentic plan --goal` and must name one of
 the configured agent profiles.
 
-The optional `tier` is `economy`, `standard`, or `strong`; omitted tiers behave
-as `standard` for existing configurations.
+The `model` id is opaque and depends on your provider subscription; pick a real
+one from `opencode models` (for example `opencode-go/glm-5.3-flash`) or the
+Codex CLI. The `tier` is `economy`, `standard`, or `strong`; omitted tiers
+behave as `standard` for existing configurations.
 
 ### 2. Initialize local runner state
 
@@ -143,6 +151,14 @@ Existing state under a previous identity is not moved or migrated.
 agentic analyze
 agentic plan --goal "Implement the project described in docs/PROJECT_SPEC.md"
 ```
+
+Planning invokes the agent CLI in read-only mode. Known limitation: with the
+`opencode` CLI 2.x, `agentic plan --goal` fails with `error: opencode exited
+with code 1` because opencode 2.0 removed `--pure` and no longer applies agent
+definitions passed through `OPENCODE_CONFIG` (verified against opencode 2.2.0).
+Until the adapter is updated, plan with the `codex` adapter, or skip planning
+and add a task manually as shown in the [Advanced](#advanced-add-a-manually-authored-task)
+section below.
 
 If planning reports `NEEDS_DISCOVERY`, edit the generated
 `.agentic/decisions.md` answers and rerun the plan command. For multiline answers,
@@ -241,6 +257,10 @@ in JSON form:
 Add and run it with:
 
 ```bash
+git add task.json
+git commit -m "chore: add M001 task file"   # or the rest of your project workflow
+git status --short                          # must be empty before execution
+
 agentic tasks add task.json
 agentic run --parallel 3
 agentic status
@@ -252,6 +272,19 @@ validation errors are reported before anything executes. `run --parallel 3`
 lets the unattended scheduler execute up to three independent tasks
 concurrently (tasks whose dependencies are not `DONE` wait). To execute one
 task sequentially instead, use `agentic run M001`.
+
+The runner requires a clean Git working tree before execution, exactly as the
+plan-approval path above. Uncommitted or untracked files in the repository
+root (including the freshly added `task.json`) make integration fail with
+`integration failed: Git operation "integrateBranch" failed (integration
+worktree has uncommitted changes)`; commit them and retry the task with
+`agentic retry <task-id>`.
+
+After a failed attempt the task's minimum routing tier escalates one step
+(shown with `agentic inspect <task-id>`). If no configured profile's tier still
+meets it, unattended `run` reaches quiescence while the task stays `READY` —
+raise the profile's `tier` in `agentic.yaml`, commit the change, then
+`agentic retry <task-id>`.
 
 ## Command reference
 

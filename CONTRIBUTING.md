@@ -25,6 +25,11 @@ corepack enable
 pnpm install
 ```
 
+`corepack` is bundled with Node.js 24 but was removed from the Node.js
+distribution in Node.js 25+. If `corepack: command not found`, install pnpm
+directly, matching the pinned `packageManager` version (for example
+`npm install --global pnpm@12.4.1`), and skip `corepack enable`.
+
 The repository is a pnpm workspace. The CLI is assembled by bundling
 `packages/*` into `packages/agentic-dev-runner/bundle/main.js`; run the bundle
 directly while developing:
