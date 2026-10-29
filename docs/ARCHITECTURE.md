@@ -98,7 +98,7 @@ addTask()
 doctor()
 ```
 
-`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pause()` and `resume()` provide v0.2 durable runner control. Admission and control events are atomic, startup recovery remains active while paused, and already admitted work drains without interruption (ADR-019).
+`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pause()` and `resume()` provide v0.2 durable runner control and require an initialized project; run commands retain their existing behavior before initialization. Admission and control events are atomic, startup recovery remains active while paused, and already admitted work drains without interruption (ADR-019).
 
 The CLI and future GUI both use these same operations.
 

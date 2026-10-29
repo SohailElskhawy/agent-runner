@@ -232,8 +232,6 @@ describe("StoreBackedAppService", () => {
   });
 
   it("delegates run exactly once to the orchestrator and maps the outcome", async () => {
-    await store.initialize();
-    await store.putProject(createFixtureProject());
     const orchestrator = new StubOrchestrator(completedOutcome);
     const service = createStoreBackedAppService({
       storePath,
@@ -251,8 +249,6 @@ describe("StoreBackedAppService", () => {
   });
 
   it("reconciles unfinished operations once at startup before any application operation", async () => {
-    await store.initialize();
-    await store.putProject(createFixtureProject());
     const log: string[] = [];
     const service = createStoreBackedAppService({
       storePath,
@@ -627,7 +623,7 @@ describe("StoreBackedAppService", () => {
     const result = await service.runUnattended();
 
     expect(scheduler.runCalls).toEqual([{}]);
-    expect(result.kind).toBe("blocked");
+    expect(result.kind).toBe("failed");
     expect(result.message).toContain("blocked");
     expect(result.message).toContain("1 DONE");
     expect(result.message).toContain("1 BLOCKED");
@@ -854,8 +850,6 @@ describe("StoreBackedAppService", () => {
   });
 
   it("maps rejected orchestration outcomes to rejected run results", async () => {
-    await store.initialize();
-    await store.putProject(createFixtureProject());
     const service = serviceWithOutcome({
       kind: "rejected",
       taskId: "M001",
@@ -873,8 +867,6 @@ describe("StoreBackedAppService", () => {
   });
 
   it("renders run results through the command layer with correct exit codes", async () => {
-    await store.initialize();
-    await store.putProject(createFixtureProject());
     const { io, lines, errors } = captureIo();
     const service = serviceWithOutcome(completedOutcome);
     const exitCode = await executeRunCommand("M001", service, io);

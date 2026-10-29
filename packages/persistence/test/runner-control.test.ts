@@ -72,6 +72,25 @@ it("persists idempotent control per project and gates claims without side effect
   } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+it("joins caller-owned transactions and retains standalone control operations", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "runner-control-"));
+  const store = createSqliteRunnerStore({ path: join(dir, "state.db") });
+  const at = "2026-02-01T00:00:00.000Z";
+  try {
+    await store.initialize();
+    await store.putProject(createProject());
+    await expect(store.transaction(async () => {
+      await store.pauseRunner("proj-1", at);
+      throw new Error("abort");
+    })).rejects.toThrow("abort");
+    expect((await store.getRunnerControl("proj-1")).state).toBe("RUNNING");
+    await store.transaction(async () => { await store.pauseRunner("proj-1", at); });
+    expect((await store.getRunnerControl("proj-1")).state).toBe("PAUSED");
+    await store.resumeRunner("proj-1", at);
+    expect((await store.getRunnerControl("proj-1")).state).toBe("RUNNING");
+  } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it("rejects an unexpected preexisting control table without advancing v10", async () => {
   const dir = mkdtempSync(join(tmpdir(), "runner-control-"));
   const path = join(dir, "state.db");

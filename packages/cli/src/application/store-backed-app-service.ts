@@ -203,7 +203,8 @@ class StoreBackedAppService implements RunnerAppService {
   }
 
   private async pausedRun(): Promise<RunResult | null> {
-    const project = await this.requireProject();
+    const project = (await this.store.listProjects()).at(0);
+    if (project === undefined) return null;
     return (await this.store.getRunnerControl(project.id)).state === "PAUSED"
       ? { kind: "paused", message: 'runner is paused; run "agentic resume" to continue' }
       : null;
@@ -421,7 +422,7 @@ class StoreBackedAppService implements RunnerAppService {
             summary,
         }
       : {
-          kind: outcome.kind === "paused" ? "paused" : "blocked",
+          kind: outcome.kind === "paused" ? "paused" : "failed",
           message:
             `unattended run is ${outcome.kind} after ${String(outcome.cycles.length)} cycle(s); ` +
             summary + (outcome.kind === "paused" ? '; run "agentic resume" to continue' : ""),

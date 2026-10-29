@@ -458,7 +458,7 @@ describe("CLI end-to-end over a repository with spaces in its path", () => {
 
     const runExit = await runCli(["run", "M999"], { io, servicesFactory: async () => services });
     expect(runExit).toBe(1);
-    expect(errors.join("\n")).toContain("agentic init");
+    expect(errors.join("\n")).toContain("rejected");
   });
 
   it("approves a reviewed plan through the CLI and persists its tasks and event", async () => {
