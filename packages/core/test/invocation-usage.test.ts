@@ -253,6 +253,33 @@ describe("invocation usage observation validation rejects malformed evidence saf
     expect(parse(blankCurrency)).toBeNull();
   });
 
+  it("rejects estimated/derived metadata keys on cost instead of stripping them", () => {
+    const estimatedMetadata = {
+      ...providerCostReport,
+      cost: {
+        ...providerCostReport.cost,
+        estimated: true,
+        derivedFrom: "tokens",
+      },
+    };
+    expect(parse(estimatedMetadata)).toBeNull();
+  });
+
+  it("rejects unknown keys on cost provenance instead of dropping them", () => {
+    const catalogKind = {
+      ...providerCostReport,
+      cost: {
+        ...providerCostReport.cost,
+        provenance: {
+          source: "synthetic-fixture-contract",
+          scope: "invocation",
+          kind: "catalog",
+        },
+      },
+    };
+    expect(parse(catalogKind)).toBeNull();
+  });
+
   it("rejects status/content contradictions instead of repairing them", () => {
     const unknownWithEvidence = {
       ...unknownOnly,

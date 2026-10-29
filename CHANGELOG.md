@@ -21,6 +21,7 @@ announcement.
 - Bounded repository analysis, decision-file discovery, validated plan drafts, explicit plan approval, and deterministic cheap-first profile routing.
 
 ### Fixed
+- Invocation usage observation validation rejects unknown keys on `cost` and `cost.provenance` (per ADR-020 strict-shape contract) instead of silently stripping estimated/derived/unknown metadata; such evidence is now safely rejected rather than passing through as plain provider-reported cost.
 - Single-task orchestrator tests allow bounded time for Windows Git operations and await complete runs before closing the store and retrying fixture cleanup.
 - Windows E2E fixtures compare canonical worktree paths and allow the 20-task Git workflow more time, waiting for the test run before cleanup.
 - Default project state paths resolve directory aliases, including Windows short names, and missing descendants through their nearest existing ancestor; Windows and macOS case folding is preserved, and existing state is not migrated. Workflow executor tests await Git processes and retry cleanup on Windows.

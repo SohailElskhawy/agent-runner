@@ -100,6 +100,12 @@ const OBSERVATION_KEYS: ReadonlySet<string> = new Set([
   "cost",
   "inconsistentReasons",
 ]);
+const COST_KEYS: ReadonlySet<string> = new Set([
+  "amount",
+  "currency",
+  "provenance",
+]);
+const PROVENANCE_KEYS: ReadonlySet<string> = new Set(["source", "scope"]);
 
 /** Maximum accepted value for every counter (safe integer bound). */
 const MAX_COUNTER = Number.MAX_SAFE_INTEGER;
@@ -227,6 +233,9 @@ function parseReasons(value: unknown): readonly string[] | undefined | null {
 function parseCost(value: unknown): InvocationReportedCost | undefined | null {
   if (value === undefined) return undefined;
   if (!isRecord(value)) return null;
+  for (const key of Object.keys(value)) {
+    if (!COST_KEYS.has(key)) return null;
+  }
   const amount: unknown = value["amount"];
   if (typeof amount !== "string" || !DECIMAL_AMOUNT_PATTERN.test(amount)) {
     return null;
@@ -235,6 +244,9 @@ function parseCost(value: unknown): InvocationReportedCost | undefined | null {
   if (typeof currency !== "string" || !currency.trim()) return null;
   const provenance: unknown = value["provenance"];
   if (!isRecord(provenance)) return null;
+  for (const key of Object.keys(provenance)) {
+    if (!PROVENANCE_KEYS.has(key)) return null;
+  }
   const source: unknown = provenance["source"];
   const scope: unknown = provenance["scope"];
   if (
