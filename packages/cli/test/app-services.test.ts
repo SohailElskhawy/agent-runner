@@ -172,6 +172,7 @@ describe("createAppServices wiring", () => {
     try {
       const services = await createServices(directory);
       try {
+        await services.init();
         const result = await services.runUnattended();
         expect(result.kind).toBe("completed");
       } finally {
