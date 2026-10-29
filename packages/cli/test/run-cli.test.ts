@@ -47,6 +47,8 @@ function recordingService(result: {
   let initCount = 0;
   let listAgentsCount = 0;
   const service: RunnerAppService = {
+    async pause() { return { changed: true, message: "paused" }; },
+    async resume() { return { changed: true, message: "resumed" }; },
     async init() {
       initCount += 1;
       if (result.failure !== undefined) {
@@ -128,6 +130,7 @@ function recordingService(result: {
       return (
         result.status ?? {
           project: createFixtureProject(),
+          runnerControl: { projectId: "proj-local", state: "RUNNING" },
           tasks: [],
           scheduler: createSchedulerStatus(),
         }
@@ -184,6 +187,17 @@ function recordingService(result: {
 }
 
 describe("runCli command dispatch", () => {
+  it("shows and dispatches pause and resume with correct exit codes", async () => {
+    const { service } = recordingService({});
+    const output = captureIo();
+    expect(await runCli(["help"], { io: output.io })).toBe(0);
+    expect(output.lines.join(" ")).toContain("agentic pause [--reason <text>]");
+    expect(output.lines.join(" ")).toContain("agentic resume");
+    expect(await runCli(["pause", "--reason", "maintenance"], { io: output.io, servicesFactory: () => service })).toBe(0);
+    expect(await runCli(["resume"], { io: output.io, servicesFactory: () => service })).toBe(0);
+    expect(await runCli(["pause", "--reason", " "], { io: output.io })).toBe(2);
+  });
+
   it("delegates exactly once to the application service on run and exits zero on success", async () => {
     const recording = recordingService({
       run: { kind: "completed", message: 'task "M001" completed' },
@@ -459,6 +473,7 @@ describe("runCli command dispatch", () => {
   it("status and inspect render persisted data returned by the application service", async () => {
     const status: ProjectStatus = {
       project: createFixtureProject({ id: "proj-local" }),
+      runnerControl: { projectId: "proj-local", state: "RUNNING" },
       tasks: [
         {
           id: "M001",

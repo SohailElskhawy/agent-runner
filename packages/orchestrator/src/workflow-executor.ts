@@ -291,7 +291,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       return baseRevision;
     }
 
-    const created = await this.createAttempt(taskId, baseRevision, task.status);
+    const created = await this.createAttempt(taskId, baseRevision, task.status, task.projectId);
     if (!created.ok) {
       return created.rejected;
     }
@@ -594,6 +594,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
     taskId: TaskId,
     baseRevision: string,
     taskStatus: TaskStatus,
+    projectId: string,
   ): Promise<
     | {
         readonly ok: true;
@@ -632,6 +633,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
 
     try {
       await this.store.transaction(async () => {
+        if (this.executionId === undefined && (await this.store.getRunnerControl(projectId)).state === "PAUSED") throw new Error('runner is paused; run "agentic resume" to continue');
         await this.store.putAttempt(attempt);
         await this.store.appendEvents([
           {

@@ -8,6 +8,13 @@ export function renderProjectStatus(io: CliIo, status: ProjectStatus): void {
     return;
   }
   const project = status.project;
+  const control = status.runnerControl;
+  if (control !== null) {
+    io.writeLine(`runner state: ${control.state}`);
+    if (control.pausedAt !== undefined) io.writeLine(`  paused since: ${control.pausedAt}`);
+    if (control.pauseReason !== undefined) io.writeLine(`  reason: ${control.pauseReason}`);
+    if (control.state === "PAUSED") io.writeLine(`  draining active claims: ${String(status.scheduler.activeClaims.length)}`);
+  }
   io.writeLine(`project: ${project.id}`);
   io.writeLine(`  name: ${project.name}`);
   io.writeLine(`  root: ${project.rootPath}`);

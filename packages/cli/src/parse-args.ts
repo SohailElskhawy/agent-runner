@@ -4,6 +4,8 @@ export type ParsedCommand =
   | { readonly name: "init" }
   | { readonly name: "run"; readonly taskId?: string; readonly parallel?: number }
   | { readonly name: "run-all"; readonly parallel?: number }
+  | { readonly name: "pause"; readonly reason?: string }
+  | { readonly name: "resume" }
   | { readonly name: "status" }
   | { readonly name: "inspect"; readonly taskId: string }
   | { readonly name: "approve"; readonly taskId: string }
@@ -23,6 +25,8 @@ export const KNOWN_COMMANDS = [
   "init",
   "run",
   "run-all",
+  "pause",
+  "resume",
   "status",
   "inspect",
   "approve",
@@ -49,6 +53,13 @@ export function parseArgs(argv: readonly string[]): ParsedCommand {
       return parseRunCommand(rest);
     case "run-all":
       return { name: "run-all", ...parseParallelOption("run-all", rest) };
+    case "pause":
+      if (rest.length === 0) return { name: "pause" };
+      if (rest.length !== 2 || rest[0] !== "--reason" || (rest[1] === undefined || rest[1].trim().length === 0)) throw new CliError('command "pause" accepts --reason <non-empty text>');
+      return { name: "pause", reason: rest[1] };
+    case "resume":
+      requireNoExtraArguments(command, rest);
+      return { name: "resume" };
     case "status":
       requireNoExtraArguments(command, rest);
       return { name: "status" };
@@ -248,6 +259,8 @@ export const USAGE = `Usage:
   agentic run <task-id>
   agentic run [--parallel <n>]
   agentic run-all [--parallel <n>]
+  agentic pause [--reason <text>]
+  agentic resume
   agentic status
   agentic inspect <task-id>
   agentic approve <task-id>
@@ -269,6 +282,9 @@ integration verification before DONE.
 "--parallel <n>" configures how many tasks the unattended scheduler may run
 concurrently for that run (a positive integer, default 1). "run-all" is a
 compatibility alias for unattended "run".
+
+"pause" stops new task admissions and lets in-flight work drain; "resume" allows
+new execution. "status" shows the durable control state.
 
 "agents" reports which built-in coding-agent CLIs are locally available.
 "doctor" runs local preflight checks (Node, Git, project state, configuration,

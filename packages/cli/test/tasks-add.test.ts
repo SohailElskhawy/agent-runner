@@ -608,6 +608,8 @@ describe("agentic tasks add", () => {
   it("delegates to the application service instead of persistence", async () => {
     const addCalls: string[] = [];
     const service: RunnerAppService = {
+      async pause() { throw new Error("unexpected pause"); },
+      async resume() { throw new Error("unexpected resume"); },
       async init() {
         return {
           projectId: "proj-local",

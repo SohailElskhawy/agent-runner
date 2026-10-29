@@ -7,7 +7,7 @@ launch verification gates are still pending; this entry is not a release
 announcement.
 
 ### Added
-- Provisional AR031–AR032 slices: SQLite v11 runner control, atomic paused admission, and scheduler drain with recovery preserved. Pause/resume event emission and CLI commands remain outstanding (AR033).
+- V0.2 M075: durable CLI pause/resume, atomic control events and admission, and scheduler drain with startup recovery preserved. In-flight agents are not interrupted.
 - Dated release-gate evidence snapshot (2026-10-28) with explicit claim limits in the launch roadmap, linked from the release and dogfood docs.
 - Recorded OpenCode JSONL log-report example with isolated state, immutable acceptance tests, real execution transcripts and verified final output.
 - Run the existing CI matrix on pushes to `autopilot/main`.
@@ -34,4 +34,4 @@ announcement.
 - Corrected Codex context cleanup tests to inspect artifacts in the task worktree.
 
 ### Deferred to v0.2
-- Token/cost analytics (`cost`), end-to-end `pause/resume` (persistence slice underway), structured logging, automatic alternate-provider fallback, learned routing, and dynamic context relevance discovery.
+- Token/cost analytics (`cost`), structured logging, automatic alternate-provider fallback, learned routing, and dynamic context relevance discovery.

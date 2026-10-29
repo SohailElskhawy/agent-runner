@@ -19,7 +19,7 @@ it("upgrades v10 without losing data and defaults existing projects to running",
     const store = createSqliteRunnerStore({ path });
     try {
       await store.initialize();
-      expect(await store.getRunnerControl("proj-1")).toEqual({ projectId: "proj-1", state: "RUNNING", updatedAt: "2026-01-01T00:00:00.000Z" });
+      expect(await store.getRunnerControl("proj-1")).toEqual({ projectId: "proj-1", state: "RUNNING" });
       expect((await store.getTask("M001"))?.approvalGrantedAt).toBe("2026-01-02T00:00:00.000Z");
       expect(await store.listAttempts()).toHaveLength(1);
       const db = new DatabaseSync(path);

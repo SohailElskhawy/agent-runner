@@ -134,7 +134,7 @@
 - M072 — `agentic status`
 - M073 — `agentic inspect`
 - M074 — `agentic retry` — Delivered in v0.1
-- M075 — `agentic pause/resume` (Deferred to v0.2)
+- M075 — `agentic pause/resume` — Delivered in v0.2 with in-flight drain
 - M076 — `agentic agents`
 - M077 — `agentic cost` (Deferred to v0.2)
 - M078 — `agentic doctor` — Delivered in v0.1
@@ -170,7 +170,6 @@ V0.1 Technical Preview / Early Access includes bounded planning, decision-file d
   - M040 — Support agent context requests
   - M041 — Add context-size/token limits
 - **M064 automatic alternate-provider fallback**: switch to a different provider after a route or invocation failure; v0.1 only escalates the required tier and does not silently change provider.
-- **M075 `agentic pause/resume`**: in-flight run pausing and resumed execution.
 
 ---
 

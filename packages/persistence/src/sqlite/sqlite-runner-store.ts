@@ -173,12 +173,12 @@ export class SqliteRunnerStore implements RunnerStore {
 
   private async changeRunnerControl(projectId: ProjectId, state: "RUNNING" | "PAUSED", at: IsoTimestamp, reason?: string): Promise<{ changed: boolean; control: RunnerControlStatus }> {
     const db = this.requireDb("changeRunnerControl");
-    if (db.isTransaction) throw new PersistenceError("Nested transactions are not supported");
-    db.exec("BEGIN IMMEDIATE");
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
     try {
       const current = readRunnerControl(db, projectId);
       if (current.state === state) {
-        db.exec("COMMIT");
+        if (ownsTransaction) db.exec("COMMIT");
         return { changed: false, control: current };
       }
       db.prepare(`INSERT INTO runner_control (project_id, state, paused_at, pause_reason, updated_at)
@@ -187,10 +187,10 @@ export class SqliteRunnerStore implements RunnerStore {
         pause_reason = excluded.pause_reason, updated_at = excluded.updated_at`)
         .run(projectId, state, state === "PAUSED" ? at : null, state === "PAUSED" ? reason ?? null : null, at);
       const control = readRunnerControl(db, projectId);
-      db.exec("COMMIT");
+      if (ownsTransaction) db.exec("COMMIT");
       return { changed: true, control };
     } catch (error) {
-      if (db.isTransaction) db.exec("ROLLBACK");
+      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
       throw error;
     }
   }
@@ -1108,8 +1108,7 @@ function requireRunnerControlText(value: string, label: string): void {
 }
 
 function readRunnerControl(db: DatabaseSync, projectId: ProjectId): RunnerControlStatus {
-  const row = getRow(db.prepare(`SELECT p.id, p.updated_at AS project_updated_at,
-    c.state, c.paused_at, c.pause_reason, c.updated_at
+  const row = getRow(db.prepare(`SELECT p.id, c.state, c.paused_at, c.pause_reason, c.updated_at
     FROM projects p LEFT JOIN runner_control c ON c.project_id = p.id WHERE p.id = ?`), [projectId]);
   if (row === undefined) throw new PersistenceError(`Unknown project "${projectId}"`);
   const state = row["state"] ?? "RUNNING";
@@ -1117,7 +1116,7 @@ function readRunnerControl(db: DatabaseSync, projectId: ProjectId): RunnerContro
   return {
     projectId,
     state,
-    updatedAt: String(row["updated_at"] ?? row["project_updated_at"]),
+    ...(row["updated_at"] == null ? {} : { updatedAt: String(row["updated_at"]) }),
     ...(row["paused_at"] == null ? {} : { pausedAt: String(row["paused_at"]) }),
     ...(row["pause_reason"] == null ? {} : { pauseReason: String(row["pause_reason"]) }),
   };

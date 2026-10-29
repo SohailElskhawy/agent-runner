@@ -21,6 +21,8 @@ function doctorOnlyService(report: DoctorReport): RunnerAppService {
   };
   return {
     init: unexpected,
+    pause: unexpected,
+    resume: unexpected,
     addTask: unexpected,
     approve: unexpected,
     retry: unexpected,

@@ -221,8 +221,7 @@ describe("createAppServices wiring", () => {
     try {
       const services = await createServices(directory);
       try {
-        const result = await services.runUnattended();
-        expect(result.kind).toBe("completed");
+        await expect(services.runUnattended()).rejects.toThrow("agentic init");
         expect((await services.status()).project).toBeNull();
       } finally {
         await services.close();

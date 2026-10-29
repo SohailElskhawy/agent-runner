@@ -75,6 +75,8 @@ let agent: FakeAgentRuntime;
 let verification: FakeVerificationEngine;
 
 type WireOptions = {
+  readonly storeOverride?: RunnerStore | undefined;
+  readonly executionId?: string | undefined;
   readonly agent?: AgentBehavior | undefined;
   readonly verification?: VerificationResponse | undefined;
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
@@ -99,7 +101,8 @@ function wireExecutor(options: WireOptions = {}) {
     throw new Error(`fixture workflow "${options.workflowId ?? task.workflow}" did not resolve`);
   }
   return createWorkflowTaskExecutor({
-    store,
+    store: options.storeOverride ?? store,
+    executionId: options.executionId,
     git: effectiveGit,
     agent,
     verification,
@@ -303,6 +306,40 @@ describe("WorkflowTaskExecutor", { timeout: 20_000 }, () => {
     });
     await store.putProject(createProject({ rootPath: repoPath }));
     await store.putTask(createTask({ id: taskId, status: "READY" }));
+  });
+
+  it("rejects when pause wins immediately before attempt admission", async () => {
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "transaction") return async (body: () => Promise<unknown>) => {
+        await target.pauseRunner("proj-1", new Date().toISOString());
+        return target.transaction(body);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const outcome = await wireExecutor({ storeOverride: intercepted }).run();
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
+  });
+
+  it("drains an already claimed workflow after pause", async () => {
+    const at = new Date().toISOString();
+    expect((await store.claimTaskExecution({ taskId, executionId: "exec-1", maxParallelism: 1, resources: [], claimedAt: at, leaseExpiresAt: "2099-01-01T00:00:00.000Z" })).kind).toBe("claimed");
+    await store.pauseRunner("proj-1", at);
+    const outcome = await wireExecutor({ executionId: "exec-1", agent: stageDispatchAgent({}) }).run();
+    expect(outcome.kind).toBe("completed");
+    expect(await store.listAttempts({ taskId })).toHaveLength(1);
+  });
+
+  it("refuses a paused direct run before creating an attempt or worktree", async () => {
+    await store.pauseRunner("proj-1", new Date().toISOString());
+    const outcome = await wireExecutor().run();
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
   });
 
   afterEach(async () => {
