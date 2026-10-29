@@ -165,16 +165,16 @@ describe("createAppServices wiring", () => {
     expect(appServices.scheduler).not.toBeNull();
   });
 
-  it("connects createServices to the application unattended operation", async () => {
+  it("connects createServices to an unattended run before project initialization", async () => {
     const previousProfile = process.env.USERPROFILE;
     const profile = temporaryDirectory("agentic-unattended-profile");
     process.env.USERPROFILE = profile;
     try {
       const services = await createServices(directory);
       try {
-        await services.init();
         const result = await services.runUnattended();
         expect(result.kind).toBe("completed");
+        expect((await services.status()).project).toBeNull();
       } finally {
         await services.close();
       }

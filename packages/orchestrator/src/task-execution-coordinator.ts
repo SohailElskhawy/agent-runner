@@ -160,8 +160,10 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       countParallelismActiveExecutions(tasks.map((task) => task.status)),
     );
 
-    let paused = this.projectId !== undefined &&
-      (await this.store.getRunnerControl(this.projectId)).state === "PAUSED";
+    const controlProjectId = this.projectId !== undefined &&
+      await this.store.getProject(this.projectId) !== null ? this.projectId : undefined;
+    let paused = controlProjectId !== undefined &&
+      (await this.store.getRunnerControl(controlProjectId)).state === "PAUSED";
 
     for (const task of ordered) {
       if (paused) {
@@ -233,8 +235,8 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     }
 
     const settled = await Promise.all(executions);
-    if (!paused && this.projectId !== undefined) {
-      paused = (await this.store.getRunnerControl(this.projectId)).state === "PAUSED";
+    if (!paused && controlProjectId !== undefined) {
+      paused = (await this.store.getRunnerControl(controlProjectId)).state === "PAUSED";
     }
     return {
       paused,
