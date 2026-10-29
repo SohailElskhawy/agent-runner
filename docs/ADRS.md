@@ -208,3 +208,19 @@ Autonomous implementation cannot begin until the project reaches `READY_FOR_PLAN
 Do not introduce distributed workers, brokers, Redis, or microservices yet.
 
 Architecture boundaries should allow remote workers later without redesigning the domain model.
+
+---
+
+### ADR-019 — Durable Runner Control (D-AP-5)
+
+**Status:** Provisional — Panel and CEO approved; owner confirmation pending.
+
+**Decision:** Store per-project runner control in an additive SQLite STRICT table.
+A missing row represents RUNNING. Pause and resume are idempotent transactional
+changes, and task execution claims check the state within the same immediate
+write transaction that acquires claims and locks. Task and integration queue
+states remain unchanged. Existing admitted work is not interrupted.
+
+**Delivery:** AR031 implements the persistence contract and claim gate. Scheduler
+drain and recovery behavior (AR032), events and CLI commands (AR033) remain
+outstanding; this decision does not claim end-to-end pause/resume availability.

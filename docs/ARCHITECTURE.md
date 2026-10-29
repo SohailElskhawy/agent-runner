@@ -98,7 +98,7 @@ addTask()
 doctor()
 ```
 
-`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pauseRun()` and `resumeRun()` are deferred to v0.2.
+`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pauseRun()` and `resumeRun()` remain unavailable. The provisional AR031 persistence slice adds durable runner control and an atomic claim gate; scheduler draining and CLI support remain outstanding (ADR-019).
 
 The CLI and future GUI both use these same operations.
 

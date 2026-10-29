@@ -97,7 +97,7 @@ function failingProbeChain(): readonly SchemaMigration[] {
 function futureSchemaChain(): readonly SchemaMigration[] {
   return [
     ...SCHEMA_MIGRATIONS,
-    { version: 11, name: "test-only-future-schema", up: () => undefined },
+    { version: 12, name: "test-only-future-schema", up: () => undefined },
   ];
 }
 
@@ -212,6 +212,7 @@ describe("SQLite schema migrations", () => {
       { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
         { version: 9, name: "add-execution-recovery-ownership", appliedAt: expect.any(String) },
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
+        { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
     ]);
   });
 
@@ -278,6 +279,7 @@ describe("SQLite schema migrations", () => {
       { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
         { version: 9, name: "add-execution-recovery-ownership", appliedAt: expect.any(String) },
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
+        { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject(legacyProject.id)).toEqual(legacyProject);
       expect(await opened.getTask(legacyTask.id)).toEqual(legacyTask);
@@ -347,6 +349,7 @@ describe("SQLite schema migrations", () => {
       { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
         { version: 9, name: "add-execution-recovery-ownership", appliedAt: expect.any(String) },
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
+        { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
         ]);
       });
     }
@@ -448,9 +451,9 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(SchemaVersionTooNewError);
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
-    expect((rejection as Error).message).toContain("schema version 11");
+    expect((rejection as Error).message).toContain("schema version 12");
     expect((rejection as Error).message).toContain(
-      "supported schema version 10",
+      "supported schema version 11",
     );
   });
 
@@ -462,7 +465,7 @@ describe("SQLite schema migrations", () => {
           migrations: futureSchemaChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(11);
+      ).toBe(12);
 
       expect(() =>
         migrateSchema(db, { migrations: [initialSchemaMigration()] }),
@@ -564,6 +567,7 @@ describe("SQLite schema migrations", () => {
         { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
         { version: 9, name: "add-execution-recovery-ownership", appliedAt: expect.any(String) },
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
+        { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
       ]);
     });
   });
@@ -659,6 +663,7 @@ describe("SQLite schema migrations", () => {
         { version: 8, name: "add-execution-claim-leases", appliedAt: expect.any(String) },
         { version: 9, name: "add-execution-recovery-ownership", appliedAt: expect.any(String) },
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
+        { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject("proj-1")).toEqual({
         id: "proj-1",
@@ -700,7 +705,7 @@ describe("SQLite schema migrations", () => {
     try {
       migrateSchema(db, { migrations: SCHEMA_MIGRATIONS.slice(0, 9) });
       const version = migrateSchema(db);
-      expect(version).toBe(10);
+      expect(version).toBe(11);
       const columns = db
         .prepare("PRAGMA table_info(tasks)")
         .all() as { readonly name: string }[];

@@ -212,7 +212,7 @@ describe("durable execution claims", () => {
 
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
-    expect(SCHEMA_VERSION).toBe(10);
+    expect(SCHEMA_VERSION).toBe(11);
     const oldLock = (await store.listResourceLocks())[0];
     expect(oldLock).toMatchObject({
       resource: "legacy-resource",

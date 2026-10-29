@@ -25,6 +25,7 @@ import {
   type Project,
   type ProjectId,
   type ResourceLock,
+  type RunnerControlStatus,
   type StageRun,
   type StageRunFailure,
   type StageRunOutput,
@@ -150,6 +151,48 @@ export class SqliteRunnerStore implements RunnerStore {
       project.createdAt,
       project.updatedAt,
     );
+  }
+
+  async getRunnerControl(projectId: ProjectId): Promise<RunnerControlStatus> {
+    requireRunnerControlText(projectId, "project id");
+    return readRunnerControl(this.requireDb("getRunnerControl"), projectId);
+  }
+
+  async pauseRunner(projectId: ProjectId, pausedAt: IsoTimestamp, reason?: string): Promise<{ changed: boolean; control: RunnerControlStatus }> {
+    requireRunnerControlText(projectId, "project id");
+    requireRunnerControlText(pausedAt, "pause timestamp");
+    if (reason !== undefined) requireRunnerControlText(reason, "pause reason");
+    return this.changeRunnerControl(projectId, "PAUSED", pausedAt, reason);
+  }
+
+  async resumeRunner(projectId: ProjectId, resumedAt: IsoTimestamp): Promise<{ changed: boolean; control: RunnerControlStatus }> {
+    requireRunnerControlText(projectId, "project id");
+    requireRunnerControlText(resumedAt, "resume timestamp");
+    return this.changeRunnerControl(projectId, "RUNNING", resumedAt);
+  }
+
+  private async changeRunnerControl(projectId: ProjectId, state: "RUNNING" | "PAUSED", at: IsoTimestamp, reason?: string): Promise<{ changed: boolean; control: RunnerControlStatus }> {
+    const db = this.requireDb("changeRunnerControl");
+    if (db.isTransaction) throw new PersistenceError("Nested transactions are not supported");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const current = readRunnerControl(db, projectId);
+      if (current.state === state) {
+        db.exec("COMMIT");
+        return { changed: false, control: current };
+      }
+      db.prepare(`INSERT INTO runner_control (project_id, state, paused_at, pause_reason, updated_at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET
+        state = excluded.state, paused_at = excluded.paused_at,
+        pause_reason = excluded.pause_reason, updated_at = excluded.updated_at`)
+        .run(projectId, state, state === "PAUSED" ? at : null, state === "PAUSED" ? reason ?? null : null, at);
+      const control = readRunnerControl(db, projectId);
+      db.exec("COMMIT");
+      return { changed: true, control };
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async getTask(id: TaskId): Promise<Task | null> {
@@ -317,12 +360,16 @@ export class SqliteRunnerStore implements RunnerStore {
     db.exec("BEGIN IMMEDIATE");
     try {
       const taskRow = getRow(
-        db.prepare("SELECT status FROM tasks WHERE id = ?"),
+        db.prepare("SELECT status, project_id FROM tasks WHERE id = ?"),
         [request.taskId],
       );
       if (taskRow === undefined || taskRow["status"] !== "READY") {
         db.exec("COMMIT");
         return { kind: "task-not-ready", taskId: request.taskId };
+      }
+      if (readRunnerControl(db, String(taskRow["project_id"])).state === "PAUSED") {
+        db.exec("COMMIT");
+        return { kind: "runner-paused", taskId: request.taskId };
       }
       const activeClaim = getRow(
         db.prepare(
@@ -1052,6 +1099,28 @@ function getRows(
   parameters: SqlValue[],
 ): Record<string, unknown>[] {
   return statement.all(...parameters) as Record<string, unknown>[];
+}
+
+function requireRunnerControlText(value: string, label: string): void {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new PersistenceError(`Runner control requires a non-empty ${label}`);
+  }
+}
+
+function readRunnerControl(db: DatabaseSync, projectId: ProjectId): RunnerControlStatus {
+  const row = getRow(db.prepare(`SELECT p.id, p.updated_at AS project_updated_at,
+    c.state, c.paused_at, c.pause_reason, c.updated_at
+    FROM projects p LEFT JOIN runner_control c ON c.project_id = p.id WHERE p.id = ?`), [projectId]);
+  if (row === undefined) throw new PersistenceError(`Unknown project "${projectId}"`);
+  const state = row["state"] ?? "RUNNING";
+  if (state !== "RUNNING" && state !== "PAUSED") throw new PersistenceError(`Unknown runner control state "${String(state)}"`);
+  return {
+    projectId,
+    state,
+    updatedAt: String(row["updated_at"] ?? row["project_updated_at"]),
+    ...(row["paused_at"] == null ? {} : { pausedAt: String(row["paused_at"]) }),
+    ...(row["pause_reason"] == null ? {} : { pauseReason: String(row["pause_reason"]) }),
+  };
 }
 
 function projectFromRow(row: Record<string, unknown>): Project {
