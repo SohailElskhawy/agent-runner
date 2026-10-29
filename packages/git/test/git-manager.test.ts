@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -486,6 +487,37 @@ describe("NodeGitManager", () => {
 
     await git.removeWorktree(repo, worktreePath);
     expect(await git.worktreeExists(repo, worktreePath)).toBe(false);
+  });
+
+  it("detects registered worktrees registered through a directory alias", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const aliasDir = join(baseDir, "alias dir");
+    // A junction works without privileges on Windows and is a plain
+    // directory symlink on POSIX, so this regression is portable.
+    symlinkSync(baseDir, aliasDir, "junction");
+    const aliasedWorktree = join(aliasDir, "task worktree");
+    await git.createWorktree(repo, aliasedWorktree, "task/M001");
+
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(true);
+
+    await git.removeWorktree(repo, aliasedWorktree);
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(false);
+  });
+
+  it("retains stale worktree detection when a worktree registered through a directory alias is deleted directly", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const aliasDir = join(baseDir, "alias dir");
+    symlinkSync(baseDir, aliasDir, "junction");
+    const aliasedWorktree = join(aliasDir, "task worktree");
+    await git.createWorktree(repo, aliasedWorktree, "task/M001");
+
+    rmSync(aliasedWorktree, { recursive: true, force: true });
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(true);
+
+    await runFixtureGit(repo, ["worktree", "prune"]);
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(false);
   });
 
   it("rebases a task branch onto an advanced integration HEAD", async () => {
