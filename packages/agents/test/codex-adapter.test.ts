@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,7 +90,7 @@ describe("CodexAdapter", () => {
 
   beforeEach(() => {
     runner = createNodeProcessRunner();
-    spacedDir = mkdtempSync(join(tmpdir(), SPACED_DIR_PREFIX));
+    spacedDir = realpathSync(mkdtempSync(join(tmpdir(), SPACED_DIR_PREFIX)));
     worktreePath = join(spacedDir, "task worktree dir");
     mkdirSync(worktreePath, { recursive: true });
     executable = join(spacedDir, "fake codex node copy.exe");

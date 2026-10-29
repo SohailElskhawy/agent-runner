@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,8 +78,22 @@ function baseInput(
   };
 }
 
+function canonicalizePath(p: string): string {
+  const resolved = resolve(p);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 function samePath(a: string, b: string): boolean {
-  return resolve(a).toLowerCase() === resolve(b).toLowerCase();
+  const canonA = canonicalizePath(a);
+  const canonB = canonicalizePath(b);
+  if (process.platform === "win32") {
+    return canonA.toLowerCase() === canonB.toLowerCase();
+  }
+  return canonA === canonB;
 }
 
 async function withEnv(
@@ -116,7 +130,7 @@ const PLAIN_DIR_PREFIX = "agentic-vs010-worktree-";
 let tempDirs: string[] = [];
 
 function makeTempWorktree(prefix: string): string {
-  const dir = mkdtempSync(resolve(tmpdir(), prefix));
+  const dir = realpathSync(mkdtempSync(resolve(tmpdir(), prefix)));
   tempDirs.push(dir);
   return dir;
 }
@@ -562,6 +576,18 @@ describe("verification engine", () => {
       expect(samePath(payload.cwd, worktree)).toBe(true);
     });
   }, 10_000);
+
+  it("samePath resolves symlinked directory aliases and respects platform case sensitivity", () => {
+    const targetDir = makeTempWorktree(PLAIN_DIR_PREFIX);
+    const symlinkDir = resolve(tmpdir(), `agentic-samepath-alias-${Date.now()}`);
+    symlinkSync(targetDir, symlinkDir, "junction");
+    tempDirs.push(symlinkDir);
+
+    expect(samePath(symlinkDir, targetDir)).toBe(true);
+    if (process.platform !== "win32") {
+      expect(samePath("/some/path/CaseSensitive", "/some/path/casesensitive")).toBe(false);
+    }
+  });
 
   it("passes configured args verbatim without shell interpretation", async () => {
     const engine = createVerificationEngine({
