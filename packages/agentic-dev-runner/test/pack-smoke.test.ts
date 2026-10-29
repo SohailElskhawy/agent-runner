@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import type { ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import {
   chmodSync,
@@ -7,12 +7,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -253,6 +255,59 @@ describe.skipIf(!enabled)("packed CLI smoke", () => {
       ),
     );
     run(["tasks", "add", taskFile]);
+    const projectDirs = readdirSync(join(home, ".agentic", "projects"));
+    expect(projectDirs).toHaveLength(1);
+    const projectDir = projectDirs[0];
+    if (projectDir === undefined) throw new Error("isolated project state missing");
+    const dbPath = join(home, ".agentic", "projects", projectDir, "state.db");
+    const head = runGit(repository, ["rev-parse", "HEAD"]);
+    const worktreeStatus = runGit(repository, ["status", "--porcelain"]);
+    const reason = "packed smoke maintenance";
+    expect(run(["pause", "--reason", reason])).toContain("paused");
+    expect(run(["pause"])).toContain("already paused");
+    const pausedStatus = run(["status"]);
+    expect(pausedStatus).toContain("PAUSED");
+    expect(pausedStatus).toContain(reason);
+    for (const args of [["run"], ["run", "P1"]]) {
+      const result = spawnSync(process.execPath, [cli, ...args], {
+        cwd: repository, env, encoding: "utf8", windowsHide: true,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout + result.stderr).toContain("agentic resume");
+    }
+    const pausedDb = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(pausedDb.prepare("SELECT COUNT(*) AS count FROM attempts").get()?.count).toBe(0);
+    } finally {
+      pausedDb.close();
+    }
+    expect(existsSync(join(repository, "src", "pack", "pack.cjs"))).toBe(false);
+    expect(existsSync(join(repository, "test", "pack", "pack.test.cjs"))).toBe(false);
+    expect(runGit(repository, ["rev-parse", "HEAD"])).toBe(head);
+    expect(runGit(repository, ["status", "--porcelain"])).toBe(worktreeStatus);
+
+    expect(run(["resume"])).toContain("resumed");
+    expect(run(["resume"])).toContain("already running");
+    expect(run(["status"])).toContain("RUNNING");
+    const resumedDb = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const project = resumedDb.prepare("SELECT id FROM projects").get();
+      expect(project).toBeDefined();
+      const events = resumedDb.prepare(
+        "SELECT type, task_id, payload_json FROM events WHERE type IN ('runner.paused', 'runner.resumed') ORDER BY sequence",
+      ).all();
+      expect(events.map((event) => event.type)).toEqual(["runner.paused", "runner.resumed"]);
+      for (const event of events) {
+        expect(event.task_id).toBeNull();
+        expect(JSON.parse(String(event.payload_json)).projectId).toBe(project?.id);
+      }
+      expect(resumedDb.prepare("SELECT project_id, state FROM runner_control").all()).toEqual([
+        { project_id: project?.id, state: "RUNNING" },
+      ]);
+    } finally {
+      resumedDb.close();
+    }
     const runOutput = run(["run", "P1"]);
     expect(runOutput).toContain("completed");
     const status = run(["status"]);

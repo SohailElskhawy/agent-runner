@@ -41,7 +41,7 @@ On Windows PowerShell:
 ```powershell
 $env:AGENTIC_PACK_SMOKE = "1"; pnpm --filter agentic-dev-runner test
 ```
-**Evidence gate:** `test/pack-smoke.test.ts` passes. This test creates a tarball with `pnpm pack`, installs it in a separate consumer package, and executes an end-to-end task run verifying status `1 DONE` and atomic git commit creation.
+**Evidence gate:** `test/pack-smoke.test.ts` passes. This test creates a tarball with `pnpm pack`, installs it in a separate consumer package, and uses separate bundled CLI processes to verify durable, idempotent pause/resume and refusal to run while paused. With a fake provider, it then verifies an end-to-end task reaches `1 DONE` and creates an atomic Git commit. This is not live-provider evidence.
 
 ---
 
