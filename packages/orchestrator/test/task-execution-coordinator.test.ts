@@ -53,6 +53,22 @@ describe("task execution coordinator (M061b)", () => {
     expect(await store.listExecutionClaims()).toEqual([]);
   });
 
+  it("reports pause committed between the pre-admission check and claim", async () => {
+    await store.putTask(task("M001", "P0"));
+    const originalClaim = store.claimTaskExecution.bind(store);
+    store.claimTaskExecution = async (request) => {
+      await store.pauseRunner(createProject().id, "2026-01-01T00:00:00.000Z");
+      return originalClaim(request);
+    };
+    const result = await createTaskExecutionCoordinator({
+      store, projectId: createProject().id, agentCandidates: [candidate], maxParallelism: 1,
+      createExecutor: () => completedExecutor(), now: () => "2026-01-01T00:00:00.000Z",
+    }).dispatchAvailable();
+    expect(result.paused).toBe(true);
+    expect(result.admissions).toEqual([{ taskId: "M001", kind: "deferred", reason: "runner-paused" }]);
+    expect(await store.listAttempts({ taskId: "M001" })).toEqual([]);
+  });
+
   it("admits candidates in deterministic priority and id order", async () => {
     const calls: string[] = [];
     await store.putTask(task("M002", "P1"));

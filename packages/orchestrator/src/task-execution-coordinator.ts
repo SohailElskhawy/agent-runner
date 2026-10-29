@@ -58,6 +58,7 @@ export type TaskExecutionResult = {
 };
 
 export type TaskDispatchResult = {
+  readonly paused: boolean;
   readonly admissions: readonly TaskAdmission[];
   readonly executions: readonly TaskExecutionResult[];
   readonly activeExecutions: number;
@@ -159,7 +160,14 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
       countParallelismActiveExecutions(tasks.map((task) => task.status)),
     );
 
+    let paused = this.projectId !== undefined &&
+      (await this.store.getRunnerControl(this.projectId)).state === "PAUSED";
+
     for (const task of ordered) {
+      if (paused) {
+        admissions.push({ taskId: task.id, kind: "deferred", reason: "runner-paused" });
+        break;
+      }
       if (this.activeTaskIds.has(task.id)) {
         admissions.push({ taskId: task.id, kind: "deferred", reason: "conflict" });
         continue;
@@ -199,6 +207,7 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
         leaseExpiresAt: addLease(this.clock(), this.leaseDurationMs),
       });
       if (claim.kind !== "claimed") {
+        if (claim.kind === "runner-paused") paused = true;
         const reason =
           claim.kind === "runner-paused"
             ? "runner-paused"
@@ -224,7 +233,11 @@ class DurableTaskExecutionCoordinator implements TaskExecutionCoordinator {
     }
 
     const settled = await Promise.all(executions);
+    if (!paused && this.projectId !== undefined) {
+      paused = (await this.store.getRunnerControl(this.projectId)).state === "PAUSED";
+    }
     return {
+      paused,
       admissions,
       executions: settled,
       activeExecutions,

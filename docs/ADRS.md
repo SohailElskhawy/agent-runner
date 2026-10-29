@@ -221,6 +221,7 @@ changes, and task execution claims check the state within the same immediate
 write transaction that acquires claims and locks. Task and integration queue
 states remain unchanged. Existing admitted work is not interrupted.
 
-**Delivery:** AR031 implements the persistence contract and claim gate. Scheduler
-drain and recovery behavior (AR032), events and CLI commands (AR033) remain
-outstanding; this decision does not claim end-to-end pause/resume availability.
+**Delivery:** AR031 implements the persistence contract and claim gate. AR032 adds
+coordinator admission and scheduler drain, preserving startup recovery. Event
+names are defined but emission and CLI commands (AR033) remain outstanding;
+this decision does not claim end-to-end pause/resume availability.
