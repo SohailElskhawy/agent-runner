@@ -7,6 +7,7 @@ launch verification gates are still pending; this entry is not a release
 announcement.
 
 ### Added
+- Packed-install smoke coverage for durable pause/resume and paused execution refusal using separate CLI processes and a fake provider.
 - V0.2 M075: durable CLI pause/resume, atomic control events and admission, and scheduler drain with startup recovery preserved. In-flight agents are not interrupted. Pause and resume require initialization; existing run-before-init behavior remains unchanged.
 - Dated release-gate evidence snapshot (2026-10-28) with explicit claim limits in the launch roadmap, linked from the release and dogfood docs.
 - Recorded OpenCode JSONL log-report example with isolated state, immutable acceptance tests, real execution transcripts and verified final output.
