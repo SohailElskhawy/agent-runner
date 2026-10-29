@@ -204,7 +204,7 @@ describe("task execution coordinator (M061b)", () => {
       store,
       agentCandidates: [candidate],
       maxParallelism: 1,
-      leaseDurationMs: 30,
+      leaseDurationMs: 300,
       createExecutor: () => ({
         async run(): Promise<WorkflowTaskRunOutcome> {
           await running;
@@ -234,7 +234,7 @@ describe("task execution coordinator (M061b)", () => {
     });
 
     expect(await store.listExecutionClaims({ status: "ACTIVE" })).toHaveLength(1);
-    expect(Date.parse(renewed.leaseExpiresAt) - Date.parse(renewed.renewedAt)).toBe(30);
+    expect(Date.parse(renewed.leaseExpiresAt) - Date.parse(renewed.renewedAt)).toBe(300);
 
     release?.();
     await run;

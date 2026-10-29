@@ -10,22 +10,37 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
-import type { ProcessRunner } from "@agentic-dev-runner/platform";
+import type { ProcessRunner, ProcessSpec } from "@agentic-dev-runner/platform";
 import { createGitManager, GitError } from "../src/index.js";
 import type { GitManager } from "../src/index.js";
 
 let baseDir: string;
 let runner: ProcessRunner;
 let git: GitManager;
+let inFlightRuns: Promise<unknown>[] = [];
 
 beforeEach(() => {
   baseDir = mkdtempSync(join(tmpdir(), "agentic git vs006 spaced base "));
-  runner = createNodeProcessRunner();
+  inFlightRuns = [];
+  const delegateRunner = createNodeProcessRunner();
+  runner = {
+    run(spec: ProcessSpec) {
+      const promise = delegateRunner.run(spec);
+      inFlightRuns.push(promise);
+      return promise;
+    },
+  };
   git = createGitManager({ runner });
 });
 
-afterEach(() => {
-  rmSync(baseDir, { recursive: true, force: true });
+afterEach(async () => {
+  await Promise.allSettled(inFlightRuns);
+  rmSync(baseDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  });
 });
 
 async function runFixtureGit(
@@ -578,4 +593,4 @@ describe("NodeGitManager", () => {
     const error = await gitFailureOf(git.rebaseBranch(repo, ""));
     expect(error.failure.reason).toContain("invalid onto revision");
   });
-});
+}, 15_000);

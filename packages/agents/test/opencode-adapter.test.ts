@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,7 +89,7 @@ describe("OpenCodeAdapter", () => {
 
   beforeEach(() => {
     runner = createNodeProcessRunner();
-    spacedDir = mkdtempSync(join(tmpdir(), SPACED_DIR_PREFIX));
+    spacedDir = realpathSync(mkdtempSync(join(tmpdir(), SPACED_DIR_PREFIX)));
     worktreePath = join(spacedDir, "task worktree dir");
     mkdirSync(worktreePath, { recursive: true });
     executable = join(spacedDir, "fake agent node copy.exe");
