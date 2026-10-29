@@ -173,8 +173,10 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
   let runner: ProcessRunner;
   let adapter: RecordingRoadmapAdapter;
   let store: RunnerStore | undefined;
+  let activeTest: Promise<void> | undefined;
+  let setup: Promise<void> | undefined;
 
-  beforeEach(async () => {
+  async function setupFixture(): Promise<void> {
     directory = mkdtempSync(join(tmpdir(), "agentic-runner-roadmap-20-"));
     repositoryPath = join(directory, "fixture repo");
     stateDir = join(directory, "runner state");
@@ -185,13 +187,21 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
     for (const task of TASKS) {
       writeFileSync(join(tasksDir, `task-${task.id}.json`), JSON.stringify(task), "utf8");
     }
+  }
+
+  beforeEach(() => {
+    setup = setupFixture();
+    return setup;
   });
 
   afterEach(async () => {
+    await Promise.allSettled([setup, activeTest]);
+    activeTest = undefined;
+    setup = undefined;
     await store?.close();
     store = undefined;
-    rmSync(directory, { recursive: true, force: true });
-  });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }, 300_000);
 
   async function createFixtureRepository(): Promise<void> {
     mkdirSync(repositoryPath, { recursive: true });
@@ -266,7 +276,7 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
     return result.stdout;
   }
 
-  it("executes a 20-task DAG to DONE with correct ordering, disjoint shared-resource spans, isolated worktrees, and serialized integration", async () => {
+  async function executeRoadmapTest(): Promise<void> {
     const io = captureIo();
     expect(await runCli(["init"], { io: io.io, servicesFactory: servicesFactory() })).toBe(0);
     for (const task of TASKS) {
@@ -378,5 +388,10 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
     expect(statusOutput).toContain("task totals: 20 DONE");
     expect(statusOutput).toContain("active tasks: (none)");
     expect(statusOutput).toContain("integration queue: 0 pending, 0 integrating, 20 completed, 0 failed");
-  }, 120_000);
+  }
+
+  it("executes a 20-task DAG to DONE with correct ordering, disjoint shared-resource spans, isolated worktrees, and serialized integration", () => {
+    activeTest = executeRoadmapTest();
+    return activeTest;
+  }, process.platform === "win32" ? 300_000 : 120_000);
 });
