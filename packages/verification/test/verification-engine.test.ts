@@ -580,7 +580,7 @@ describe("verification engine", () => {
   it("samePath resolves symlinked directory aliases and respects platform case sensitivity", () => {
     const targetDir = makeTempWorktree(PLAIN_DIR_PREFIX);
     const symlinkDir = resolve(tmpdir(), `agentic-samepath-alias-${Date.now()}`);
-    symlinkSync(targetDir, symlinkDir, "dir");
+    symlinkSync(targetDir, symlinkDir, "junction");
     tempDirs.push(symlinkDir);
 
     expect(samePath(symlinkDir, targetDir)).toBe(true);
