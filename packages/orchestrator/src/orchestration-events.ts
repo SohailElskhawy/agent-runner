@@ -1,6 +1,8 @@
 import type { AttemptFailure, TaskStatus, VerificationResult } from "@agentic-dev-runner/core";
 
 export const ORCHESTRATION_EVENTS = {
+  runnerPaused: "runner.paused",
+  runnerResumed: "runner.resumed",
   attemptStarted: "attempt.started",
   taskTransitioned: "task.transitioned",
   worktreeCreated: "worktree.created",

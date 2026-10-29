@@ -31,6 +31,78 @@ describe("unattended scheduler continuation (M066a)", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("reports an idle paused project", async () => {
+    await store.pauseRunner(createProject().id, clock());
+    const coordinator = createTaskExecutionCoordinator({
+      store, projectId: createProject().id, agentCandidates: [], maxParallelism: 1,
+      createExecutor: () => { throw new Error("must not run"); }, now: clock,
+    });
+    const integration: IntegrationQueueProcessor = {
+      async recoverAbandoned() { return []; },
+      async processNext() { return { kind: "empty" }; },
+    };
+    expect((await createUnattendedScheduler({ coordinator, integration }).run()).kind).toBe("paused");
+  });
+
+  it("keeps blocked integration and active claims ahead of pause", async () => {
+    await store.putTask(task("A", "a", "src/a/**"));
+    await store.claimTaskExecution({ taskId: "A", executionId: "active", maxParallelism: 1, resources: [], claimedAt: clock(), leaseExpiresAt: "2026-01-01T00:01:00.000Z" });
+    await store.pauseRunner(createProject().id, clock());
+    const coordinator = createTaskExecutionCoordinator({ store, projectId: createProject().id, agentCandidates: [], maxParallelism: 1, createExecutor: () => { throw new Error("unexpected"); }, now: clock });
+    const integration: IntegrationQueueProcessor = { async recoverAbandoned() { return []; }, async processNext() { return { kind: "empty" }; } };
+    expect((await createUnattendedScheduler({ coordinator, integration }).run()).kind).toBe("blocked");
+    integration.processNext = async () => ({ kind: "blocked", activeEntry: queueEntry("A") });
+    expect((await createUnattendedScheduler({ coordinator, integration }).run()).kind).toBe("blocked");
+  });
+
+  it("drains admitted work and integration on pause, then resumes READY work", async () => {
+    await store.putTask(task("A", "a", "src/a/**"));
+    await store.putTask(task("B", "b", "src/b/**"));
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let executionId = "";
+    let queued = false;
+    const coordinator = createTaskExecutionCoordinator({
+      store, projectId: createProject().id, maxParallelism: 1, now: clock,
+      agentCandidates: [{ profile: { id: "p", adapterId: "a", capabilities: ["typescript"] }, availability: { id: "a", available: true } }],
+      createExecutor: (selected, id) => fakeExecutor(selected, async () => {
+        if (selected.id === "A") {
+          executionId = id; started(); await gate;
+          await store.setTaskStatus("A", "INTEGRATING", clock()); queued = true;
+          return pendingOutcome(selected, id);
+        }
+        await store.setTaskStatus(selected.id, "DONE", clock());
+        return completedOutcome(selected);
+      }),
+    });
+    const integration: IntegrationQueueProcessor = {
+      async recoverAbandoned() { return []; },
+      async processNext() {
+        if (!queued) return { kind: "empty" };
+        queued = false;
+        await store.setTaskStatus("A", "DONE", clock());
+        await store.releaseTaskExecution(executionId, "COMPLETED", clock());
+        return { kind: "processed", entry: queueEntry("A"), taskRevision: "revision-A", integration: { kind: "fast-forward", revision: "revision-A" } };
+      },
+    };
+    const scheduler = createUnattendedScheduler({ coordinator, integration });
+    const running = scheduler.run();
+    await entered;
+    await store.pauseRunner(createProject().id, clock());
+    release();
+    const paused = await running;
+    expect(paused.kind).toBe("paused");
+    expect(paused.completedTaskIds).toContain("A");
+    expect((await store.getTask("B"))?.status).toBe("READY");
+    expect(await store.listAttempts({ taskId: "B" })).toEqual([]);
+    expect(await store.listEvents({ taskId: "B" })).toEqual([]);
+    await store.resumeRunner(createProject().id, clock());
+    expect((await scheduler.run()).kind).toBe("quiescent");
+    expect((await store.getTask("B"))?.status).toBe("DONE");
+  });
+
   it("continues after one failure, serially settles integration, and unlocks a dependent task", async () => {
     const taskA = task("A", "resource-a", "src/a/**");
     const taskB = task("B", "resource-b", "src/b/**");

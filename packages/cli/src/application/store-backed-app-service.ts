@@ -378,7 +378,7 @@ class StoreBackedAppService implements RunnerAppService {
       : {
           kind: "failed",
           message:
-            `unattended run is blocked after ${String(outcome.cycles.length)} cycle(s); ` +
+            `unattended run is ${outcome.kind} after ${String(outcome.cycles.length)} cycle(s); ` +
             summary,
         };
   }
