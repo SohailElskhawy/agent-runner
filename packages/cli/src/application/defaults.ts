@@ -43,7 +43,7 @@ export function normalizeProjectRootForIdentity(projectRoot: string): string {
   let canonical: string;
   while (true) {
     try {
-      canonical = join(realpathSync(current), relative(current, absolute));
+      canonical = join(realpathSync.native(current), relative(current, absolute));
       break;
     } catch (error) {
       if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "ENOENT") {
@@ -57,7 +57,9 @@ export function normalizeProjectRootForIdentity(projectRoot: string): string {
       current = parent;
     }
   }
-  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  return process.platform === "win32" || process.platform === "darwin"
+    ? canonical.toLowerCase()
+    : canonical;
 }
 
 export function projectKey(projectRoot: string): string {

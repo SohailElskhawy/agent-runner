@@ -133,8 +133,9 @@ Local state lives outside the repository, per machine, keyed to the
 canonical repository path: `~/.agentic/projects/<project-key>/state.db` plus
 `~/.agentic/projects/<project-key>/worktrees/`. Moving or renaming the
 repository directory creates a new local state identity. Directory aliases resolve to
-the same identity, including when a descendant does not yet exist. Existing state
-under a previous identity is not moved or migrated.
+the same identity, including Windows short names and when a descendant does not yet exist.
+Identity paths are case-folded on Windows and macOS, and preserve case on Linux.
+Existing state under a previous identity is not moved or migrated.
 
 ### 3. Analyze and plan
 
