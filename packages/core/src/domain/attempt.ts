@@ -1,6 +1,7 @@
 import type { IsoTimestamp } from "./timestamp.js";
 import type { AttemptId, TaskId } from "./ids.js";
 import type { ContextManifest } from "./context-manifest.js";
+import type { InvocationUsageObservation } from "./invocation-usage.js";
 
 export const ATTEMPT_STATUSES = [
   "RUNNING",
@@ -40,6 +41,11 @@ export type Attempt = {
   logs?: AttemptLogs;
   tokenUsage?: TokenUsage;
   cost?: number;
+  /**
+   * Usage observation for the single invocation of a single-task attempt
+   * (D-AP-6). Distinct from the legacy, unverified `tokenUsage`/`cost`.
+   */
+  invocationUsage?: InvocationUsageObservation;
   startedAt: IsoTimestamp;
   finishedAt?: IsoTimestamp;
   failure?: AttemptFailure;

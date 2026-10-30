@@ -271,3 +271,20 @@ view (`inspect --usage` and any display are separate approved slices). Legacy
 attempt `tokenUsage`/`cost` fields remain readable but unverified and are not
 reinterpreted as trustworthy evidence. Planning invocations are excluded and
 visibly documented in later slices per D-AP-6.
+
+**Slice 2a — persistence (AR040):** SQLite migration v12 adds nullable
+`stage_runs.usage_json` and `attempts.invocation_usage_json` (the latter for the
+single-task invocation, distinct from the legacy `token_usage_json`/`cost`).
+Observations are validated by `parseInvocationUsageObservation` before any write
+and only the sanitized copy is stored; malformed, contradictory or
+unsupported-version values throw and write nothing. Stored evidence that fails
+validation on read (including a future observation `schemaVersion`) fails the
+read with an explicit error and is never repaired, defaulted or rewritten. A
+put that omits an observation preserves the stored one (no erase by omission);
+rows with no observation load with no usage field. The migration is additive;
+there is no backfill and no destructive rewrite, and an older runner opening a
+v12 database is refused by the existing newer-schema check. The validator still
+does not cross-check `totalTokens` against components: the caller sets
+`inconsistent` (AR039 N3). Still out of scope: invocation wiring, finalizer and
+crash-recovery propagation, adapter parsing, totals and CLI rendering
+(AR041–AR044).

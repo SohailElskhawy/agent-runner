@@ -1,5 +1,6 @@
 import type { IsoTimestamp } from "./timestamp.js";
 import type { AttemptId, StageRunId } from "./ids.js";
+import type { InvocationUsageObservation } from "./invocation-usage.js";
 
 export const STAGE_KINDS = [
   "PLAN",
@@ -82,4 +83,6 @@ export type StageRun = {
   finishedAt?: IsoTimestamp;
   failure?: StageRunFailure;
   output?: StageRunOutput;
+  /** Usage observation for this stage run's agent invocation (D-AP-6). */
+  usage?: InvocationUsageObservation;
 };
