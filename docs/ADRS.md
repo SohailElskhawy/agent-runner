@@ -271,3 +271,31 @@ view (`inspect --usage` and any display are separate approved slices). Legacy
 attempt `tokenUsage`/`cost` fields remain readable but unverified and are not
 reinterpreted as trustworthy evidence. Planning invocations are excluded and
 visibly documented in later slices per D-AP-6.
+
+### ADR-021 — Version-Scoped OpenCode Read-Only Invocation Shapes (AR048)
+
+**Status:** PROVISIONAL — adapter invocation contract for provider CLI major
+versions; owner confirmation pending.
+
+**Decision:** The OpenCode adapter invokes the installed `opencode` CLI in
+read-only planning mode with a version-scoped argument shape, detected once
+per adapter instance through a `--version` probe:
+
+- **opencode 1.x (and any undetectable/failed probe):** the legacy shape
+  `run --pure --agent <injected> --model <m>` continues to be used unchanged.
+- **opencode 2.x:** `run --standalone --agent <injected> --model <m>`. 2.0
+  removed `--pure` (live failure: "Unrecognized flag") and binds the run to a
+  shared background server that never observes agents injected through
+  `OPENCODE_CONFIG` (live failure: "Agent not found"); `--standalone` starts a
+  private server for the run, which applies the injected agent definitions. This
+  is documented CLI behavior in opencode 2.x ("Run with a private server
+  instead of the background service").
+
+**What does not change:** the read-only planning contract is identical across
+versions. The per-invocation agent is injected through `OPENCODE_CONFIG` into a
+temp directory with `permission: { edit, bash, task, skill }` all denied, the
+agent id is unique per invocation, project OpenCode config is never overwritten,
+and the temp directory is removed after the run. Non-read-only invocations
+never probe the version and never receive `--agent`. The version probe is an
+adapter-internal compatibility detail behind the adapter boundary (ADR-009);
+the runner core remains unaffected.

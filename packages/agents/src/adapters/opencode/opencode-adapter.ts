@@ -143,7 +143,9 @@ export class OpenCodeAdapter implements AgentRuntime {
         return DEFAULT_CLI_MAJOR;
       }
       const version = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-      const match = /\b(\d+)\.\d+(?:\.\d+)?\b/.exec(version);
+      // Live 2.x output is "opencode v2.2.0"; the "v" is part of the word, so
+      // no word boundary is used.
+      const match = /(\d+)\.\d+(?:\.\d+)?/.exec(version);
       return match === null ? DEFAULT_CLI_MAJOR : Number(match[1]);
     } catch {
       return DEFAULT_CLI_MAJOR;

@@ -258,7 +258,8 @@ describe("OpenCodeAdapter", () => {
   });
 
   it("on opencode 2.x uses --standalone with no --pure and still injects the read-only agent via OPENCODE_CONFIG", async () => {
-    process.env.FAKE_AGENT_VERSION = "2.2.0";
+    // "opencode v2.2.0" is the live --version output shape of opencode 2.x.
+    process.env.FAKE_AGENT_VERSION = "opencode v2.2.0";
     const argvs: string[][] = [];
     const configs: { path: string; content: string }[] = [];
     const inspectingRunner: ProcessRunner = {
