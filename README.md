@@ -152,13 +152,14 @@ agentic analyze
 agentic plan --goal "Implement the project described in docs/PROJECT_SPEC.md"
 ```
 
-Planning invokes the agent CLI in read-only mode. Known limitation: with the
-`opencode` CLI 2.x, `agentic plan --goal` fails with `error: opencode exited
-with code 1` because opencode 2.0 removed `--pure` and no longer applies agent
-definitions passed through `OPENCODE_CONFIG` (verified against opencode 2.2.0).
-Until the adapter is updated, plan with the `codex` adapter, or skip planning
-and add a task manually as shown in the [Advanced](#advanced-add-a-manually-authored-task)
-section below.
+Planning invokes the agent CLI in read-only mode. The adapter detects the
+installed CLI major version: on `opencode` 1.x it uses the legacy `--pure`
+invocation, and on 2.x it runs with `--standalone` because opencode 2.0
+removed `--pure` and only resolves agents injected through `OPENCODE_CONFIG`
+in a private standalone server (failure modes reproduced on opencode 2.2.0;
+the `--standalone` invocation shape is provisional per ADR-021). The
+injected read-only agent always denies edit, bash, task, and skill tools on
+both versions (see ADR-021).
 
 If planning reports `NEEDS_DISCOVERY`, edit the generated
 `.agentic/decisions.md` answers and rerun the plan command. For multiline answers,
