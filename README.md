@@ -156,7 +156,8 @@ Planning invokes the agent CLI in read-only mode. The adapter detects the
 installed CLI major version: on `opencode` 1.x it uses the legacy `--pure`
 invocation, and on 2.x it runs with `--standalone` because opencode 2.0
 removed `--pure` and only resolves agents injected through `OPENCODE_CONFIG`
-in a private standalone server (verified against opencode 2.2.0). The
+in a private standalone server (failure modes reproduced on opencode 2.2.0;
+the `--standalone` invocation shape is provisional per ADR-021). The
 injected read-only agent always denies edit, bash, task, and skill tools on
 both versions (see ADR-021).
 
