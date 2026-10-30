@@ -323,6 +323,61 @@ describe("OpenCodeAdapter", () => {
     expect(report.argv).not.toContain("--standalone");
   });
 
+  it.each([
+    ["opencode v2.0.0", "--standalone"],
+    ["v2.0.5", "--standalone"],
+    ["v1.18.33", "--pure"],
+  ])("uses the read-only contract for version %s", async (version, flag) => {
+    process.env.FAKE_AGENT_VERSION = version;
+    const record: { argvs: string[][]; envs: (Record<string, string> | undefined)[] } = { argvs: [], envs: [] };
+    const result = await makeRecordingAdapter(record).invoke(makeInvocation({ readOnly: true }));
+
+    expect(result.kind).toBe("success");
+    expect(record.argvs).toEqual([
+      ["--version"],
+      ["run", flag, "--agent", expect.stringMatching(/^agentic-readonly-/), "--model", "provider/test-model", expect.any(String)],
+    ]);
+    const configPath = record.envs[1]?.["OPENCODE_CONFIG"] ?? "";
+    expect(configPath).not.toBe("");
+    expect(existsSync(configPath)).toBe(false);
+  });
+
+  it.each(["nonzero", "spawn-error", "timeout", "throw"] as const)(
+    "uses the restricted legacy contract when the version probe returns %s",
+    async (failure) => {
+      const argvs: string[][] = [];
+      let configPath = "";
+      const inspectingRunner: ProcessRunner = {
+        run: async (spec) => {
+          const args = [...(spec.args ?? [])].slice(1);
+          argvs.push(args);
+          if (args.includes("--version")) {
+            if (failure === "throw") throw new Error("probe failed");
+            const outcome = failure === "nonzero"
+              ? { kind: "completed" as const, code: 1 }
+              : failure === "spawn-error"
+                ? { kind: "spawn-error" as const, code: "ENOENT", message: "missing" }
+                : { kind: "timeout" as const };
+            return { outcome, stdout: "opencode v2.0.0", stderr: "", durationMs: 0 };
+          }
+          configPath = spec.env?.["OPENCODE_CONFIG"] ?? "";
+          const name = args[args.indexOf("--agent") + 1] ?? "";
+          const config = JSON.parse(readFileSync(configPath, "utf8")) as { agent: Record<string, { permission: Record<string, string> }> };
+          expect(config.agent[name]?.permission).toEqual({ edit: "deny", bash: "deny", task: "deny", skill: "deny" });
+          return runner.run(spec);
+        },
+      };
+      const adapter = new OpenCodeAdapter(inspectingRunner, { executable, launcherArgs: [fixturePath("fake-opencode.mjs")] });
+      expect((await adapter.invoke(makeInvocation({ readOnly: true }))).kind).toBe("success");
+      expect(argvs).toEqual([
+        ["--version"],
+        ["run", "--pure", "--agent", expect.stringMatching(/^agentic-readonly-/), "--model", "provider/test-model", expect.any(String)],
+      ]);
+      expect(configPath).not.toBe("");
+      expect(existsSync(configPath)).toBe(false);
+    },
+  );
+
   it("does not version-probe non-read-only invocations on opencode 2.x", async () => {
     process.env.FAKE_AGENT_VERSION = "2.2.0";
     const record: { argvs: string[][]; envs: (Record<string, string> | undefined)[] } = {
