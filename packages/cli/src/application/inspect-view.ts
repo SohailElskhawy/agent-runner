@@ -1,3 +1,4 @@
+import { deriveAttemptUsage } from "@agentic-dev-runner/core";
 import type {
   Attempt,
   ExecutionClaim,
@@ -67,6 +68,7 @@ function toInspectionAttempt(
       ),
     );
   return {
+    usage: deriveAttemptUsage(attempt, stageRuns),
     id: attempt.id,
     number: attempt.number,
     status: attempt.status,
