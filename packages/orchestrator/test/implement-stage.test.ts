@@ -175,6 +175,30 @@ describe("executeImplementStage (M054a)", () => {
     };
   }
 
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      if (kind === "success") writeChangeAt(worktreePath, "src/usage.ts", "change\n");
+      const output = { stdout: 'implemented' };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const outcome = await executeImplementStage(await implementOptions());
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
+
   it("invokes the agent to perform implementation and reports the changed paths", async () => {
     agent = new FakeAgentRuntime(
       agentAppliesChange({

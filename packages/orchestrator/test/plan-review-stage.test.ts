@@ -240,6 +240,29 @@ describe("executePlanReviewStage (M053a)", () => {
     };
   }
 
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      const output = { stdout: JSON.stringify({ decision: 'APPROVED' }) };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const outcome = await executePlanReviewStage(await planReviewOptions());
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === planReviewStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
+
   it("completes an APPROVED review of the persisted PLAN output", async () => {
     agent = new FakeAgentRuntime(agentReturnsReview({ decision: "APPROVED" }));
 

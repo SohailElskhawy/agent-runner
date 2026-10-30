@@ -293,6 +293,30 @@ describe("executeCodeReviewStage (M055a)", () => {
     };
   }
 
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    await seedCommittedImplementation();
+    agent = new FakeAgentRuntime(() => {
+      const output = { stdout: JSON.stringify({ decision: 'APPROVED' }) };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
+
   it("completes an APPROVED review of the implementation delta", async () => {
     let sawRunningStageRun = false;
     agent = new FakeAgentRuntime(async () => {

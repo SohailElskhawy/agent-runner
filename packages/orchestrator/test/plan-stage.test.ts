@@ -209,6 +209,29 @@ describe("executePlanStage (M052a)", () => {
     };
   }
 
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      const output = { stdout: PLAN_TEXT };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const outcome = await executePlanStage(await planOptions());
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
+
   it("runs a successful PLAN invocation that requests a plan, not implementation", async () => {
     agent = new FakeAgentRuntime(agentReturnsPlan(PLAN_TEXT));
 
