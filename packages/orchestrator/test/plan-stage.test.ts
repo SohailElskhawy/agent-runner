@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import { createGitManager } from "@agentic-dev-runner/git";
@@ -208,6 +208,104 @@ describe("executePlanStage (M052a)", () => {
       ...overrides,
     };
   }
+
+  it("retains usage when result processing throws", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 8 } } as const;
+    agent = new FakeAgentRuntime(() => ({
+      kind: "success", durationMs: 5, usage,
+      output: { get stdout(): string { throw new Error("invalid output"); } },
+    }));
+    const outcome = await executePlanStage(await planOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("retains usage when a failure result's output throws during finalization", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 5 } } as const;
+    agent = new FakeAgentRuntime(() => ({
+      kind: "failure", durationMs: 5, usage, failure: { kind: "process", message: "failed" },
+      output: { get stdout(): string { throw new Error("invalid output"); } },
+    }));
+    const outcome = await executePlanStage(await planOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("retains usage when the agent changes a read-only worktree", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { outputTokens: 6 } } as const;
+    agent = new FakeAgentRuntime((invocation) => {
+      writeWorktreeFile(invocation.worktreePath, "unexpected.ts", "mutation\n");
+      return { kind: "success", output: { stdout: "plan" }, durationMs: 5, usage };
+    });
+    const outcome = await executePlanStage(await planOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("does not rewrite a final row if persistence throws after writing it", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 3 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      return { kind: "success", output: { stdout: "plan" }, durationMs: 5, usage };
+    });
+    const put = store.putStageRun.bind(store);
+    const writes = vi.spyOn(store, "putStageRun").mockImplementation(async (run) => {
+      await put(run);
+      if (run.status !== "RUNNING") throw new Error("after write");
+    });
+    await expect(executePlanStage(await planOptions())).rejects.toThrow("after write");
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(writes.mock.calls[1]?.[0]).toMatchObject({ status: "SUCCEEDED", usage });
+    writes.mockRestore();
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId))).toMatchObject({ status: "SUCCEEDED", usage });
+  });
+
+  it.each(["throw", "pre-abort"] as const)("leaves usage absent on %s without a result", async (mode) => {
+    agent = new FakeAgentRuntime(() => { throw new Error("invocation failed"); });
+    const controller = new AbortController();
+    if (mode === "pre-abort") controller.abort();
+    const outcome = await executePlanStage(await planOptions({ signal: controller.signal }));
+    expect(outcome.stageRun.status).toBe(mode === "throw" ? "FAILED" : "CANCELLED");
+    expect(outcome.stageRun.usage).toBeUndefined();
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId))?.usage).toBeUndefined();
+  });
+
+  it.each([""])("retains usage for non-approved output %s", async (stdout) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { outputTokens: 9 } } as const;
+    agent = new FakeAgentRuntime(() => ({ kind: "success", output: { stdout }, durationMs: 5, usage }));
+    const outcome = await executePlanStage(await planOptions());
+    expect(outcome.stageRun.status).toBe(stdout.includes("CHANGES_REQUIRED") ? "SUCCEEDED" : "FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      const output = { stdout: PLAN_TEXT };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const writes = vi.spyOn(store, "putStageRun");
+    const outcome = await executePlanStage(await planOptions());
+    expect(writes.mock.calls.at(-1)?.[0]).toMatchObject({ status, usage });
+    writes.mockRestore();
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === planStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
 
   it("runs a successful PLAN invocation that requests a plan, not implementation", async () => {
     agent = new FakeAgentRuntime(agentReturnsPlan(PLAN_TEXT));

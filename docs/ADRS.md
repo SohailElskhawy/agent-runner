@@ -297,6 +297,16 @@ without changing any field of the row. Missing rows and null observations accept
 the first observation. SQLite serializes the check and write across connections;
 no migration or provider payload in error messages is introduced.
 
+**Slice 2b — workflow invocation evidence (AR041):** Agent execution results
+may carry an optional neutral observation. The PLAN, PLAN_REVIEW, IMPLEMENT,
+and CODE_REVIEW workflow stage finalizers write returned observations with the
+terminal stage run, including failed invocations and failures after a result.
+An invocation that produces no result has no observation. Distinct review
+cycles retain distinct stage-run evidence; recovery must preserve existing
+evidence. The planning exclusion above means discovery and project planning,
+not the workflow PLAN stage. This slice does not parse provider output, wire
+single-task invocations, calculate totals, or render usage.
+
 ### ADR-021 — Version-Scoped OpenCode Read-Only Invocation Shapes (AR048)
 
 **Status:** PROVISIONAL — adapter invocation contract for provider CLI major

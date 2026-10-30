@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import { createGitManager } from "@agentic-dev-runner/git";
@@ -174,6 +174,93 @@ describe("executeImplementStage (M054a)", () => {
       ...overrides,
     };
   }
+
+  it("retains usage when a failure result's output throws during finalization", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 5 } } as const;
+    agent = new FakeAgentRuntime(() => ({
+      kind: "failure", durationMs: 5, usage, failure: { kind: "process", message: "failed" },
+      output: { get stdout(): string { throw new Error("invalid output"); } },
+    }));
+    const outcome = await executeImplementStage(await implementOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("does not rewrite a final row if persistence throws after writing it", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 3 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      writeChangeAt(worktreePath, "src/usage.ts", "change\n");
+      return { kind: "success", output: { stdout: "implemented" }, durationMs: 5, usage };
+    });
+    const put = store.putStageRun.bind(store);
+    const writes = vi.spyOn(store, "putStageRun").mockImplementation(async (run) => {
+      await put(run);
+      if (run.status !== "RUNNING") throw new Error("after write");
+    });
+    await expect(executeImplementStage(await implementOptions())).rejects.toThrow("after write");
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(writes.mock.calls[1]?.[0]).toMatchObject({ status: "SUCCEEDED", usage });
+    writes.mockRestore();
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId))).toMatchObject({ status: "SUCCEEDED", usage });
+  });
+
+  it.each(["throw", "pre-abort"] as const)("leaves usage absent on %s without a result", async (mode) => {
+    agent = new FakeAgentRuntime(() => { throw new Error("invocation failed"); });
+    const controller = new AbortController();
+    if (mode === "pre-abort") controller.abort();
+    const outcome = await executeImplementStage(await implementOptions({ signal: controller.signal }));
+    expect(outcome.stageRun.status).toBe(mode === "throw" ? "FAILED" : "CANCELLED");
+    expect(outcome.stageRun.usage).toBeUndefined();
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId))?.usage).toBeUndefined();
+  });
+
+  it("retains usage when the implementation produces no changes", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { outputTokens: 9 } } as const;
+    agent = new FakeAgentRuntime(() => ({ kind: "success", output: {}, durationMs: 5, usage }));
+    const outcome = await executeImplementStage(await implementOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      if (kind === "success") writeChangeAt(worktreePath, "src/usage.ts", "change\n");
+      const output = { stdout: 'implemented' };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const writes = vi.spyOn(store, "putStageRun");
+    const outcome = await executeImplementStage(await implementOptions());
+    expect(writes.mock.calls.at(-1)?.[0]).toMatchObject({ status, usage });
+    writes.mockRestore();
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
+
+  it("retains result usage when post-invocation worktree inspection throws", async () => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 7 } } as const;
+    agent = new FakeAgentRuntime(() => ({ kind: "success", output: {}, durationMs: 5, usage }));
+    const status = vi.spyOn(git, "status").mockRejectedValueOnce(new Error("inspection failed"));
+    const outcome = await executeImplementStage(await implementOptions());
+    status.mockRestore();
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === implementStageRunId(attemptId))?.usage).toEqual(usage);
+  });
 
   it("invokes the agent to perform implementation and reports the changed paths", async () => {
     agent = new FakeAgentRuntime(

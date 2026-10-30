@@ -139,6 +139,29 @@ describe("CrashRecovery classification of canonical workflow states", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("preserves recorded stage usage and leaves an interrupted invocation without evidence", async () => {
+    await createInterruptedWorktree();
+    await seedTask("PLAN_REVIEW");
+    await store.putAttempt(runningAttempt());
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 4 } } as const;
+    await store.putStageRun({
+      id: `stage_${attemptId}_PLAN`, attemptId, stage: "PLAN", status: "SUCCEEDED",
+      startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z", usage,
+    });
+    await store.putStageRun({
+      id: `stage_${attemptId}_PLAN_REVIEW`, attemptId, stage: "PLAN_REVIEW", status: "RUNNING",
+      startedAt: "2026-01-01T00:00:01.000Z",
+    });
+    await store.close();
+    store = createSqliteRunnerStore({ path: dbPath });
+    await store.initialize();
+    wireRecovery();
+    expectOutcomeKind(await recovery.reconcileTask(taskId), "safe-to-retry");
+    const runs = await store.listStageRuns(attemptId);
+    expect(runs.find((run) => run.stage === "PLAN")?.usage).toEqual(usage);
+    expect(runs.find((run) => run.stage === "PLAN_REVIEW")?.usage).toBeUndefined();
+  });
+
   it("classifies a PLANNING interruption with a clean worktree as safe to retry", async () => {
     const path = await createInterruptedWorktree();
     await seedTask("PLANNING");
