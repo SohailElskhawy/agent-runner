@@ -289,6 +289,14 @@ does not cross-check `totalTokens` against components: the caller sets
 crash-recovery propagation, adapter parsing, totals and CLI rendering
 (AR041–AR044).
 
+**Provisional immutability policy (AR049, Panel policy A, CEO approved):**
+For a stable stage run or attempt identity, the first non-null observation is
+immutable. Omission preserves it, and a semantically identical replay is allowed
+regardless of object key order. A conflicting non-null observation is rejected
+without changing any field of the row. Missing rows and null observations accept
+the first observation. SQLite serializes the check and write across connections;
+no migration or provider payload in error messages is introduced.
+
 ### ADR-021 — Version-Scoped OpenCode Read-Only Invocation Shapes (AR048)
 
 **Status:** PROVISIONAL — adapter invocation contract for provider CLI major

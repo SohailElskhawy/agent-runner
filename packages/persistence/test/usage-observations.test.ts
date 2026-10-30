@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   INVOCATION_USAGE_SCHEMA_VERSION,
@@ -99,6 +101,15 @@ describe("invocation usage persistence", () => {
     expect(runs[0]).toEqual({ ...createStageRun(), usage: COMPLETE });
   });
 
+  it("accepts evidence on a new attempt and stage row", async () => {
+    const attempt = { ...createAttempt({ id: "attempt-2" }), number: 2, invocationUsage: COMPLETE };
+    const stage = { ...createStageRun({ id: "stage-run-2", attemptId: "attempt-2" }), usage: COMPLETE };
+    await store.putAttempt(attempt);
+    await store.putStageRun(stage);
+    expect(await store.getAttempt("attempt-2")).toEqual(attempt);
+    expect(await store.listStageRuns("attempt-2")).toEqual([stage]);
+  });
+
   it("keeps explicit zero and absent counters distinct", async () => {
     await store.putStageRun({ ...createStageRun(), usage: COMPLETE });
     const [run] = await store.listStageRuns("attempt-1");
@@ -145,7 +156,7 @@ describe("invocation usage persistence", () => {
     expect((await store.getAttempt("attempt-1"))?.invocationUsage).toEqual(COMPLETE);
   });
 
-  it("does not erase stored evidence when a later put omits it, but accepts a valid replacement", async () => {
+  it("does not erase stored evidence when a later put omits it", async () => {
     await store.putAttempt({ ...createAttempt(), invocationUsage: COMPLETE });
     await store.putStageRun({ ...createStageRun(), usage: COMPLETE });
 
@@ -156,8 +167,81 @@ describe("invocation usage persistence", () => {
     const [run] = await store.listStageRuns("attempt-1");
     expect(run).toMatchObject({ status: "FAILED", usage: COMPLETE });
 
-    await store.putStageRun({ ...createStageRun(), usage: UNKNOWN });
-    expect((await store.listStageRuns("attempt-1"))[0]?.usage).toEqual(UNKNOWN);
+  });
+
+  it.each([
+    ["unknown", UNKNOWN],
+    ["different counters", { ...COMPLETE, counters: { inputTokens: 101 } }],
+    ["different provenance", { ...COMPLETE, cost: { ...COMPLETE.cost!, provenance: { source: "other", scope: "invocation" } } }],
+  ])("rejects %s replacements without changing either row", async (_name, replacement) => {
+    await store.putAttempt({ ...createAttempt(), invocationUsage: COMPLETE });
+    await store.putStageRun({ ...createStageRun(), usage: COMPLETE });
+    const attemptBefore = rawRow("SELECT * FROM attempts");
+    const stageBefore = rawRow("SELECT * FROM stage_runs");
+    await expect(store.putAttempt({ ...createAttempt(), status: "FAILED", invocationUsage: replacement })).rejects.toThrow(PersistenceError);
+    await expect(store.putStageRun({ ...createStageRun({ status: "FAILED", output: { stdout: "changed" } }), usage: replacement })).rejects.toThrow(PersistenceError);
+    expect(rawRow("SELECT * FROM attempts")).toEqual(attemptBefore);
+    expect(rawRow("SELECT * FROM stage_runs")).toEqual(stageBefore);
+  });
+
+  it("accepts reordered identical evidence across connections and rejects conflicts after reopen", async () => {
+    await store.putAttempt({ ...createAttempt(), invocationUsage: COMPLETE });
+    await store.putStageRun({ ...createStageRun(), usage: COMPLETE });
+    const second = createSqliteRunnerStore({ path: dbPath });
+    try {
+      await second.initialize();
+      const replay: InvocationUsageObservation = {
+        cost: { provenance: { scope: "invocation", source: "provider-report" }, currency: "usd-as-reported", amount: "0.0042" },
+        cacheRelation: "subset",
+        counters: { cacheReadTokens: 40, outputTokens: 0, inputTokens: 100 },
+        status: "complete", schemaVersion: INVOCATION_USAGE_SCHEMA_VERSION,
+      };
+      const attemptEvidence = rawRow("SELECT invocation_usage_json FROM attempts");
+      const stageEvidence = rawRow("SELECT usage_json FROM stage_runs");
+      await second.putAttempt({ ...createAttempt(), status: "FAILED", invocationUsage: replay });
+      await second.putStageRun({ ...createStageRun({ status: "FAILED" }), usage: replay });
+      expect(rawRow("SELECT invocation_usage_json FROM attempts")).toEqual(attemptEvidence);
+      expect(rawRow("SELECT usage_json FROM stage_runs")).toEqual(stageEvidence);
+      await reopen();
+      await expect(store.putAttempt({ ...createAttempt(), invocationUsage: UNKNOWN })).rejects.toThrow(PersistenceError);
+      await expect(store.putStageRun({ ...createStageRun(), usage: UNKNOWN })).rejects.toThrow(PersistenceError);
+      expect(await store.getAttempt("attempt-1")).toMatchObject({ status: "FAILED", invocationUsage: COMPLETE });
+      expect((await store.listStageRuns("attempt-1"))[0]).toMatchObject({ status: "FAILED", usage: COMPLETE });
+    } finally {
+      await second.close();
+    }
+  });
+
+  it("checks evidence after a competing connection commits", async () => {
+    await store.putStageRun(createStageRun());
+    const worker = new Worker(`
+      const { parentPort, workerData } = require("node:worker_threads");
+      const { DatabaseSync } = require("node:sqlite");
+      const db = new DatabaseSync(workerData.path);
+      db.exec("BEGIN IMMEDIATE");
+      db.prepare("UPDATE attempts SET invocation_usage_json = ?").run(workerData.usage);
+      db.prepare("UPDATE stage_runs SET usage_json = ?").run(workerData.usage);
+      parentPort.postMessage("locked");
+      setTimeout(() => { db.exec("COMMIT"); db.close(); }, 100);
+    `, { eval: true, workerData: { path: dbPath, usage: JSON.stringify(COMPLETE) } });
+    try {
+      await once(worker, "message");
+      await expect(store.putAttempt({ ...createAttempt(), status: "FAILED", invocationUsage: UNKNOWN })).rejects.toThrow(PersistenceError);
+      await expect(store.putStageRun({ ...createStageRun({ status: "FAILED" }), usage: UNKNOWN })).rejects.toThrow(PersistenceError);
+      expect(await store.getAttempt("attempt-1")).toMatchObject({ status: "SUCCEEDED", invocationUsage: COMPLETE });
+      expect((await store.listStageRuns("attempt-1"))[0]).toMatchObject({ status: "SUCCEEDED", usage: COMPLETE });
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  it("rolls back caller-owned transactions on conflicting evidence", async () => {
+    await store.putAttempt({ ...createAttempt(), invocationUsage: COMPLETE });
+    await expect(store.transaction(async () => {
+      await store.putStageRun(createStageRun());
+      await store.putAttempt({ ...createAttempt(), invocationUsage: UNKNOWN });
+    })).rejects.toThrow(PersistenceError);
+    expect(await store.listStageRuns("attempt-1")).toEqual([]);
   });
 
   it("writes no orphan row when the stage run fails its foreign key", async () => {
@@ -205,6 +289,8 @@ describe("invocation usage persistence", () => {
       expect(await upgraded.listStageRuns("attempt-1")).toEqual([
         createStageRun({ output: { stdout: "out" } }),
       ]);
+      await upgraded.putAttempt({ ...createAttempt(), invocationUsage: COMPLETE });
+      expect((await upgraded.getAttempt("attempt-1"))?.invocationUsage).toEqual(COMPLETE);
       await upgraded.putStageRun({
         ...createStageRun({ output: { stdout: "out" } }),
         usage: COMPLETE,

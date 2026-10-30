@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   ATTEMPT_STATUSES,
   EXECUTION_CLAIM_STATUSES,
@@ -150,9 +151,37 @@ export class SqliteRunnerStore implements RunnerStore {
     return {
       columns: `, ${column}`,
       values: ", ?",
-      update: `,\n           ${column} = COALESCE(excluded.${column}, ${table}.${column})`,
+      update: `,\n           ${column} = COALESCE(${table}.${column}, excluded.${column})`,
       params: [json],
     };
+  }
+
+  private writeUsage(
+    db: DatabaseSync,
+    id: string,
+    json: string | null,
+    table: string,
+    column: string,
+    write: () => void,
+  ): void {
+    if (json === null) {
+      write();
+      return;
+    }
+    const ownTransaction = !db.isTransaction;
+    if (ownTransaction) db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = getRow(db.prepare(`SELECT ${column} FROM ${table} WHERE id = ?`), [id]);
+      const stored = row === undefined ? null : usageObservationColumn(row, column);
+      if (stored !== null && !isDeepStrictEqual(stored, parseInvocationUsageObservation(JSON.parse(json)))) {
+        throw new PersistenceError("Cannot replace an existing invocation usage observation");
+      }
+      write();
+      if (ownTransaction) db.exec("COMMIT");
+    } catch (error) {
+      if (ownTransaction && db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private requireDb(operation: string): DatabaseSync {
@@ -337,48 +366,50 @@ export class SqliteRunnerStore implements RunnerStore {
       "attempts",
       "invocation_usage_json",
     );
-    db.prepare(
-      `INSERT INTO attempts (
-         id, task_id, number, status, agent, model, base_revision,
-         context_manifest_json, logs_json, token_usage_json, cost,
-         started_at, finished_at, failure_json${usage.columns}
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${usage.values})
-       ON CONFLICT(id) DO UPDATE SET
-         task_id = excluded.task_id,
-         number = excluded.number,
-         status = excluded.status,
-         agent = excluded.agent,
-         model = excluded.model,
-         base_revision = excluded.base_revision,
-         context_manifest_json = excluded.context_manifest_json,
-         logs_json = excluded.logs_json,
-         token_usage_json = excluded.token_usage_json,
-         cost = excluded.cost,
-         started_at = excluded.started_at,
-         finished_at = excluded.finished_at,
-         failure_json = excluded.failure_json${usage.update}`,
-    ).run(
-      attempt.id,
-      attempt.taskId,
-      attempt.number,
-      attempt.status,
-      attempt.agent,
-      attempt.model ?? null,
-      attempt.baseRevision,
-      attempt.contextManifest === undefined
-        ? null
-        : JSON.stringify(attempt.contextManifest),
-      attempt.logs === undefined ? null : JSON.stringify(attempt.logs),
-      attempt.tokenUsage === undefined
-        ? null
-        : JSON.stringify(attempt.tokenUsage),
-      attempt.cost ?? null,
-      attempt.startedAt,
-      attempt.finishedAt ?? null,
-      attempt.failure === undefined ? null : JSON.stringify(attempt.failure),
-      ...usage.params,
-    );
+    this.writeUsage(db, attempt.id, usage.params[0] ?? null, "attempts", "invocation_usage_json", () => {
+      db.prepare(
+        `INSERT INTO attempts (
+           id, task_id, number, status, agent, model, base_revision,
+           context_manifest_json, logs_json, token_usage_json, cost,
+           started_at, finished_at, failure_json${usage.columns}
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${usage.values})
+         ON CONFLICT(id) DO UPDATE SET
+           task_id = excluded.task_id,
+           number = excluded.number,
+           status = excluded.status,
+           agent = excluded.agent,
+           model = excluded.model,
+           base_revision = excluded.base_revision,
+           context_manifest_json = excluded.context_manifest_json,
+           logs_json = excluded.logs_json,
+           token_usage_json = excluded.token_usage_json,
+           cost = excluded.cost,
+           started_at = excluded.started_at,
+           finished_at = excluded.finished_at,
+           failure_json = excluded.failure_json${usage.update}`,
+      ).run(
+        attempt.id,
+        attempt.taskId,
+        attempt.number,
+        attempt.status,
+        attempt.agent,
+        attempt.model ?? null,
+        attempt.baseRevision,
+        attempt.contextManifest === undefined
+          ? null
+          : JSON.stringify(attempt.contextManifest),
+        attempt.logs === undefined ? null : JSON.stringify(attempt.logs),
+        attempt.tokenUsage === undefined
+          ? null
+          : JSON.stringify(attempt.tokenUsage),
+        attempt.cost ?? null,
+        attempt.startedAt,
+        attempt.finishedAt ?? null,
+        attempt.failure === undefined ? null : JSON.stringify(attempt.failure),
+        ...usage.params,
+      );
+    });
   }
 
   async listExecutionClaims(filter?: ExecutionClaimFilter): Promise<ExecutionClaim[]> {
@@ -643,34 +674,36 @@ export class SqliteRunnerStore implements RunnerStore {
       "usage_json",
     );
     try {
-      db.prepare(
-        `INSERT INTO stage_runs (
-           id, attempt_id, stage, status, started_at, finished_at, failure_json, output_json${usage.columns}
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?${usage.values})
-         ON CONFLICT(id) DO UPDATE SET
-           attempt_id = excluded.attempt_id,
-           stage = excluded.stage,
-           status = excluded.status,
-           started_at = excluded.started_at,
-           finished_at = excluded.finished_at,
-           failure_json = excluded.failure_json,
-           output_json = excluded.output_json${usage.update}`,
-      ).run(
-        stageRun.id,
-        stageRun.attemptId,
-        stageRun.stage,
-        stageRun.status,
-        stageRun.startedAt ?? null,
-        stageRun.finishedAt ?? null,
-        stageRun.failure === undefined
-          ? null
-          : JSON.stringify(stageRun.failure),
-        stageRun.output === undefined
-          ? null
-          : JSON.stringify(stageRun.output),
-        ...usage.params,
-      );
+      this.writeUsage(db, stageRun.id, usage.params[0] ?? null, "stage_runs", "usage_json", () => {
+        db.prepare(
+          `INSERT INTO stage_runs (
+             id, attempt_id, stage, status, started_at, finished_at, failure_json, output_json${usage.columns}
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?${usage.values})
+           ON CONFLICT(id) DO UPDATE SET
+             attempt_id = excluded.attempt_id,
+             stage = excluded.stage,
+             status = excluded.status,
+             started_at = excluded.started_at,
+             finished_at = excluded.finished_at,
+             failure_json = excluded.failure_json,
+             output_json = excluded.output_json${usage.update}`,
+        ).run(
+          stageRun.id,
+          stageRun.attemptId,
+          stageRun.stage,
+          stageRun.status,
+          stageRun.startedAt ?? null,
+          stageRun.finishedAt ?? null,
+          stageRun.failure === undefined
+            ? null
+            : JSON.stringify(stageRun.failure),
+          stageRun.output === undefined
+            ? null
+            : JSON.stringify(stageRun.output),
+          ...usage.params,
+        );
+      });
     } catch (error) {
       if (isForeignKeyViolation(error)) {
         throw new PersistenceError(
