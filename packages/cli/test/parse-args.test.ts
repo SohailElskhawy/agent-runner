@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs } from "../src/parse-args.js";
+import { parseArgs, USAGE } from "../src/parse-args.js";
 import { CliError } from "../src/errors.js";
 
 describe("CLI argument parsing", () => {
+  it("accepts usage only for inspect with a task ID", () => {
+    expect(parseArgs(["inspect", "M001", "--usage"])).toEqual({ name: "inspect", taskId: "M001", usage: true });
+    expect(() => parseArgs(["inspect", "--usage"])).toThrow(CliError);
+    expect(() => parseArgs(["inspect", "M001", "--usage", "--usage"])).toThrow(CliError);
+    expect(() => parseArgs(["status", "--usage"])).toThrow(CliError);
+    expect(() => parseArgs(["run", "--usage"])).toThrow(CliError);
+    expect(() => parseArgs(["retry", "--usage"])).toThrow(CliError);
+    expect(() => parseArgs(["approve", "M001", "--usage"])).toThrow(CliError);
+    expect(USAGE).toContain("inspect <task-id> [--usage]");
+  });
+
   it("parses pause and resume and rejects empty reasons", () => {
     expect(parseArgs(["pause", "--reason", "maintenance"])).toEqual({ name: "pause", reason: "maintenance" });
     expect(parseArgs(["resume"])).toEqual({ name: "resume" });

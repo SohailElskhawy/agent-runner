@@ -596,6 +596,11 @@ describe("runCli command dispatch", () => {
 
     expect(inspectExit).toBe(0);
     const inspectOutput = inspectCapture.lines.join("\n");
+    const usageCapture = captureIo();
+    expect(await runCli(["inspect", "M001", "--usage"], { io: usageCapture.io, servicesFactory: async () => recordingService({ inspection }).service })).toBe(0);
+    expect(usageCapture.lines.join("\n")).toContain('usage: mode="unknown" status="unknown"');
+    expect(inspectCapture.lines.join("\n")).not.toContain("    usage:");
+
     expect(inspectOutput).toContain("[FAILED]");
     expect(inspectOutput).toContain("verification_failed");
     expect(inspectOutput).toContain("typecheck failed");

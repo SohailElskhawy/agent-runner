@@ -9,9 +9,10 @@ import type {
 export function renderTaskInspection(
   io: CliIo,
   inspection: TaskInspection,
+  usage = false,
 ): void {
   const task = inspection.task;
-  io.writeLine(`task: ${task.id}`);
+  io.writeLine(`task: ${usage ? safeText(task.id) : task.id}`);
   io.writeLine(`  title: ${task.title}`);
   io.writeLine(`  project: ${task.projectId}`);
   io.writeLine(`  milestone: ${task.milestone}`);
@@ -32,7 +33,7 @@ export function renderTaskInspection(
     io.writeLine("  (none)");
   }
   for (const attempt of inspection.attempts) {
-    io.writeLine(`  #${attempt.number} ${attempt.id} [${attempt.status}]`);
+    io.writeLine(`  #${attempt.number} ${usage ? safeText(attempt.id) : attempt.id} [${usage ? safeText(attempt.status) : attempt.status}]`);
     io.writeLine(`    agent: ${attempt.agent}${attempt.model === null ? "" : ` (${attempt.model})`}`);
     io.writeLine(`    base revision: ${attempt.baseRevision}`);
     io.writeLine(`    started: ${attempt.startedAt}`);
@@ -44,6 +45,7 @@ export function renderTaskInspection(
         `    failure: ${attempt.failure.kind}${attempt.failure.message === null ? "" : `: ${attempt.failure.message}`}`,
       );
     }
+    if (usage) renderUsage(io, attempt.usage);
     renderStages(io, attempt.stages);
     renderVerification(io, "verification", attempt.verification);
     renderVerification(io, "integration verification", attempt.integrationVerification);
@@ -197,4 +199,22 @@ function renderIntegrationQueue(io: CliIo, inspection: TaskInspection): void {
       io.writeLine(`    failure: ${entry.failureMessage}`);
     }
   }
+}
+
+function safeText(value: string): string {
+  return JSON.stringify(value).replace(/[\u007f-\u009f\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+function renderUsage(io: CliIo, usage: TaskInspection["attempts"][number]["usage"]): void {
+  io.writeLine(`    usage: mode=${safeText(usage.mode)} status=${safeText(usage.status)} coverage=${usage.known}/${usage.possible} known invocations`);
+  for (const reason of usage.reasons) io.writeLine(`      reason: ${safeText(reason)}`);
+  for (const [name, counter] of Object.entries(usage.counters)) {
+    io.writeLine(`      ${safeText(name)}: known subtotal=${counter.subtotal ?? "unknown"}; status=${safeText(counter.status)}; coverage=${counter.reported}/${counter.possible} reported`);
+    for (const reason of counter.reasons) io.writeLine(`        reason: ${safeText(reason)}`);
+  }
+  if (usage.costs.length === 0) io.writeLine("      reported amounts: unknown");
+  for (const { identity, cost } of usage.costs) {
+    io.writeLine(`      reported amount: ${safeText(cost.amount)} ${safeText(cost.currency)}; source=${safeText(cost.provenance.source)}; scope=${safeText(cost.provenance.scope)}; ${safeText(identity.kind)}=${safeText(identity.id)}`);
+  }
+  io.writeLine("      excludes project planning, VERIFY, INTEGRATE; includes workflow PLAN. Provider usage parsers are not yet supported.");
 }
