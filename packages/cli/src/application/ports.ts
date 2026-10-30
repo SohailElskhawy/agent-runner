@@ -1,4 +1,4 @@
-import type { PlanningMilestone, TaskConflict } from "@agentic-dev-runner/core";
+import type { AttemptUsageSummary, PlanningMilestone, TaskConflict } from "@agentic-dev-runner/core";
 import type { PlanningOutcome } from "./planning/planner.js";
 import type {
   ExecutionClaimStatus,
@@ -148,6 +148,7 @@ export type TaskInspection = {
 };
 
 export type TaskInspectionAttempt = {
+  readonly usage: AttemptUsageSummary;
   readonly id: string;
   readonly number: number;
   readonly status: string;

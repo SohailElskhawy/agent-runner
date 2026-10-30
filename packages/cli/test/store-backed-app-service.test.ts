@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import type { Task, TaskId, TaskStatus } from "@agentic-dev-runner/core";
+import { deriveAttemptUsage, type Task, type TaskId, type TaskStatus } from "@agentic-dev-runner/core";
 import {
   OrchestrationError,
   type CrashRecovery,
@@ -14,6 +14,7 @@ import type { AgentAvailability, AgentRegistry } from "@agentic-dev-runner/agent
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
 import { outcomeToRunResult } from "../src/application/runner-app-service.js";
 import { runCli } from "../src/run-cli.js";
+import { renderTaskInspection } from "../src/render/render-inspect.js";
 import {
   captureIo,
   createFixtureAttempt,
@@ -524,9 +525,11 @@ describe("StoreBackedAppService", () => {
     await store.putProject(createFixtureProject());
     await store.putTask(createFixtureTask({ status: "FAILED" }));
     await store.putAttempt(
-      createFixtureAttempt({
-        status: "FAILED",
-      }),
+      {
+        ...createFixtureAttempt({ status: "FAILED" }),
+        executionMode: "single-task",
+        invocationUsage: { schemaVersion: 1, status: "complete", counters: { inputTokens: 0, outputTokens: 7 } },
+      },
     );
     await store.appendEvents([
       {
@@ -550,6 +553,13 @@ describe("StoreBackedAppService", () => {
     expect(inspection).not.toBeNull();
     expect(inspection?.task.status).toBe("FAILED");
     expect(inspection?.attempts).toHaveLength(1);
+    expect(inspection?.attempts[0]?.usage).toMatchObject({ mode: "single-task", status: "complete", possible: 1, counters: { inputTokens: { subtotal: 0 }, outputTokens: { subtotal: 7 } } });
+    if (inspection === null || inspection.attempts[0] === undefined) throw new Error("Missing inspection attempt");
+    const actual = captureIo();
+    const withoutUsage = captureIo();
+    renderTaskInspection(actual.io, inspection);
+    renderTaskInspection(withoutUsage.io, { ...inspection, attempts: [{ ...inspection.attempts[0], usage: deriveAttemptUsage(createFixtureAttempt({ status: "FAILED" }), []) }] });
+    expect(actual.lines).toEqual(withoutUsage.lines);
     expect(inspection?.events).toHaveLength(1);
     expect(inspection?.events[0]?.type).toBe("task.transitioned");
   });

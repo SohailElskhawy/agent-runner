@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TaskId } from "@agentic-dev-runner/core";
+import { deriveAttemptUsage, type TaskId } from "@agentic-dev-runner/core";
 import type { RunnerAppService } from "../src/application/runner-app-service.js";
 import { runCli } from "../src/run-cli.js";
 import type {
@@ -520,6 +520,7 @@ describe("runCli command dispatch", () => {
       task: createFixtureTask({ status: "FAILED" }),
       attempts: [
         {
+          usage: deriveAttemptUsage({ id: "att_M001_1", taskId: "M001", number: 1, status: "FAILED", agent: "fake-agent", baseRevision: "abc", startedAt: "2026-01-01T00:00:00.000Z" }, []),
           id: "att_M001_1",
           number: 1,
           status: "FAILED",

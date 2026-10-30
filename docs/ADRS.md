@@ -320,6 +320,15 @@ Recovery preserves both fields. Legacy numeric token usage and cost remain
 unverified and unchanged. There is no downgrade path; older runners reject v13.
 Provider parsing, aggregation, planning and display remain outside this slice.
 
+**AR042 implementation note (PROVISIONAL, D-AP-8):** The inspection read
+model derives per-attempt usage from durable attempt mode and existing agent
+stage records. Workflow PLAN, PLAN_REVIEW, IMPLEMENT and CODE_REVIEW are
+included; project planning, VERIFY and INTEGRATE are excluded. Running,
+legacy and no-stage workflow attempts cannot claim complete coverage. Named
+counters have independently checked subtotals and coverage; incompatible
+cache relations, conflicts and overflow remain explicit. Reported costs remain
+separate exact evidence, never summed. No CLI rendering is added by this slice.
+
 ### ADR-021 — Version-Scoped OpenCode Read-Only Invocation Shapes (AR048)
 
 **Status:** PROVISIONAL — adapter invocation contract for provider CLI major
