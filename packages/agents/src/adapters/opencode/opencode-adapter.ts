@@ -26,6 +26,12 @@ const PROBE_ARGS = ["--version"];
 const CONTEXT_DIR_PREFIX = "agentic-opencode-context-";
 const CONTEXT_FILE_NAME = "context-pack.json";
 
+// opencode 2.x removed `--pure` and only exposes agents injected through
+// OPENCODE_CONFIG to a private `--standalone` server; 1.x still requires
+// `--pure`. An undetectable version falls back to the legacy 1.x contract.
+const CLI_V2_MAJOR = 2;
+const DEFAULT_CLI_MAJOR = 1;
+
 export type OpenCodeAdapterOptions = {
   readonly executable?: string | undefined;
   readonly model?: string | undefined;
@@ -51,6 +57,7 @@ export class OpenCodeAdapter implements AgentRuntime {
   private readonly runner: ProcessRunner;
   private readonly options: OpenCodeAdapterOptions;
   private readonly removeDirectory: ContextDirectoryRemover;
+  private cliMajorVersion: Promise<number> | undefined;
 
   constructor(runner: ProcessRunner, options: OpenCodeAdapterOptions = {}) {
     this.runner = runner;
@@ -77,6 +84,9 @@ export class OpenCodeAdapter implements AgentRuntime {
       const readOnlyAgentName = invocation.readOnly === true
         ? `agentic-readonly-${randomUUID()}`
         : undefined;
+      const cliMajorVersion = readOnlyAgentName === undefined
+        ? undefined
+        : await this.detectCliMajorVersion();
       const configPath = readOnlyAgentName === undefined ? undefined : join(contextDir, "opencode.json");
       if (readOnlyAgentName !== undefined && configPath !== undefined) {
         await writeFile(configPath, readOnlyAgentConfig(readOnlyAgentName), { encoding: "utf8", mode: 0o600, flag: "wx" });
@@ -90,6 +100,7 @@ export class OpenCodeAdapter implements AgentRuntime {
             model: invocation.agent.model ?? this.options.model,
             prompt: buildPrompt(contextPackPath, invocation.instruction),
             readOnlyAgentName,
+            cliMajorVersion,
           }),
         ],
         cwd: invocation.worktreePath,
@@ -112,6 +123,32 @@ export class OpenCodeAdapter implements AgentRuntime {
     };
     return normalizeProbeResult(await this.runner.run(spec), OPENCODE_AGENT_ID);
   }
+
+  // The installed CLI version cannot change while the adapter runs, so the
+  // probe result is cached per adapter instance.
+  private detectCliMajorVersion(): Promise<number> {
+    this.cliMajorVersion ??= this.readCliMajorVersion();
+    return this.cliMajorVersion;
+  }
+
+  private async readCliMajorVersion(): Promise<number> {
+    const spec: ProcessSpec = {
+      executable: this.options.executable ?? DEFAULT_EXECUTABLE,
+      args: [...(this.options.launcherArgs ?? []), ...PROBE_ARGS],
+      timeoutMs: AGENT_PROBE_TIMEOUT_MS,
+    };
+    try {
+      const result = await this.runner.run(spec);
+      if (result.outcome.kind !== "completed" || result.outcome.code !== 0) {
+        return DEFAULT_CLI_MAJOR;
+      }
+      const version = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      const match = /\b(\d+)\.\d+(?:\.\d+)?\b/.exec(version);
+      return match === null ? DEFAULT_CLI_MAJOR : Number(match[1]);
+    } catch {
+      return DEFAULT_CLI_MAJOR;
+    }
+  }
 }
 
 async function runCleanup(
@@ -133,10 +170,14 @@ function buildRunArgs(input: {
   model?: string | undefined;
   prompt: string;
   readOnlyAgentName?: string | undefined;
+  cliMajorVersion?: number | undefined;
 }): string[] {
   const args = ["run"];
   if (input.readOnlyAgentName !== undefined) {
-    args.push("--pure", "--agent", input.readOnlyAgentName);
+    const readOnlyFlags = (input.cliMajorVersion ?? DEFAULT_CLI_MAJOR) >= CLI_V2_MAJOR
+      ? ["--standalone"]
+      : ["--pure"];
+    args.push(...readOnlyFlags, "--agent", input.readOnlyAgentName);
   }
   if (input.model !== undefined) {
     args.push("--model", input.model);

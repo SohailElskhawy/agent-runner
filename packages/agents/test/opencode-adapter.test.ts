@@ -107,7 +107,33 @@ describe("OpenCodeAdapter", () => {
     rmSync(spacedDir, { recursive: true, force: true });
     delete process.env.FAKE_AGENT_EXIT_CODE;
     delete process.env.FAKE_AGENT_DELAY_MS;
+    delete process.env.FAKE_AGENT_VERSION;
   });
+
+  function makeRecordingAdapter(record: {
+    argvs: string[][];
+    envs: (Record<string, string> | undefined)[];
+  }): OpenCodeAdapter {
+    const launcherArgs: readonly string[] = [fixturePath("fake-opencode.mjs")];
+    const inspectingRunner: ProcessRunner = {
+      run: async (spec) => {
+        const args = [...(spec.args ?? [])];
+        record.argvs.push(args.slice(launcherArgs.length));
+        record.envs.push(spec.env === undefined ? undefined : { ...spec.env });
+        return runner.run(spec);
+      },
+    };
+    return new OpenCodeAdapter(inspectingRunner, {
+      executable,
+      launcherArgs,
+    });
+  }
+
+  function countVersionProbes(record: {
+    argvs: string[][];
+  }): number {
+    return record.argvs.filter((argv) => argv.includes("--version")).length;
+  }
 
   function makeInvocation(
     overrides?: Partial<AgentInvocation>,
@@ -147,6 +173,7 @@ describe("OpenCodeAdapter", () => {
   });
 
   it("loads and cleans a unique read-only agent without overwriting project OpenCode config", async () => {
+    process.env.FAKE_AGENT_VERSION = "1.18.33";
     const configDir = join(worktreePath, ".opencode");
     mkdirSync(configDir, { recursive: true });
     const projectConfig = join(configDir, "opencode.json");
@@ -156,6 +183,9 @@ describe("OpenCodeAdapter", () => {
     let args: readonly string[] = [];
     const inspectingRunner: ProcessRunner = {
       run: async (spec) => {
+        if (spec.args?.includes("--version")) {
+          return runner.run(spec);
+        }
         args = spec.args ?? [];
         const index = args.indexOf("--agent");
         const name = args[index + 1] ?? "";
@@ -181,6 +211,133 @@ describe("OpenCodeAdapter", () => {
     expect(readFileSync(projectConfig, "utf8")).toBe('{"model":"project/model"}');
     expect(configPaths.every((path) => !existsSync(path))).toBe(true);
     expect(existsSync(join(worktreePath, ".opencode", "agents"))).toBe(false);
+  });
+
+  it("keeps --pure and probes the CLI major version once for read-only 1.x invocations", async () => {
+    process.env.FAKE_AGENT_VERSION = "1.99.0";
+    const record: { argvs: string[][]; envs: (Record<string, string> | undefined)[] } = { argvs: [], envs: [] };
+    const adapter = makeRecordingAdapter(record);
+    const result = await adapter.invoke(makeInvocation({ readOnly: true }));
+
+    expect(result.kind).toBe("success");
+    const report = JSON.parse(
+      result.kind === "success" ? (result.output.stdout ?? "") : "",
+    ) as FakeAgentReport;
+    expect(report.argv).toEqual([
+      "run",
+      "--pure",
+      "--agent",
+      expect.any(String),
+      "--model",
+      "provider/test-model",
+      expect.any(String),
+    ]);
+    expect(countVersionProbes(record)).toBe(1);
+  });
+
+  it("reproduces AR048: opencode 2.x rejects --pure with Unrecognized flag", async () => {
+    process.env.FAKE_AGENT_VERSION = "2.2.0";
+    const strict = await runner.run({
+      executable,
+      args: [fixturePath("fake-opencode.mjs"), "run", "--pure", "--agent", "agentic-readonly-x", "prompt"],
+    });
+    expect(strict.outcome.kind).toBe("completed");
+    expect(strict.outcome.kind === "completed" ? strict.outcome.code : 0).toBe(1);
+    expect(strict.stderr).toContain("Unrecognized flag: --pure");
+  });
+
+  it("reproduces AR048: opencode 2.x reports Agent not found without the standalone server", async () => {
+    process.env.FAKE_AGENT_VERSION = "2.2.0";
+    const strict = await runner.run({
+      executable,
+      args: [fixturePath("fake-opencode.mjs"), "run", "--agent", "agentic-readonly-x", "prompt"],
+    });
+    expect(strict.outcome.kind).toBe("completed");
+    expect(strict.outcome.kind === "completed" ? strict.outcome.code : 0).toBe(1);
+    expect(strict.stderr).toContain(`Agent not found: "agentic-readonly-x"`);
+  });
+
+  it("on opencode 2.x uses --standalone with no --pure and still injects the read-only agent via OPENCODE_CONFIG", async () => {
+    process.env.FAKE_AGENT_VERSION = "2.2.0";
+    const argvs: string[][] = [];
+    const configs: { path: string; content: string }[] = [];
+    const inspectingRunner: ProcessRunner = {
+      run: async (spec) => {
+        const args = [...(spec.args ?? [])];
+        argvs.push(args.slice(1));
+        const configPath = spec.env?.["OPENCODE_CONFIG"] ?? "";
+        if (configPath.length > 0) {
+          configs.push({ path: configPath, content: readFileSync(configPath, "utf8") });
+        }
+        return runner.run(spec);
+      },
+    };
+    const adapter = new OpenCodeAdapter(inspectingRunner, {
+      executable,
+      launcherArgs: [fixturePath("fake-opencode.mjs")],
+    });
+    expect((await adapter.invoke(makeInvocation({ readOnly: true }))).kind).toBe("success");
+    expect((await adapter.invoke(makeInvocation({ readOnly: true }))).kind).toBe("success");
+
+    // The per-adapter major-version detect runs one --version probe.
+    expect(argvs.filter((entry) => entry.includes("--version"))).toHaveLength(1);
+    const argv = argvs.filter((entry) => entry.includes("run")).at(-1) ?? [];
+    expect(argv[0]).toBe("run");
+    expect(argv).not.toContain("--pure");
+    expect(argv).toContain("--standalone");
+    const agentIndex = argv.indexOf("--agent");
+    const name = argv[agentIndex + 1] ?? "";
+    expect(name).toMatch(/^agentic-readonly-/);
+    expect(argv).toContain("--model");
+    expect(argv.at(-1)).not.toBe("--model");
+    const injected = configs.filter((entry) => entry.path.includes("agentic-opencode-context-"));
+    expect(injected).toHaveLength(2);
+    const config = JSON.parse(injected.at(-1)?.content ?? "{}") as {
+      agent: Record<string, { description?: string; mode?: string; permission: Record<string, string> }>;
+    };
+    expect(config.agent[name]).toEqual({
+      description: "Read-only planning agent",
+      mode: "primary",
+      permission: { edit: "deny", bash: "deny", task: "deny", skill: "deny" },
+    });
+    // The temp config directory is removed once the run completes.
+    expect(existsSync(injected.at(-1)?.path ?? "")).toBe(false);
+    const agentNames = argvs
+      .filter((entry) => entry.includes("--agent"))
+      .map((entry) => entry[entry.indexOf("--agent") + 1]);
+    expect(new Set(agentNames).size).toBe(2);
+  });
+
+  it("treats an unparseable opencode version as the legacy 1.x contract", async () => {
+    process.env.FAKE_AGENT_VERSION = "not-a-version";
+    const record: { argvs: string[][]; envs: (Record<string, string> | undefined)[] } = { argvs: [], envs: [] };
+    const adapter = makeRecordingAdapter(record);
+    const result = await adapter.invoke(makeInvocation({ readOnly: true }));
+
+    expect(result.kind).toBe("success");
+    const report = JSON.parse(
+      result.kind === "success" ? (result.output.stdout ?? "") : "",
+    ) as FakeAgentReport;
+    expect(report.argv).toContain("--pure");
+    expect(report.argv).not.toContain("--standalone");
+  });
+
+  it("reproduces AR048: opencode 2.x rejects --pure with Unrecognized flag", async () => {
+    process.env.FAKE_AGENT_VERSION = "2.2.0";
+    const record: { argvs: string[][]; envs: (Record<string, string> | undefined)[] } = {
+      argvs: [],
+      envs: [],
+    };
+    const adapter = makeRecordingAdapter(record);
+    const result = await adapter.invoke(makeInvocation());
+
+    expect(result.kind).toBe("success");
+    const runArgv = record.argvs.at(-1) ?? [];
+    expect(runArgv.slice(0, 3)).toEqual(["run", "--model", "provider/test-model"]);
+    expect(runArgv).not.toContain("--pure");
+    expect(runArgv).not.toContain("--standalone");
+    expect(runArgv).not.toContain("--agent");
+    expect(record.argvs.filter((entry) => entry.includes("--version"))).toHaveLength(0);
   });
 
   it("captures stdout and stderr and normalizes success", async () => {
