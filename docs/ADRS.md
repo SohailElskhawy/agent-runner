@@ -307,6 +307,19 @@ evidence. The planning exclusion above means discovery and project planning,
 not the workflow PLAN stage. This slice does not parse provider output, wire
 single-task invocations, calculate totals, or render usage.
 
+**Slice 2c — durable attempt mode and single-task evidence (AR050, D-AP-8):**
+PROVISIONAL, owner confirmation pending. Migration v13 adds nullable attempt
+`execution_mode` (`single-task` or `workflow`) without backfill; absent mode
+means legacy/unknown, including workflows that ended before their first stage.
+Both paths record mode at attempt creation. Omission preserves a stored mode,
+identical replay is allowed, and contradictory or malformed modes fail without
+changing the row. Older migration lists accept omission but reject explicit mode.
+Single-task result logs and optional invocation usage are persisted together
+before interpreting any returned result; missing results supply no observation.
+Recovery preserves both fields. Legacy numeric token usage and cost remain
+unverified and unchanged. There is no downgrade path; older runners reject v13.
+Provider parsing, aggregation, planning and display remain outside this slice.
+
 ### ADR-021 — Version-Scoped OpenCode Read-Only Invocation Shapes (AR048)
 
 **Status:** PROVISIONAL — adapter invocation contract for provider CLI major

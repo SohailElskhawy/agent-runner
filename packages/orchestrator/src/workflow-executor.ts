@@ -625,6 +625,7 @@ class SequentialWorkflowTaskExecutor implements WorkflowTaskExecutor {
       taskId,
       number: attemptNumber,
       status: "RUNNING",
+      executionMode: "workflow",
       agent: this.agent.descriptor.id,
       ...(model === undefined ? {} : { model }),
       baseRevision,

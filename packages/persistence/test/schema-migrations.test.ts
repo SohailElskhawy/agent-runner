@@ -218,6 +218,7 @@ describe("SQLite schema migrations", () => {
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
         { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
         { version: 12, name: "add-invocation-usage-observations", appliedAt: expect.any(String) },
+        { version: 13, name: "add-attempt-execution-mode", appliedAt: expect.any(String) },
     ]);
   });
 
@@ -286,6 +287,7 @@ describe("SQLite schema migrations", () => {
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
         { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
         { version: 12, name: "add-invocation-usage-observations", appliedAt: expect.any(String) },
+        { version: 13, name: "add-attempt-execution-mode", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject(legacyProject.id)).toEqual(legacyProject);
       expect(await opened.getTask(legacyTask.id)).toEqual(legacyTask);
@@ -357,6 +359,7 @@ describe("SQLite schema migrations", () => {
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
         { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
         { version: 12, name: "add-invocation-usage-observations", appliedAt: expect.any(String) },
+        { version: 13, name: "add-attempt-execution-mode", appliedAt: expect.any(String) },
         ]);
       });
     }
@@ -458,9 +461,9 @@ describe("SQLite schema migrations", () => {
 
     expect(rejection).toBeInstanceOf(SchemaVersionTooNewError);
     expect((rejection as Error).message).toContain(`"${dbPath}"`);
-    expect((rejection as Error).message).toContain("schema version 13");
+    expect((rejection as Error).message).toContain("schema version 14");
     expect((rejection as Error).message).toContain(
-      "supported schema version 12",
+      "supported schema version 13",
     );
   });
 
@@ -472,7 +475,7 @@ describe("SQLite schema migrations", () => {
           migrations: futureSchemaChain(),
           now: () => FIXED_CLOCK,
         }),
-      ).toBe(13);
+      ).toBe(14);
 
       expect(() =>
         migrateSchema(db, { migrations: [initialSchemaMigration()] }),
@@ -576,6 +579,7 @@ describe("SQLite schema migrations", () => {
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
         { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
         { version: 12, name: "add-invocation-usage-observations", appliedAt: expect.any(String) },
+        { version: 13, name: "add-attempt-execution-mode", appliedAt: expect.any(String) },
       ]);
     });
   });
@@ -673,6 +677,7 @@ describe("SQLite schema migrations", () => {
         { version: 10, name: "add-task-approval-state", appliedAt: expect.any(String) },
         { version: 11, name: "add-runner-control-state", appliedAt: expect.any(String) },
         { version: 12, name: "add-invocation-usage-observations", appliedAt: expect.any(String) },
+        { version: 13, name: "add-attempt-execution-mode", appliedAt: expect.any(String) },
       ]);
       expect(await opened.getProject("proj-1")).toEqual({
         id: "proj-1",
@@ -714,7 +719,7 @@ describe("SQLite schema migrations", () => {
     try {
       migrateSchema(db, { migrations: SCHEMA_MIGRATIONS.slice(0, 9) });
       const version = migrateSchema(db);
-      expect(version).toBe(12);
+      expect(version).toBe(13);
       const columns = db
         .prepare("PRAGMA table_info(tasks)")
         .all() as { readonly name: string }[];

@@ -11,6 +11,8 @@ export const ATTEMPT_STATUSES = [
   "TIMED_OUT",
 ] as const;
 
+export type AttemptExecutionMode = "single-task" | "workflow";
+
 export type AttemptStatus = (typeof ATTEMPT_STATUSES)[number];
 
 export type AttemptFailure = {
@@ -34,6 +36,7 @@ export type Attempt = {
   taskId: TaskId;
   number: number;
   status: AttemptStatus;
+  executionMode?: AttemptExecutionMode;
   agent: string;
   model?: string;
   baseRevision: string;

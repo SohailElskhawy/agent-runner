@@ -16,6 +16,7 @@ import {
   parseInvocationUsageObservation,
   type Attempt,
   type AttemptFailure,
+  type AttemptExecutionMode,
   type AttemptId,
   type AttemptLogs,
   type ContextManifest,
@@ -78,6 +79,7 @@ export class SqliteRunnerStore implements RunnerStore {
   private db: DatabaseSync | null = null;
   /** False when a caller-supplied migration list predates the usage columns. */
   private hasUsageColumns = false;
+  private hasExecutionModeColumn = false;
   private initializing: Promise<void> | null = null;
 
   constructor(options: SqliteRunnerStoreOptions) {
@@ -106,6 +108,7 @@ export class SqliteRunnerStore implements RunnerStore {
         source: this.path,
       });
       this.hasUsageColumns = version >= USAGE_COLUMNS_SCHEMA_VERSION;
+      this.hasExecutionModeColumn = version >= 13;
       this.db = db;
     } catch (error) {
       if (db !== null && db.isOpen) {
@@ -360,56 +363,76 @@ export class SqliteRunnerStore implements RunnerStore {
 
   async putAttempt(attempt: Attempt): Promise<void> {
     const db = this.requireDb("putAttempt");
+    const mode = attempt.executionMode === undefined ? null : parseExecutionMode(attempt.executionMode);
+    if (!this.hasExecutionModeColumn && mode !== null) {
+      throw new PersistenceError("Cannot persist attempt: database schema predates execution mode");
+    }
     const usage = this.usageSql(
       attempt.invocationUsage,
       `attempt "${attempt.id}"`,
       "attempts",
       "invocation_usage_json",
     );
-    this.writeUsage(db, attempt.id, usage.params[0] ?? null, "attempts", "invocation_usage_json", () => {
-      db.prepare(
-        `INSERT INTO attempts (
-           id, task_id, number, status, agent, model, base_revision,
-           context_manifest_json, logs_json, token_usage_json, cost,
-           started_at, finished_at, failure_json${usage.columns}
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${usage.values})
-         ON CONFLICT(id) DO UPDATE SET
-           task_id = excluded.task_id,
-           number = excluded.number,
-           status = excluded.status,
-           agent = excluded.agent,
-           model = excluded.model,
-           base_revision = excluded.base_revision,
-           context_manifest_json = excluded.context_manifest_json,
-           logs_json = excluded.logs_json,
-           token_usage_json = excluded.token_usage_json,
-           cost = excluded.cost,
-           started_at = excluded.started_at,
-           finished_at = excluded.finished_at,
-           failure_json = excluded.failure_json${usage.update}`,
-      ).run(
-        attempt.id,
-        attempt.taskId,
-        attempt.number,
-        attempt.status,
-        attempt.agent,
-        attempt.model ?? null,
-        attempt.baseRevision,
-        attempt.contextManifest === undefined
-          ? null
-          : JSON.stringify(attempt.contextManifest),
-        attempt.logs === undefined ? null : JSON.stringify(attempt.logs),
-        attempt.tokenUsage === undefined
-          ? null
-          : JSON.stringify(attempt.tokenUsage),
-        attempt.cost ?? null,
-        attempt.startedAt,
-        attempt.finishedAt ?? null,
-        attempt.failure === undefined ? null : JSON.stringify(attempt.failure),
-        ...usage.params,
-      );
-    });
+    const ownTransaction = this.hasExecutionModeColumn && !db.isTransaction;
+    if (ownTransaction) db.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.hasExecutionModeColumn) {
+        const row = getRow(db.prepare("SELECT execution_mode FROM attempts WHERE id = ?"), [attempt.id]);
+        const existing = row === undefined ? null : executionModeColumn(row);
+        if (existing !== null && mode !== null && existing !== mode) {
+          throw new PersistenceError("Cannot replace an existing attempt execution mode");
+        }
+      }
+      this.writeUsage(db, attempt.id, usage.params[0] ?? null, "attempts", "invocation_usage_json", () => {
+        db.prepare(
+          `INSERT INTO attempts (
+             id, task_id, number, status, agent, model, base_revision,
+             context_manifest_json, logs_json, token_usage_json, cost,
+             started_at, finished_at, failure_json${usage.columns}${this.hasExecutionModeColumn ? ", execution_mode" : ""}
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${usage.values}${this.hasExecutionModeColumn ? ", ?" : ""})
+           ON CONFLICT(id) DO UPDATE SET
+             task_id = excluded.task_id,
+             number = excluded.number,
+             status = excluded.status,
+             agent = excluded.agent,
+             model = excluded.model,
+             base_revision = excluded.base_revision,
+             context_manifest_json = excluded.context_manifest_json,
+             logs_json = excluded.logs_json,
+             token_usage_json = excluded.token_usage_json,
+             cost = excluded.cost,
+             started_at = excluded.started_at,
+             finished_at = excluded.finished_at,
+             failure_json = excluded.failure_json${usage.update}${this.hasExecutionModeColumn ? ", execution_mode = COALESCE(attempts.execution_mode, excluded.execution_mode)" : ""}`,
+        ).run(
+          attempt.id,
+          attempt.taskId,
+          attempt.number,
+          attempt.status,
+          attempt.agent,
+          attempt.model ?? null,
+          attempt.baseRevision,
+          attempt.contextManifest === undefined
+            ? null
+            : JSON.stringify(attempt.contextManifest),
+          attempt.logs === undefined ? null : JSON.stringify(attempt.logs),
+          attempt.tokenUsage === undefined
+            ? null
+            : JSON.stringify(attempt.tokenUsage),
+          attempt.cost ?? null,
+          attempt.startedAt,
+          attempt.finishedAt ?? null,
+          attempt.failure === undefined ? null : JSON.stringify(attempt.failure),
+          ...usage.params,
+          ...(this.hasExecutionModeColumn ? [mode] : []),
+        );
+      });
+      if (ownTransaction) db.exec("COMMIT");
+    } catch (error) {
+      if (ownTransaction && db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async listExecutionClaims(filter?: ExecutionClaimFilter): Promise<ExecutionClaim[]> {
@@ -1246,6 +1269,16 @@ function taskFromRow(row: Record<string, unknown>): Task {
   };
 }
 
+function parseExecutionMode(value: unknown): AttemptExecutionMode {
+  if (value === "single-task" || value === "workflow") return value;
+  throw new PersistenceError("Invalid attempt execution mode");
+}
+
+function executionModeColumn(row: Record<string, unknown>): AttemptExecutionMode | null {
+  const value = row["execution_mode"];
+  return value === null || value === undefined ? null : parseExecutionMode(value);
+}
+
 function attemptFromRow(row: Record<string, unknown>): Attempt {
   const model = optionalTextColumn(row, "model");
   const contextManifest = optionalJsonColumn<ContextManifest>(
@@ -1258,6 +1291,7 @@ function attemptFromRow(row: Record<string, unknown>): Attempt {
   const finishedAt = optionalTextColumn(row, "finished_at");
   const failure = optionalJsonColumn<AttemptFailure>(row, "failure_json");
   const invocationUsage = usageObservationColumn(row, "invocation_usage_json");
+  const executionMode = executionModeColumn(row);
 
   return {
     id: textColumn(row, "id"),
@@ -1279,6 +1313,7 @@ function attemptFromRow(row: Record<string, unknown>): Attempt {
     ...(finishedAt === null ? {} : { finishedAt }),
     ...(failure === null ? {} : { failure }),
     ...(invocationUsage === null ? {} : { invocationUsage }),
+    ...(executionMode === null ? {} : { executionMode }),
   };
 }
 

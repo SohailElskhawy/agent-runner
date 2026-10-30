@@ -88,6 +88,77 @@ describe("invocation usage persistence", () => {
     await store.initialize();
   }
 
+  it("preserves the execution mode across omission and rejects contradictory writes", async () => {
+    await store.putAttempt({ ...createAttempt(), executionMode: "single-task" });
+    await store.putAttempt({ ...createAttempt(), executionMode: "single-task" });
+    await store.putAttempt({ ...createAttempt(), status: "FAILED" });
+    await reopen();
+    expect(await store.getAttempt("attempt-1")).toMatchObject({ status: "FAILED", executionMode: "single-task" });
+    const before = rawRow("SELECT * FROM attempts");
+    await expect(store.putAttempt({ ...createAttempt(), status: "RUNNING", executionMode: "workflow" })).rejects.toThrow(PersistenceError);
+    expect(rawRow("SELECT * FROM attempts")).toEqual(before);
+  });
+
+  it("rolls back a caller-owned transaction on a mode conflict", async () => {
+    await store.putAttempt({ ...createAttempt(), executionMode: "workflow", invocationUsage: COMPLETE });
+    await expect(store.transaction(async () => {
+      await store.putStageRun(createStageRun());
+      await store.putAttempt({ ...createAttempt(), executionMode: "single-task", invocationUsage: COMPLETE });
+    })).rejects.toThrow(/execution mode/);
+    expect(await store.listStageRuns("attempt-1")).toEqual([]);
+    expect(await store.getAttempt("attempt-1")).toMatchObject({ executionMode: "workflow", invocationUsage: COMPLETE });
+  });
+
+  it("rejects malformed input and stored execution modes without exposing them", async () => {
+    const bad = "private-payload";
+    const before = rawRow("SELECT * FROM attempts");
+    await expect(store.putAttempt({ ...createAttempt(), status: "FAILED", executionMode: bad as "workflow" })).rejects.toThrow(/execution mode/);
+    expect(rawRow("SELECT * FROM attempts")).toEqual(before);
+    const db = new DatabaseSync(dbPath);
+    try { db.prepare("UPDATE attempts SET execution_mode = ?").run(bad); } finally { db.close(); }
+    await expect(store.getAttempt("attempt-1")).rejects.toThrow(/execution mode/);
+    try { await store.getAttempt("attempt-1"); } catch (error) { expect(String(error)).not.toContain(bad); }
+    const corrupt = rawRow("SELECT * FROM attempts");
+    await expect(store.putAttempt({ ...createAttempt(), status: "FAILED" })).rejects.toThrow(/execution mode/);
+    expect(rawRow("SELECT * FROM attempts")).toEqual(corrupt);
+  });
+
+  it("rolls back a failed v13 migration", () => {
+    const db = new DatabaseSync(join(directory, "rollback-v13.db"));
+    try {
+      migrateSchema(db, { migrations: SCHEMA_MIGRATIONS.slice(0, 12) });
+      const failing: typeof SCHEMA_MIGRATIONS = [...SCHEMA_MIGRATIONS.slice(0, 12), {
+        version: 13, name: "failed-mode", up: (target) => {
+          target.exec("ALTER TABLE attempts ADD COLUMN execution_mode TEXT");
+          target.exec("INVALID SQL");
+        },
+      }];
+      expect(() => migrateSchema(db, { migrations: failing })).toThrow(PersistenceError);
+      expect(db.prepare("PRAGMA table_info(attempts)").all().map((row) => row["name"])).not.toContain("execution_mode");
+      expect(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get()?.["v"]).toBe(12);
+      expect(migrateSchema(db)).toBe(13);
+    } finally { db.close(); }
+  });
+
+  it("upgrades v12 without backfill and refuses explicit mode on v12", async () => {
+    const path = join(directory, "v12.db");
+    const old = createSqliteRunnerStore({ path, migrations: SCHEMA_MIGRATIONS.slice(0, 12) });
+    await old.initialize();
+    await old.putProject(createProject());
+    insertTaskRow(path, createTask());
+    await old.putAttempt(createAttempt());
+    await expect(old.putAttempt({ ...createAttempt(), status: "FAILED", executionMode: "workflow" })).rejects.toThrow(/schema predates/);
+    expect(await old.getAttempt("attempt-1")).toEqual(createAttempt());
+    await old.close();
+    const upgraded = createSqliteRunnerStore({ path });
+    try {
+      await upgraded.initialize();
+      expect(await upgraded.getAttempt("attempt-1")).toEqual(createAttempt());
+      await upgraded.putAttempt({ ...createAttempt(), executionMode: "workflow" });
+      expect(await upgraded.getAttempt("attempt-1")).toMatchObject({ executionMode: "workflow" });
+    } finally { await upgraded.close(); }
+  });
+
   it("round-trips stage and attempt observations across reopen, preserving legacy fields", async () => {
     const attempt = { ...createAttempt(), invocationUsage: COMPLETE };
     await store.putAttempt(attempt);
@@ -210,6 +281,23 @@ describe("invocation usage persistence", () => {
     } finally {
       await second.close();
     }
+  });
+
+  it("rejects a competing execution mode after another connection commits", async () => {
+    const worker = new Worker(`
+      const { parentPort, workerData } = require("node:worker_threads");
+      const { DatabaseSync } = require("node:sqlite");
+      const db = new DatabaseSync(workerData);
+      db.exec("BEGIN IMMEDIATE");
+      db.exec("UPDATE attempts SET execution_mode = 'workflow'");
+      parentPort.postMessage("locked");
+      setTimeout(() => { db.exec("COMMIT"); db.close(); }, 100);
+    `, { eval: true, workerData: dbPath });
+    try {
+      await once(worker, "message");
+      await expect(store.putAttempt({ ...createAttempt(), status: "FAILED", executionMode: "single-task" })).rejects.toThrow(/execution mode/);
+      expect(await store.getAttempt("attempt-1")).toMatchObject({ status: "SUCCEEDED", executionMode: "workflow" });
+    } finally { await worker.terminate(); }
   });
 
   it("checks evidence after a competing connection commits", async () => {
