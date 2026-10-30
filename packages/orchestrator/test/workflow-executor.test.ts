@@ -308,6 +308,24 @@ describe("WorkflowTaskExecutor", { timeout: 20_000 }, () => {
     await store.putTask(createTask({ id: taskId, status: "READY" }));
   });
 
+  it("persists workflow mode before any stage even when worktree creation fails", async () => {
+    const intercepted = new Proxy(git, { get(target, property) {
+      if (property === "createBranch") return async () => {
+        const [attempt] = await store.listAttempts({ taskId });
+        expect(attempt).toMatchObject({ status: "RUNNING", executionMode: "workflow" });
+        expect(await store.listStageRuns(attempt!.id)).toEqual([]);
+        throw gitFailure("createBranch")();
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const outcome = await wireExecutor({ gitOverride: intercepted }).run();
+    expect(outcome.kind).toBe("failed");
+    const [attempt] = await store.listAttempts({ taskId });
+    expect(attempt).toMatchObject({ executionMode: "workflow" });
+    expect(await store.listStageRuns(attempt!.id)).toEqual([]);
+  });
+
   it("rejects when pause wins immediately before attempt admission", async () => {
     const intercepted = new Proxy(store, { get(target, property) {
       if (property === "transaction") return async (body: () => Promise<unknown>) => {

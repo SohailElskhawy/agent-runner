@@ -23,7 +23,7 @@ it("upgrades v10 without losing data and defaults existing projects to running",
       expect((await store.getTask("M001"))?.approvalGrantedAt).toBe("2026-01-02T00:00:00.000Z");
       expect(await store.listAttempts()).toHaveLength(1);
       const db = new DatabaseSync(path);
-      try { expect(Number(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version)).toBe(12); } finally { db.close(); }
+      try { expect(Number(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version)).toBe(13); } finally { db.close(); }
     } finally { await store.close(); }
   } finally { await old.close(); rmSync(dir, { recursive: true, force: true }); }
 });

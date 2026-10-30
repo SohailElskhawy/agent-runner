@@ -336,6 +336,16 @@ describe("CrashRecovery", () => {
     expect(existsSync(worktreePath)).toBe(false);
   });
 
+  it("preserves workflow mode when recovering before the first stage", async () => {
+    await seedTask("IMPLEMENTING");
+    await store.putAttempt({ ...runningAttempt(), executionMode: "workflow" });
+    expect(await store.listStageRuns(attemptId)).toEqual([]);
+    const outcome = await recovery.reconcileTask(taskId);
+    expectOutcomeKind(outcome, "safe-to-retry");
+    expect(await storedAttempt()).toMatchObject({ status: "FAILED", executionMode: "workflow" });
+    expect(await store.listStageRuns(attemptId)).toEqual([]);
+  });
+
   it("resets a task whose worktree was never created and proves the retry through a full run", async () => {
     await seedTask("IMPLEMENTING");
     await store.putAttempt(runningAttempt());
@@ -370,7 +380,8 @@ describe("CrashRecovery", () => {
     writeChangeAt(worktreePath, change.path, change.content);
     await git.stageAll(worktreePath);
     await seedTask("VERIFYING");
-    await store.putAttempt(runningAttempt());
+    const usage = { schemaVersion: 1 as const, status: "partial" as const, counters: { inputTokens: 7 } };
+    await store.putAttempt({ ...runningAttempt(), executionMode: "single-task", invocationUsage: usage });
     await store.appendEvents([
       attemptStartedEvent(),
       implementationCompletedEvent([change.path]),
@@ -393,7 +404,7 @@ describe("CrashRecovery", () => {
       revision: await headRevision(),
     });
     expect((await storedTask()).status).toBe("DONE");
-    expect((await storedAttempt()).status).toBe("SUCCEEDED");
+    expect(await storedAttempt()).toMatchObject({ status: "SUCCEEDED", executionMode: "single-task", invocationUsage: usage });
     expect(readFileSync(join(repoPath, change.path), "utf8")).toBe(
       change.content,
     );

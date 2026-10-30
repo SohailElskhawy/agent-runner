@@ -263,6 +263,82 @@ describe("SingleTaskOrchestrator", { timeout: 20_000 }, () => {
     rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it.each(["success", "failure", "timeout", "cancelled"] as const)("records %s invocation evidence and mode before invoking", async (kind) => {
+    const usage = { schemaVersion: 1 as const, status: "partial" as const, counters: { inputTokens: 42 } };
+    const writes: Attempt[] = [];
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "putAttempt") return async (attempt: Attempt) => {
+        writes.push(attempt);
+        return target.putAttempt(attempt);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    wireOrchestrator({ storeOverride: intercepted, agent: async (invocation) => {
+      expect((await storedAttempts())[0]).toMatchObject({ executionMode: "single-task", status: "RUNNING" });
+      if (kind === "success") writeChangeAt(invocation.worktreePath, change.path, change.content);
+      const result = { output: { stdout: "result log" }, durationMs: 1, usage };
+      return kind === "failure" ? { ...result, kind, failure: { kind: "process", message: "failed" } } : { ...result, kind };
+    } });
+    const outcome = await orchestrator.run(taskId);
+    expect(outcome.kind).toBe(kind === "success" ? "completed" : kind === "cancelled" ? "cancelled" : "failed");
+    expect(writes.find((attempt) => attempt.invocationUsage !== undefined)).toMatchObject({ status: "RUNNING", invocationUsage: usage, logs: { stdout: "result log" } });
+    expect((await storedAttempts())[0]).toMatchObject({ executionMode: "single-task", invocationUsage: usage, logs: { stdout: "result log" } });
+  });
+
+  it.each(["omitted", "throws"] as const)("leaves usage absent when invocation %s", async (kind) => {
+    wireOrchestrator({ agent: () => {
+      if (kind === "throws") throw new Error("invoke failed");
+      return { kind: "failure", failure: { kind: "process", message: "failed" }, output: {}, durationMs: 1 };
+    } });
+    await orchestrator.run(taskId);
+    expect((await storedAttempts())[0]).not.toHaveProperty("invocationUsage");
+  });
+
+  it.each(["verification", "git"] as const)("preserves returned usage after a later %s failure", async (phase) => {
+    const usage = { schemaVersion: 1 as const, status: "partial" as const, counters: { outputTokens: 4 } };
+    wireOrchestrator({
+      agent: (invocation) => {
+        writeChangeAt(invocation.worktreePath, change.path, change.content);
+        return { kind: "success", output: { stdout: "saved" }, durationMs: 1, usage };
+      },
+      ...(phase === "verification" ? { verification: (input: Parameters<VerificationResponse>[0]) => failedVerificationRun(input, "typecheck", "failed") } : { gitFailures: { commitStaged: gitFailure("commitStaged") } }),
+    });
+    expect((await orchestrator.run(taskId)).kind).toBe("failed");
+    expect((await storedAttempts())[0]).toMatchObject({ executionMode: "single-task", invocationUsage: usage, logs: { stdout: "saved" } });
+  });
+
+  it("does not mask a failed result evidence write with a status-only retry", async () => {
+    const usage = { schemaVersion: 1 as const, status: "unknown" as const };
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "putAttempt") return async (attempt: Attempt) => {
+        if (attempt.invocationUsage !== undefined) throw new Error("evidence write failed");
+        return target.putAttempt(attempt);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    wireOrchestrator({ storeOverride: intercepted, agent: () => ({ kind: "success", output: { stdout: "log" }, durationMs: 1, usage }) });
+    await expect(orchestrator.run(taskId)).rejects.toThrow(/evidence write failed/);
+    expect((await storedAttempts())[0]).toMatchObject({ status: "RUNNING", executionMode: "single-task" });
+    expect((await storedAttempts())[0]).not.toHaveProperty("invocationUsage");
+  });
+
+  it("surfaces conflicting result evidence without changing the stored attempt", async () => {
+    const storedUsage = { schemaVersion: 1 as const, status: "unknown" as const };
+    const returnedUsage = { schemaVersion: 1 as const, status: "partial" as const, counters: { inputTokens: 1 } };
+    let before: Attempt | undefined;
+    wireOrchestrator({ agent: async () => {
+      const [attempt] = await storedAttempts();
+      if (attempt === undefined) throw new Error("missing attempt");
+      await store.putAttempt({ ...attempt, invocationUsage: storedUsage });
+      before = (await storedAttempts())[0];
+      return { kind: "success", output: { stdout: "result" }, durationMs: 1, usage: returnedUsage };
+    } });
+    await expect(orchestrator.run(taskId)).rejects.toThrow(/existing invocation usage observation/);
+    expect((await storedAttempts())[0]).toEqual(before);
+  });
+
   it("rejects when pause wins immediately before attempt admission", async () => {
     const intercepted = new Proxy(store, { get(target, property) {
       if (property === "transaction") return async (body: () => Promise<unknown>) => {

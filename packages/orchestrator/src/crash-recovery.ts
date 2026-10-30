@@ -1287,6 +1287,8 @@ function succeededAttemptOf(
       ? {}
       : { tokenUsage: attempt.tokenUsage }),
     ...(attempt.cost === undefined ? {} : { cost: attempt.cost }),
+    ...(attempt.executionMode === undefined ? {} : { executionMode: attempt.executionMode }),
+    ...(attempt.invocationUsage === undefined ? {} : { invocationUsage: attempt.invocationUsage }),
     startedAt: attempt.startedAt,
     finishedAt,
   };

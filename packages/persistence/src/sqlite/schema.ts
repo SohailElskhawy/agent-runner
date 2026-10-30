@@ -304,6 +304,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   },
   { version: 11, name: "add-runner-control-state", up: applyRunnerControlSchema },
   { version: 12, name: "add-invocation-usage-observations", up: applyInvocationUsageSchema },
+  {
+    version: 13,
+    name: "add-attempt-execution-mode",
+    up: (db) => { db.exec("ALTER TABLE attempts ADD COLUMN execution_mode TEXT"); },
+  },
 ];
 
 /** First schema version carrying the nullable usage observation columns. */
