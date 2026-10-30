@@ -284,3 +284,4 @@ Upon successful completion of the run:
 > The latest dated gate evidence for the automated suites (packed smoke,
 > recovery, provider failure, parallel stress) and their claim limits is in
 > [Release evidence 2026-10-28](LAUNCH_SPRINT_ROADMAP.md#release-evidence-2026-10-28-integration-e7da6cd).
+> For later CI and second-adapter evidence, see [Current release status 2026-10-30](LAUNCH_SPRINT_ROADMAP.md#current-release-status--2026-10-30).
