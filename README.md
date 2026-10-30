@@ -287,6 +287,17 @@ meets it, unattended `run` reaches quiescence while the task stays `READY` —
 raise the profile's `tier` in `agentic.yaml`, commit the change, then
 `agentic retry <task-id>`.
 
+`agentic inspect <task-id> --usage` shows each attempt's execution mode, usage
+status and invocation coverage, plus independently reported counter subtotals
+and coverage. Missing values are unknown, not zero; partial, inconsistent,
+incompatible cache and overflow reasons remain visible. Exact reported amounts
+are listed separately with currency, source and scope; they are not combined or
+estimated subscription bills. Project planning, VERIFY and INTEGRATE are
+excluded; workflow PLAN, PLAN_REVIEW, IMPLEMENT and CODE_REVIEW are included.
+Provider usage parsers are not yet supported, so observations may be absent.
+Legacy numeric token usage and cost are unverified and are not shown as usage
+evidence. The default inspect output is unchanged.
+
 ## Command reference
 
 | Command | Description |
@@ -300,7 +311,7 @@ raise the profile's `tier` in `agentic.yaml`, commit the change, then
 | `agentic run [--parallel <n>]` | Unattended DAG execution of every runnable task; `--parallel <n>` caps concurrent tasks (positive integer, default 1). |
 | `agentic run-all [--parallel <n>]` | Compatibility alias for unattended `agentic run`. |
 | `agentic status` | Project status: tasks and states, active/failed/blocked tasks, recovery-required work, execution claims, integration queue, and parallel capacity. |
-| `agentic inspect <task-id>` | Explain one task: attempts, agent/profile, workflow stage results, verification evidence, task commit, integration outcome, and recovery events. |
+| `agentic inspect <task-id> [--usage]` | Explain one task: attempts, agent/profile, workflow stage results, verification evidence, task commit, integration outcome, and recovery events. Optionally show per-attempt usage evidence. |
 | `agentic approve <task-id>` | Record durable human approval for a task that declares `approval.required: true`. The grant survives failure and retry. |
 | `agentic retry <task-id>` | Return a `FAILED`, `NEEDS_HUMAN`, or `BLOCKED` task to `READY`. Respects `limits.max_attempts`; approval-required tasks must be approved first. |
 | `agentic tasks [add <task-file>]` | With no subcommand, list persisted tasks (status, priority, milestone, dependencies, attempts, approval). `tasks add` ingests one JSON task file. |

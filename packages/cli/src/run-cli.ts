@@ -101,7 +101,7 @@ export async function runCli(
                 case "status":
                   return await executeStatusCommand(services, io);
                 case "inspect":
-                  return await executeInspectCommand(command.taskId, services, io);
+                  return await executeInspectCommand(command.taskId, services, io, command.usage);
                 case "approve":
                   return await executeApproveCommand(command.taskId, services, io);
                 case "retry":

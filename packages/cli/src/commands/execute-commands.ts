@@ -116,13 +116,14 @@ export async function executeInspectCommand(
   taskId: TaskId,
   services: RunnerAppService,
   io: CliIo,
+  usage = false,
 ): Promise<number> {
   const inspection = await services.inspect(taskId);
   if (inspection === null) {
     io.writeError(`task "${taskId}" was not found in runner state`);
     return EXIT_FAILURE;
   }
-  renderTaskInspection(io, inspection);
+  renderTaskInspection(io, inspection, usage);
   return EXIT_SUCCESS;
 }
 

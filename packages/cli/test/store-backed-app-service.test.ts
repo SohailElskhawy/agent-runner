@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import { deriveAttemptUsage, type Task, type TaskId, type TaskStatus } from "@agentic-dev-runner/core";
+import { deriveAttemptUsage, type Task, type TaskId, type TaskStatus, type StageRun, type InvocationUsageObservation } from "@agentic-dev-runner/core";
 import {
   OrchestrationError,
   type CrashRecovery,
@@ -560,6 +560,47 @@ describe("StoreBackedAppService", () => {
     renderTaskInspection(actual.io, inspection);
     renderTaskInspection(withoutUsage.io, { ...inspection, attempts: [{ ...inspection.attempts[0], usage: deriveAttemptUsage(createFixtureAttempt({ status: "FAILED" }), []) }] });
     expect(actual.lines).toEqual(withoutUsage.lines);
+    const requested = captureIo();
+    renderTaskInspection(requested.io, inspection, true);
+    expect(requested.lines.join("\n")).toContain('"inputTokens": known subtotal=0; status="complete"; coverage=1/1 reported');
+    expect(requested.lines.join("\n")).toContain('"totalTokens": known subtotal=unknown');
+    expect(requested.lines.join("\n")).toContain("reported amounts: unknown");
+    expect(requested.lines.join("\n")).toContain("excludes project planning, VERIFY, INTEGRATE; includes workflow PLAN");
+
+    const base = { ...createFixtureAttempt({ id: "a" }), executionMode: "workflow" as const, cost: 98765, tokenUsage: { inputTokens: 87654 } };
+    const stage = (id: string, usage: InvocationUsageObservation): StageRun => ({ id, attemptId: "a", stage: "IMPLEMENT", status: "SUCCEEDED", usage });
+    const evidence = (n: number, relation: "subset" | "independent", amount: string): InvocationUsageObservation => ({
+      schemaVersion: 1, status: "complete", counters: { inputTokens: n, cacheReadTokens: 1 }, cacheRelation: relation,
+      cost: { amount, currency: "USD\u001b[31m", provenance: { source: "source\nINJECTED", scope: "call\u0085tail" } },
+    });
+    const overflow = deriveAttemptUsage(base, [stage("one\nBAD", evidence(Number.MAX_SAFE_INTEGER, "subset", "0.0000000100")), stage("two", evidence(1, "independent", "2.00"))]);
+    const partial = deriveAttemptUsage(base, [stage("partial", { schemaVersion: 1, status: "partial", counters: { outputTokens: 0 } })]);
+    const inconsistent = deriveAttemptUsage(base, [stage("bad", { schemaVersion: 1, status: "inconsistent", inconsistentReasons: ["conflict\nBAD"] })]);
+    const all = captureIo();
+    renderTaskInspection(all.io, { ...inspection, task: { ...inspection.task, id: "task\nBAD" }, attempts: [
+      { ...inspection.attempts[0], id: "retry\nBAD", number: 1, usage: overflow },
+      { ...inspection.attempts[0], id: "retry-2", number: 2, usage: partial },
+      { ...inspection.attempts[0], id: "retry-3", number: 3, usage: inconsistent },
+    ] }, true);
+    const output = all.lines.join("\n");
+    expect(output).toContain("Counter subtotal exceeds safe integer range");
+    expect(output).toContain("Cache relations are missing or incompatible");
+    expect(output).toContain('status="partial"');
+    expect(output).toContain('status="inconsistent"');
+    expect(output).toContain('"outputTokens": known subtotal=0');
+    expect(output).toContain('"0.0000000100"');
+    expect(output).toContain('"2.00"');
+    expect(output).toContain('source="source\\nINJECTED"');
+    expect(output).toContain('scope="call\\u0085tail"');
+    expect(output).toContain('"USD\\u001b[31m"');
+    expect(output).toContain('"one\\nBAD"');
+    expect(output).toContain('"conflict\\nBAD"');
+    expect(output).toContain('#2 "retry-2"');
+    expect(output).toContain('task: "task\\nBAD"');
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toContain("\nBAD");
+    expect(output).not.toContain("98765");
+    expect(output).not.toContain("87654");
     expect(inspection?.events).toHaveLength(1);
     expect(inspection?.events[0]?.type).toBe("task.transitioned");
   });
