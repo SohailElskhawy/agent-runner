@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TaskId } from "@agentic-dev-runner/core";
+import { deriveAttemptUsage, type TaskId } from "@agentic-dev-runner/core";
 import type { RunnerAppService } from "../src/application/runner-app-service.js";
 import { runCli } from "../src/run-cli.js";
 import type {
@@ -47,6 +47,8 @@ function recordingService(result: {
   let initCount = 0;
   let listAgentsCount = 0;
   const service: RunnerAppService = {
+    async pause() { return { changed: true, message: "paused" }; },
+    async resume() { return { changed: true, message: "resumed" }; },
     async init() {
       initCount += 1;
       if (result.failure !== undefined) {
@@ -128,6 +130,7 @@ function recordingService(result: {
       return (
         result.status ?? {
           project: createFixtureProject(),
+          runnerControl: { projectId: "proj-local", state: "RUNNING" },
           tasks: [],
           scheduler: createSchedulerStatus(),
         }
@@ -184,6 +187,17 @@ function recordingService(result: {
 }
 
 describe("runCli command dispatch", () => {
+  it("shows and dispatches pause and resume with correct exit codes", async () => {
+    const { service } = recordingService({});
+    const output = captureIo();
+    expect(await runCli(["help"], { io: output.io })).toBe(0);
+    expect(output.lines.join(" ")).toContain("agentic pause [--reason <text>]");
+    expect(output.lines.join(" ")).toContain("agentic resume");
+    expect(await runCli(["pause", "--reason", "maintenance"], { io: output.io, servicesFactory: () => service })).toBe(0);
+    expect(await runCli(["resume"], { io: output.io, servicesFactory: () => service })).toBe(0);
+    expect(await runCli(["pause", "--reason", " "], { io: output.io })).toBe(2);
+  });
+
   it("delegates exactly once to the application service on run and exits zero on success", async () => {
     const recording = recordingService({
       run: { kind: "completed", message: 'task "M001" completed' },
@@ -459,6 +473,7 @@ describe("runCli command dispatch", () => {
   it("status and inspect render persisted data returned by the application service", async () => {
     const status: ProjectStatus = {
       project: createFixtureProject({ id: "proj-local" }),
+      runnerControl: { projectId: "proj-local", state: "RUNNING" },
       tasks: [
         {
           id: "M001",
@@ -505,6 +520,7 @@ describe("runCli command dispatch", () => {
       task: createFixtureTask({ status: "FAILED" }),
       attempts: [
         {
+          usage: deriveAttemptUsage({ id: "att_M001_1", taskId: "M001", number: 1, status: "FAILED", agent: "fake-agent", baseRevision: "abc", startedAt: "2026-01-01T00:00:00.000Z" }, []),
           id: "att_M001_1",
           number: 1,
           status: "FAILED",
@@ -580,6 +596,11 @@ describe("runCli command dispatch", () => {
 
     expect(inspectExit).toBe(0);
     const inspectOutput = inspectCapture.lines.join("\n");
+    const usageCapture = captureIo();
+    expect(await runCli(["inspect", "M001", "--usage"], { io: usageCapture.io, servicesFactory: async () => recordingService({ inspection }).service })).toBe(0);
+    expect(usageCapture.lines.join("\n")).toContain('usage: mode="unknown" status="unknown"');
+    expect(inspectCapture.lines.join("\n")).not.toContain("    usage:");
+
     expect(inspectOutput).toContain("[FAILED]");
     expect(inspectOutput).toContain("verification_failed");
     expect(inspectOutput).toContain("typecheck failed");

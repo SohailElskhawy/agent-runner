@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -240,7 +241,7 @@ function expectCompleted(
 
 describe("VS014 real vertical slice end-to-end", () => {
   beforeEach(async () => {
-    directory = mkdtempSync(join(tmpdir(), "agentic-runner-vs014-"));
+    directory = realpathSync(mkdtempSync(join(tmpdir(), "agentic-runner-vs014-")));
     repoPath = join(directory, "fixture repo");
     worktreesDir = join(directory, "task worktrees");
     worktreePath = join(worktreesDir, TASK_ID, "attempt-1");

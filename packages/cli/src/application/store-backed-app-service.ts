@@ -26,7 +26,7 @@ import {
   createNodeProcessRunner,
   type ProcessRunner,
 } from "@agentic-dev-runner/platform";
-import { createExecutionClaimRecovery } from "@agentic-dev-runner/orchestrator";
+import { createExecutionClaimRecovery, ORCHESTRATION_EVENTS } from "@agentic-dev-runner/orchestrator";
 import type {
   CrashRecovery,
   ExecutionClaimRecovery,
@@ -45,6 +45,7 @@ import {
 import type { RunnerAppService, TaskRunner } from "./runner-app-service.js";
 import type {
   AddTaskResult,
+  ControlCommandResult,
   AgentStatusEntry,
   ApprovalCommandResult,
   ExecutionClaimStatusView,
@@ -166,6 +167,47 @@ class StoreBackedAppService implements RunnerAppService {
       projectRoot: this.projectRoot,
       storePath: this.storePath,
     };
+  }
+
+  private async requireProject(): Promise<Project> {
+    const project = (await this.store.listProjects()).at(0);
+    if (project === undefined) throw new CliError('runner is not initialized; run "agentic init" first');
+    return project;
+  }
+
+  async pause(reason?: string): Promise<ControlCommandResult> {
+    if (reason !== undefined && reason.trim().length === 0) throw new CliError("pause reason must be non-empty");
+    return this.changeControl("PAUSED", reason);
+  }
+
+  async resume(): Promise<ControlCommandResult> {
+    return this.changeControl("RUNNING");
+  }
+
+  private async changeControl(state: "PAUSED" | "RUNNING", reason?: string): Promise<ControlCommandResult> {
+    await this.startupReconcile();
+    const project = await this.requireProject();
+    const at = new Date().toISOString();
+    const result = await this.store.transaction(async () => {
+      const transition = state === "PAUSED" ? await this.store.pauseRunner(project.id, at, reason) : await this.store.resumeRunner(project.id, at);
+      if (transition.changed) await this.store.appendEvents([{
+        type: state === "PAUSED" ? ORCHESTRATION_EVENTS.runnerPaused : ORCHESTRATION_EVENTS.runnerResumed,
+        taskId: null, payload: { projectId: project.id, ...(reason === undefined ? {} : { reason }) }, occurredAt: at,
+      }]);
+      return transition;
+    });
+    const claims = await this.store.listExecutionClaims({ status: "ACTIVE" });
+    return { changed: result.changed, message: state === "PAUSED"
+      ? `runner ${result.changed ? "paused" : "already paused"}; ${String(claims.length)} active claim(s) draining`
+      : `runner ${result.changed ? "resumed" : "already running"}` };
+  }
+
+  private async pausedRun(): Promise<RunResult | null> {
+    const project = (await this.store.listProjects()).at(0);
+    if (project === undefined) return null;
+    return (await this.store.getRunnerControl(project.id)).state === "PAUSED"
+      ? { kind: "paused", message: 'runner is paused; run "agentic resume" to continue' }
+      : null;
   }
 
   async addTask(taskFilePath: string): Promise<AddTaskResult> {
@@ -344,6 +386,8 @@ class StoreBackedAppService implements RunnerAppService {
 
   async run(taskId: TaskId): Promise<RunResult> {
     await this.startupReconcile();
+    const paused = await this.pausedRun();
+    if (paused !== null) return paused;
     const recovery = await this.recovery.reconcileTask(taskId);
     const recoveryResult = recoveryOutcomeToRunResult(recovery);
     if (recoveryResult !== null) {
@@ -355,6 +399,8 @@ class StoreBackedAppService implements RunnerAppService {
 
   async runUnattended(options: UnattendedRunRequest = {}): Promise<RunResult> {
     await this.startupReconcile();
+    const paused = await this.pausedRun();
+    if (paused !== null) return paused;
     if (this.scheduler === null) {
       return {
         kind: "rejected",
@@ -376,10 +422,10 @@ class StoreBackedAppService implements RunnerAppService {
             summary,
         }
       : {
-          kind: "failed",
+          kind: outcome.kind === "paused" ? "paused" : "failed",
           message:
-            `unattended run is blocked after ${String(outcome.cycles.length)} cycle(s); ` +
-            summary,
+            `unattended run is ${outcome.kind} after ${String(outcome.cycles.length)} cycle(s); ` +
+            summary + (outcome.kind === "paused" ? '; run "agentic resume" to continue' : ""),
         };
   }
 
@@ -408,7 +454,8 @@ class StoreBackedAppService implements RunnerAppService {
       });
     }
     const scheduler = await this.buildSchedulerStatus(tasks);
-    return { project, tasks: entries, scheduler };
+    const runnerControl = project === null ? null : await this.store.getRunnerControl(project.id);
+    return { project, runnerControl, tasks: entries, scheduler };
   }
 
   async listTaskSummaries(): Promise<readonly TaskListEntry[]> {

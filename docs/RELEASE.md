@@ -15,6 +15,8 @@ Before publishing or tagging, all of the following evidence gates must be verifi
 Passing a local command does not complete a release gate until its result and
 commit are recorded. Keep unresolved CI, provider, dogfood, and platform
 checks explicit in `docs/LAUNCH_SPRINT_ROADMAP.md` and `docs/DOGFOOD.md`.
+See [Current release status 2026-10-30](LAUNCH_SPRINT_ROADMAP.md#current-release-status--2026-10-30)
+and the earlier [release evidence snapshot](LAUNCH_SPRINT_ROADMAP.md#release-evidence-2026-10-28-integration-e7da6cd) for their claim limits.
 
 ### 1. CI Green on All Platforms
 Verify that the release commit passes CI on all three supported operating systems:
@@ -39,7 +41,7 @@ On Windows PowerShell:
 ```powershell
 $env:AGENTIC_PACK_SMOKE = "1"; pnpm --filter agentic-dev-runner test
 ```
-**Evidence gate:** `test/pack-smoke.test.ts` passes. This test creates a tarball with `pnpm pack`, installs it in a separate consumer package, and executes an end-to-end task run verifying status `1 DONE` and atomic git commit creation.
+**Evidence gate:** `test/pack-smoke.test.ts` passes. This test creates a tarball with `pnpm pack`, installs it in a separate consumer package, and uses separate bundled CLI processes to verify durable, idempotent pause/resume and refusal to run while paused. With a fake provider, it then verifies an end-to-end task reaches `1 DONE` and creates an atomic Git commit. This is not live-provider evidence.
 
 ---
 

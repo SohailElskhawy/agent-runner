@@ -55,6 +55,9 @@ class RecordingStore implements RunnerStore {
     return [];
   }
   async putProject(): Promise<void> {}
+  async getRunnerControl(): Promise<never> { throw new Error("unused"); }
+  async pauseRunner(): Promise<never> { throw new Error("unused"); }
+  async resumeRunner(): Promise<never> { throw new Error("unused"); }
   async getTask(id: string): Promise<Task | null> {
     return this.tasks.get(id) ?? null;
   }

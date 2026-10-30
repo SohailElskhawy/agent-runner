@@ -1,0 +1,106 @@
+$ git init -b autopilot/example-jsonl
+Initialized empty Git repository in <sandbox>/attempt-1/live/repo/.git/
+$ git config user.name Example Runner
+$ git config user.email example@example.invalid
+$ git add .
+$ git commit -m Seed JSONL error report
+[autopilot/example-jsonl (root-commit) a070a3a] Seed JSONL error report
+ 5 files changed, 77 insertions(+)
+ create mode 100644 AGENTS.md
+ create mode 100644 agentic.yaml
+ create mode 100644 data/service.jsonl
+ create mode 100644 task.json
+ create mode 100644 test/report.test.mjs
+$ agentic init
+runner state initialized
+  project: proj-local
+  root: <sandbox>/attempt-1/live/repo
+  state: <sandbox>/attempt-1/live/state/state.db
+exit: 0
+$ agentic tasks add <sandbox>/attempt-1/live/repo/task.json
+task "JSONL1" added to project "proj-local"
+  title: Report errors by service
+  status: READY
+exit: 0
+$ agentic run --parallel 1
+unattended run reached quiescence after 2 cycle(s); final persisted task state: 1 DONE
+exit: 0
+$ agentic status
+project: proj-local
+  name: repo
+  root: <sandbox>/attempt-1/live/repo
+tasks:
+  JSONL1 [DONE] Report errors by service
+    updated: 2026-10-27T16:46:55.907Z
+    attempts: 1
+    latest attempt: #1 att_JSONL1_1 [SUCCEEDED]
+      started: 2026-10-27T16:46:26.852Z
+      finished: 2026-10-27T16:46:55.907Z
+task totals: 1 DONE
+active tasks: (none)
+failed tasks: (none)
+blocked tasks: (none)
+recovery required: (none)
+active execution claims: (none)
+integration queue: 0 pending, 0 integrating, 1 completed, 0 failed
+parallel capacity: 1 configured, 0 active, 1 available
+exit: 0
+$ agentic inspect JSONL1
+task: JSONL1
+  title: Report errors by service
+  project: proj-local
+  milestone: example
+  status: DONE
+  workflow: simple
+  updated: 2026-10-27T16:46:55.907Z
+attempts:
+  #1 att_JSONL1_1 [SUCCEEDED]
+    agent: opencode (opencode-go/glm-5.3-flash)
+    base revision: a070a3a4196a49e4c4d3c311ad4af03dd2c7c3de
+    started: 2026-10-27T16:46:26.852Z
+    finished: 2026-10-27T16:46:55.907Z
+    stages:
+      IMPLEMENT [SUCCEEDED] (2026-10-27T16:46:26.872Z -> 2026-10-27T16:46:54.832Z)
+      INTEGRATE [SUCCEEDED] (2026-10-27T16:46:55.427Z -> 2026-10-27T16:46:55.908Z)
+      VERIFY [SUCCEEDED] (2026-10-27T16:46:54.849Z -> 2026-10-27T16:46:55.291Z)
+    verification: PASSED
+      unit [PASSED]
+    integration verification: PASSED
+      unit [PASSED]
+    commit: 2ef1edd39492e8501605cc9654dda1607fc4fa77 (task JSONL1: Report errors by service)
+    integration: fast-forward at 2ef1edd39492e8501605cc9654dda1607fc4fa77
+execution claims:
+  exec_3b7d99c7-d01a-415c-b623-f028d2735a8a [COMPLETED] claimed 2026-10-27T16:46:26.766Z, lease until 2026-10-27T16:47:16.846Z
+integration queue:
+  #1 iq_486c06bb-d5b9-4556-b513-df7c605bb23a [COMPLETED] 2ef1edd39492e8501605cc9654dda1607fc4fa77 via task/JSONL1/attempt-1
+    enqueued: 2026-10-27T16:46:55.427Z
+    finished: 2026-10-27T16:46:55.907Z
+recovery events:
+  #14 recovery.startup.worktree @ 2026-10-27T16:46:56.022Z
+  #15 recovery.startup.worktree @ 2026-10-27T16:46:56.036Z
+events:
+  #1 task.routing.decided @ 2026-10-27T16:46:26.839Z
+    routing: profile "opencode" (tier standard; minimum economy; attempts 0) — risk low and complexity small require minimum tier economy
+  #2 attempt.started @ 2026-10-27T16:46:26.852Z
+  #3 task.transitioned @ 2026-10-27T16:46:26.854Z
+  #4 worktree.created @ 2026-10-27T16:46:26.870Z
+  #5 implementation.completed @ 2026-10-27T16:46:54.847Z
+  #6 task.transitioned @ 2026-10-27T16:46:54.847Z
+  #7 verification.completed @ 2026-10-27T16:46:55.290Z
+  #8 commit.created @ 2026-10-27T16:46:55.306Z
+  #9 task.transitioned @ 2026-10-27T16:46:55.306Z
+  #10 integration.queued @ 2026-10-27T16:46:55.427Z
+  #11 integration.completed @ 2026-10-27T16:46:55.498Z
+  #12 integration.verification.completed @ 2026-10-27T16:46:55.906Z
+  #13 task.transitioned @ 2026-10-27T16:46:55.907Z
+  #14 recovery.startup.worktree @ 2026-10-27T16:46:56.022Z
+  #15 recovery.startup.worktree @ 2026-10-27T16:46:56.036Z
+exit: 0
+assertion: task=DONE queue=COMPLETED
+$ git log --oneline --decorate -3
+2ef1edd (HEAD -> autopilot/example-jsonl, task/JSONL1/attempt-1) task JSONL1: Report errors by service
+a070a3a Seed JSONL error report
+$ git status --short --branch
+## autopilot/example-jsonl
+$ git worktree list
+<sandbox>/attempt-1/live/repo 2ef1edd [autopilot/example-jsonl]

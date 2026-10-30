@@ -1,4 +1,10 @@
-import { copyFileSync, linkSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  linkSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,7 +115,9 @@ describe("NodeProcessRunner", () => {
 
     expect(result.outcome).toEqual({ kind: "completed", code: 0 });
     const context = JSON.parse(result.stdout) as { cwd: string };
-    expect(context.cwd).toBe(spacedDir);
+    // The OS reports the child's cwd in canonical form (e.g. /private/var
+    // instead of /var on macOS), so compare against that.
+    expect(context.cwd).toBe(realpathSync(spacedDir));
   });
 
   it("times out and terminates a long-running process", async () => {

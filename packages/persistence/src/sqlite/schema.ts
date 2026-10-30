@@ -233,6 +233,24 @@ export function applyTaskApprovalSchema(db: SchemaMigrationDatabase): void {
   for (const statement of SCHEMA_V10_STATEMENTS) db.exec(statement);
 }
 
+function applyRunnerControlSchema(db: SchemaMigrationDatabase): void {
+  db.exec(`CREATE TABLE runner_control (
+    project_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK (state IN ('RUNNING', 'PAUSED')),
+    paused_at TEXT,
+    pause_reason TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK ((state = 'RUNNING' AND paused_at IS NULL AND pause_reason IS NULL)
+      OR (state = 'PAUSED' AND paused_at IS NOT NULL)),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  ) STRICT`);
+}
+
+function applyInvocationUsageSchema(db: SchemaMigrationDatabase): void {
+  db.exec(`ALTER TABLE stage_runs ADD COLUMN usage_json TEXT`);
+  db.exec(`ALTER TABLE attempts ADD COLUMN invocation_usage_json TEXT`);
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -284,7 +302,17 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     name: "add-task-approval-state",
     up: applyTaskApprovalSchema,
   },
+  { version: 11, name: "add-runner-control-state", up: applyRunnerControlSchema },
+  { version: 12, name: "add-invocation-usage-observations", up: applyInvocationUsageSchema },
+  {
+    version: 13,
+    name: "add-attempt-execution-mode",
+    up: (db) => { db.exec("ALTER TABLE attempts ADD COLUMN execution_mode TEXT"); },
+  },
 ];
+
+/** First schema version carrying the nullable usage observation columns. */
+export const USAGE_COLUMNS_SCHEMA_VERSION = 12;
 
 export const SCHEMA_VERSION: number =
   SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]?.version ?? 0;

@@ -3,28 +3,44 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
-import type { ProcessRunner } from "@agentic-dev-runner/platform";
+import type { ProcessRunner, ProcessSpec } from "@agentic-dev-runner/platform";
 import { createGitManager, GitError } from "../src/index.js";
 import type { GitManager } from "../src/index.js";
 
 let baseDir: string;
 let runner: ProcessRunner;
 let git: GitManager;
+let inFlightRuns: Promise<unknown>[] = [];
 
 beforeEach(() => {
   baseDir = mkdtempSync(join(tmpdir(), "agentic git vs006 spaced base "));
-  runner = createNodeProcessRunner();
+  inFlightRuns = [];
+  const delegateRunner = createNodeProcessRunner();
+  runner = {
+    run(spec: ProcessSpec) {
+      const promise = delegateRunner.run(spec);
+      inFlightRuns.push(promise);
+      return promise;
+    },
+  };
   git = createGitManager({ runner });
 });
 
-afterEach(() => {
-  rmSync(baseDir, { recursive: true, force: true });
+afterEach(async () => {
+  await Promise.allSettled(inFlightRuns);
+  rmSync(baseDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  });
 });
 
 async function runFixtureGit(
@@ -488,6 +504,37 @@ describe("NodeGitManager", () => {
     expect(await git.worktreeExists(repo, worktreePath)).toBe(false);
   });
 
+  it("detects registered worktrees registered through a directory alias", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const aliasDir = join(baseDir, "alias dir");
+    // A junction works without privileges on Windows and is a plain
+    // directory symlink on POSIX, so this regression is portable.
+    symlinkSync(baseDir, aliasDir, "junction");
+    const aliasedWorktree = join(aliasDir, "task worktree");
+    await git.createWorktree(repo, aliasedWorktree, "task/M001");
+
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(true);
+
+    await git.removeWorktree(repo, aliasedWorktree);
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(false);
+  });
+
+  it("retains stale worktree detection when a worktree registered through a directory alias is deleted directly", async () => {
+    const repo = await createRepository("repo");
+    await git.createBranch(repo, "task/M001");
+    const aliasDir = join(baseDir, "alias dir");
+    symlinkSync(baseDir, aliasDir, "junction");
+    const aliasedWorktree = join(aliasDir, "task worktree");
+    await git.createWorktree(repo, aliasedWorktree, "task/M001");
+
+    rmSync(aliasedWorktree, { recursive: true, force: true });
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(true);
+
+    await runFixtureGit(repo, ["worktree", "prune"]);
+    expect(await git.worktreeExists(repo, aliasedWorktree)).toBe(false);
+  });
+
   it("rebases a task branch onto an advanced integration HEAD", async () => {
     const repo = await createRepository("repo");
     await git.createBranch(repo, "task/M001");
@@ -546,4 +593,4 @@ describe("NodeGitManager", () => {
     const error = await gitFailureOf(git.rebaseBranch(repo, ""));
     expect(error.failure.reason).toContain("invalid onto revision");
   });
-});
+}, 15_000);

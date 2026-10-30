@@ -98,7 +98,7 @@ addTask()
 doctor()
 ```
 
-`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pauseRun()` and `resumeRun()` are deferred to v0.2.
+`analyzeRepository()`, `planRepository()`, `showPlan()`, and `approvePlan()` support the v0.1 planning flow. `pause()` and `resume()` provide v0.2 durable runner control and require an initialized project; run commands retain their existing behavior before initialization. Admission and control events are atomic, startup recovery remains active while paused, and already admitted work drains without interruption (ADR-019).
 
 The CLI and future GUI both use these same operations.
 
@@ -371,7 +371,13 @@ V0.1 provides `agentic analyze` and `agentic plan --goal <text>`. Analysis
 collects bounded local evidence; planning combines it with the goal and reports
 `READY_FOR_PLANNING` or `NEEDS_DISCOVERY`. When important product or
 architecture decisions are missing, the planner writes targeted questions to `.agentic/decisions.md`;
-the human edits answers and reruns planning. The planner returns a bounded
+the human edits answers and reruns planning. Continuation lines require two
+leading spaces; indented marker-looking lines are answer content, while
+unindented follow-on prose remains in the file but is not part of the answer.
+Regeneration preserves answered blocks, including their original question text.
+The analyzer reads only the first `Answer:` in a block, even if it is empty;
+later nonempty answers are preserved but do not mark that question answered.
+The planner returns a bounded
 draft that the runner validates and previews. `agentic plan approve <plan-id>`
 revalidates and imports its tasks transactionally with durable approval. A
 draft cannot be scheduled before explicit approval.

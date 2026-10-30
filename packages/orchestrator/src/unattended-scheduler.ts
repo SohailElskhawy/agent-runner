@@ -24,7 +24,7 @@ export type UnattendedRunOptions = {
 };
 
 export type UnattendedSchedulerResult = {
-  readonly kind: "quiescent" | "blocked";
+  readonly kind: "quiescent" | "blocked" | "paused";
   readonly cycles: readonly UnattendedSchedulerCycle[];
   readonly completedTaskIds: readonly TaskId[];
   readonly failedTaskIds: readonly TaskId[];
@@ -121,7 +121,7 @@ class DurableUnattendedScheduler implements UnattendedScheduler {
         }
         if (!executionProgress && !integrationProgress) {
           return {
-            kind: "quiescent",
+            kind: dispatch.paused ? "paused" : "quiescent",
             cycles,
             completedTaskIds,
             failedTaskIds,

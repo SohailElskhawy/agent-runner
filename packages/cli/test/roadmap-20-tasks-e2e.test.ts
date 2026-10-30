@@ -79,6 +79,9 @@ const DEPENDENCIES: Readonly<Record<string, readonly string[]>> = {
 const SHARED_RESOURCES = ["resource-roadmap-shared"] as const;
 const SHARED_TASK_IDS: ReadonlySet<string> = new Set(["T01", "T02", "T07", "T11"]);
 
+/** Bounded evidence dump: failure messages are truncated at this many chars. */
+const MESSAGE_LIMIT = 400;
+
 type TaskDefinition = {
   readonly id: string;
   readonly title: string;
@@ -173,8 +176,10 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
   let runner: ProcessRunner;
   let adapter: RecordingRoadmapAdapter;
   let store: RunnerStore | undefined;
+  let activeTest: Promise<void> | undefined;
+  let setup: Promise<void> | undefined;
 
-  beforeEach(async () => {
+  async function setupFixture(): Promise<void> {
     directory = mkdtempSync(join(tmpdir(), "agentic-runner-roadmap-20-"));
     repositoryPath = join(directory, "fixture repo");
     stateDir = join(directory, "runner state");
@@ -185,13 +190,21 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
     for (const task of TASKS) {
       writeFileSync(join(tasksDir, `task-${task.id}.json`), JSON.stringify(task), "utf8");
     }
+  }
+
+  beforeEach(() => {
+    setup = setupFixture();
+    return setup;
   });
 
   afterEach(async () => {
+    await Promise.allSettled([setup, activeTest]);
+    activeTest = undefined;
+    setup = undefined;
     await store?.close();
     store = undefined;
-    rmSync(directory, { recursive: true, force: true });
-  });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }, 300_000);
 
   async function createFixtureRepository(): Promise<void> {
     mkdirSync(repositoryPath, { recursive: true });
@@ -266,7 +279,125 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
     return result.stdout;
   }
 
-  it("executes a 20-task DAG to DONE with correct ordering, disjoint shared-resource spans, isolated worktrees, and serialized integration", async () => {
+  /**
+   * Compact structured dump of the durable retained evidence for one task
+   * that did not reach DONE, fetched from the store before cleanup. Only
+   * status/failure/timing fields are kept: raw agent output (attempt logs,
+   * stage stdout/stderr, plans, context payloads) is excluded and messages
+   * are truncated so the dump stays small. JSON.stringify serializes
+   * deterministically for stderr across Linux/macOS/Windows.
+   */
+  async function formatTaskFailureEvidence(store: RunnerStore, taskId: string): Promise<string> {
+    const [record, attempts, claims, queueEntries, events] = await Promise.all([
+      store.getTask(taskId),
+      store.listAttempts({ taskId }),
+      store.listExecutionClaims({ taskId }),
+      store.listIntegrationQueueEntries({ taskId }),
+      store.listEvents({ taskId }),
+    ]);
+    const stageRunsByAttempt = await Promise.all(
+      attempts.map(async (attempt) => ({
+        attemptId: attempt.id,
+        stages: await store.listStageRuns(attempt.id),
+      })),
+    );
+    return JSON.stringify(
+      {
+        taskId,
+        recordStatus: record?.status ?? null,
+        recordUpdatedAt: record?.updatedAt ?? null,
+        attempts: attempts.map((attempt) => ({
+          id: attempt.id,
+          number: attempt.number,
+          status: attempt.status,
+          agent: attempt.agent,
+          model: attempt.model ?? null,
+          baseRevision: attempt.baseRevision,
+          startedAt: attempt.startedAt,
+          finishedAt: attempt.finishedAt ?? null,
+          failure: compactFailure(attempt.failure),
+          logsLocation: attempt.logs?.location ?? null,
+        })),
+        stageRuns: stageRunsByAttempt.map(({ attemptId, stages }) => ({
+          attemptId,
+          stages: stages.map((stage) => ({
+            attemptId: stage.attemptId,
+            stage: stage.stage,
+            status: stage.status,
+            startedAt: stage.startedAt ?? null,
+            finishedAt: stage.finishedAt ?? null,
+            failure: compactFailure(stage.failure),
+            output: stage.output
+              ? {
+                  ...stage.output,
+                  plan: undefined,
+                  stdout: undefined,
+                  stderr: undefined,
+                }
+              : undefined,
+          })),
+        })),
+        executionClaims: claims.map((claim) => ({
+          id: claim.id,
+          status: claim.status,
+          claimedAt: claim.claimedAt,
+          renewedAt: claim.renewedAt,
+          leaseExpiresAt: claim.leaseExpiresAt,
+          finishedAt: claim.finishedAt ?? null,
+          failure: compactFailure(claim.failure),
+        })),
+        integrationQueueEntries: queueEntries.map((entry) => ({
+          id: entry.id,
+          sequence: entry.sequence,
+          attemptId: entry.attemptId,
+          status: entry.status,
+          taskRevision: entry.taskRevision,
+          branch: entry.branch,
+          baseRevision: entry.baseRevision,
+          enqueuedAt: entry.enqueuedAt,
+          claimedAt: entry.claimedAt ?? null,
+          finishedAt: entry.finishedAt ?? null,
+          failure: compactFailure(entry.failure),
+        })),
+        events: events.map((event) => ({
+          sequence: event.sequence,
+          type: event.type,
+          occurredAt: event.occurredAt,
+          payload: /fail|error|timeout|cancel/i.test(event.type)
+            ? truncationSafe(event.payload)
+            : undefined,
+        })),
+      },
+      null,
+      2,
+    );
+  }
+
+  function compactFailure(
+    failure: { readonly kind?: string | undefined; readonly message?: string | undefined } | null | undefined,
+  ): { kind?: string | undefined; message?: string | undefined } | null {
+    if (failure === null || failure === undefined) {
+      return null;
+    }
+    const compact: { kind?: string | undefined; message?: string | undefined } = {};
+    if (failure.kind !== undefined) {
+      compact.kind = failure.kind;
+    }
+    if (failure.message !== undefined) {
+      compact.message = truncateMessage(failure.message);
+    }
+    return compact;
+  }
+
+  function truncateMessage(message: string): string {
+    return message.length <= MESSAGE_LIMIT ? message : `${message.slice(0, MESSAGE_LIMIT)}…(truncated ${message.length - MESSAGE_LIMIT} chars)`;
+  }
+
+  function truncationSafe(payload: unknown): unknown {
+    return truncateMessage(JSON.stringify(payload) ?? "null");
+  }
+
+  async function executeRoadmapTest(): Promise<void> {
     const io = captureIo();
     expect(await runCli(["init"], { io: io.io, servicesFactory: servicesFactory() })).toBe(0);
     for (const task of TASKS) {
@@ -288,8 +419,26 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
       `run failed: lines=${JSON.stringify(runIo.lines)} errors=${JSON.stringify(runIo.errors)}`,
     ).toBe(0);
 
-    // 1. All 20 tasks DONE
-    store = await openRepositoryStore();
+    // 1. All 20 tasks DONE. Before asserting, fetch durable retained evidence
+    // for any task that did not reach DONE (while the store is still open,
+    // before afterEach cleanup) and emit it so the failure is diagnosable.
+    const evidenceStore = await openRepositoryStore();
+    store = evidenceStore;
+    const notDone: string[] = [];
+    for (const task of TASKS) {
+      const record = await evidenceStore.getTask(task.id);
+      if (record?.status !== "DONE") {
+        notDone.push(task.id);
+      }
+    }
+    if (notDone.length > 0) {
+      const evidence = await Promise.all(
+        notDone.map((taskId) => formatTaskFailureEvidence(evidenceStore, taskId)),
+      );
+      process.stderr.write(
+        `TASK-FAILURE-EVIDENCE (durable store state for ${notDone.length} task(s) not DONE; raw agent logs excluded)\n${evidence.join("\n")}\n`,
+      );
+    }
     for (const task of TASKS) {
       const record = await store.getTask(task.id);
       expect(record?.status, `task ${task.id} status`).toBe("DONE");
@@ -378,5 +527,10 @@ describe("20-task roadmap e2e execution (release criterion 1)", () => {
     expect(statusOutput).toContain("task totals: 20 DONE");
     expect(statusOutput).toContain("active tasks: (none)");
     expect(statusOutput).toContain("integration queue: 0 pending, 0 integrating, 20 completed, 0 failed");
-  }, 120_000);
+  }
+
+  it("executes a 20-task DAG to DONE with correct ordering, disjoint shared-resource spans, isolated worktrees, and serialized integration", () => {
+    activeTest = executeRoadmapTest();
+    return activeTest;
+  }, process.platform === "win32" ? 300_000 : 120_000);
 });

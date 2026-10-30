@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   ProcessOutcome,
   ProcessResult,
@@ -142,10 +143,13 @@ export class NodeGitManager implements GitManager {
     const args = ["worktree", "list", "--porcelain"];
     this.requireNonEmpty(worktreePath, "worktreeExists", "worktree path", args);
     const result = await this.runGit(cwd, args, "worktreeExists");
-    const target = normalizeWorktreePath(worktreePath);
-    return parseWorktreeList(result.stdout).some(
-      (entry) => normalizeWorktreePath(entry) === target,
+    const target = await canonicalizeWorktreePath(worktreePath);
+    const registered = await Promise.all(
+      parseWorktreeList(result.stdout).map((entry) =>
+        canonicalizeWorktreePath(entry),
+      ),
     );
+    return registered.some((entry) => entry === target);
   }
 
   async createBranch(cwd: string, branchName: string): Promise<void> {
@@ -364,12 +368,51 @@ export function parseWorktreeList(output: string): string[] {
   return paths;
 }
 
-function normalizeWorktreePath(worktreePath: string): string {
-  const absolute = isAbsolute(worktreePath)
-    ? worktreePath
-    : resolve(worktreePath);
-  const normalized = resolve(absolute);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+async function canonicalizeWorktreePath(worktreePath: string): Promise<string> {
+  const normalized = resolve(
+    isAbsolute(worktreePath) ? worktreePath : resolve(worktreePath),
+  );
+  let canonical: string;
+  try {
+    // Git registers worktrees under their canonical path, with symlinks and
+    // Windows short names already resolved, so compare the same form.
+    canonical = await realpath(normalized);
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error;
+    }
+    let current = dirname(normalized);
+    let canonicalAncestor: string | null = null;
+    while (true) {
+      try {
+        canonicalAncestor = await realpath(current);
+        break;
+      } catch (ancestorError) {
+        if (!isEnoent(ancestorError)) {
+          throw ancestorError;
+        }
+        const parent = dirname(current);
+        if (parent === current) {
+          break;
+        }
+        current = parent;
+      }
+    }
+    if (canonicalAncestor !== null) {
+      canonical = join(canonicalAncestor, relative(current, normalized));
+    } else {
+      canonical = normalized;
+    }
+  }
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 export function parsePorcelainStatus(output: string): GitStatus {

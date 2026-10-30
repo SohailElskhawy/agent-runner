@@ -8,6 +8,7 @@ import type { DoctorReport } from "./doctor.js";
 import type { PlanningInput } from "@agentic-dev-runner/core";
 import type {
   AddTaskResult,
+  ControlCommandResult,
   AgentStatusEntry,
   ApprovalCommandResult,
   InitResult,
@@ -33,6 +34,8 @@ export interface TaskRunner {
 
 export interface RunnerAppService {
   init(): Promise<InitResult>;
+  pause(reason?: string): Promise<ControlCommandResult>;
+  resume(): Promise<ControlCommandResult>;
   addTask(taskFilePath: string): Promise<AddTaskResult>;
   approve(taskId: TaskId): Promise<ApprovalCommandResult>;
   retry(taskId: TaskId): Promise<RetryCommandResult>;

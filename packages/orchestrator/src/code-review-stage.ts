@@ -33,6 +33,7 @@ import type {
   AttemptId,
   ContextPack,
   IsoTimestamp,
+  InvocationUsageObservation,
   ReviewDecision,
   ReviewResult,
   StageKind,
@@ -168,17 +169,7 @@ export async function executeCodeReviewStage(
     });
   }
 
-  try {
-    return await runCodeReviewStage(options, stageRunId, startedAt, now);
-  } catch (error) {
-    return finalize(options, stageRunId, startedAt, {
-      status: "FAILED",
-      failure: {
-        kind: "error",
-        message: `CODE_REVIEW stage failed: ${describeError(error)}`,
-      },
-    });
-  }
+  return runCodeReviewStage(options, stageRunId, startedAt, now);
 }
 
 async function runCodeReviewStage(
@@ -187,91 +178,113 @@ async function runCodeReviewStage(
   startedAt: IsoTimestamp,
   now: () => IsoTimestamp,
 ): Promise<CodeReviewStageOutcome> {
-  const baseline = await captureWorktreeBaseline(options);
-  const evidence = await loadImplementationEvidence(options, baseline.status);
-  if (evidence.length === 0) {
+  let usage: InvocationUsageObservation | undefined;
+  // Do not await finalizers here: a failed final write must not trigger a rewrite.
+  try {
+    const baseline = await captureWorktreeBaseline(options);
+    const evidence = await loadImplementationEvidence(options, baseline.status);
+    if (evidence.length === 0) {
+      return finalize(options, stageRunId, startedAt, {
+        status: "FAILED",
+        failure: {
+          kind: "error",
+          message: `attempt "${options.attemptId}" has no implementation changes to review against base revision ${options.baseRevision}; run the IMPLEMENT stage first`,
+        },
+      });
+    }
+
+    const contextPack = await buildCodeReviewContextPack(
+      options,
+      evidence,
+      baseline.plan,
+      now,
+    );
+    const agentResult = await options.agent.invoke({
+      agent: agentDescriptorOf(options.agent),
+      contextPack,
+      worktreePath: options.worktreePath,
+      timeoutMs: options.timeoutMs,
+      instruction: CODE_REVIEW_STAGE_INSTRUCTION,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+
+    usage = agentResult.usage;
+
+    if (agentResult.kind === "failure") {
+      return finalizeWithAgentOutput(options, stageRunId, startedAt, {
+        usage,
+        status: "FAILED",
+        failure: {
+          kind: "error",
+          message: `agent failed: ${agentResult.failure.message}`,
+        },
+        output: agentResult.output,
+      });
+    }
+    if (agentResult.kind === "timeout") {
+      return finalizeWithAgentOutput(options, stageRunId, startedAt, {
+        usage,
+        status: "TIMED_OUT",
+        failure: {
+          kind: "timeout",
+          message: `agent invocation timed out after ${String(options.timeoutMs)} ms`,
+        },
+        output: agentResult.output,
+      });
+    }
+    if (agentResult.kind === "cancelled") {
+      return finalizeWithAgentOutput(options, stageRunId, startedAt, {
+        usage,
+        status: "CANCELLED",
+        failure: {
+          kind: "cancelled",
+          message: "agent invocation was cancelled",
+        },
+        output: agentResult.output,
+      });
+    }
+
+    const review = parseStructuredReview(agentResult.output, CODE_REVIEW_STAGE);
+    if (typeof review === "string") {
+      return finalizeWithAgentOutput(options, stageRunId, startedAt, {
+        usage,
+        status: "FAILED",
+        failure: { kind: "error", message: review },
+        output: agentResult.output,
+      });
+    }
+
+    const mutation = await detectWorktreeMutation(options, baseline);
+    if (mutation !== undefined) {
+      return finalize(options, stageRunId, startedAt, {
+        usage,
+        status: "FAILED",
+        failure: { kind: "error", message: mutation },
+      });
+    }
+
+    return finalizeCompleted(
+      options,
+      stageRunId,
+      startedAt,
+      review,
+      agentResult.output.stdout,
+      usage,
+    );
+  } catch (error) {
     return finalize(options, stageRunId, startedAt, {
       status: "FAILED",
+      usage,
       failure: {
         kind: "error",
-        message: `attempt "${options.attemptId}" has no implementation changes to review against base revision ${options.baseRevision}; run the IMPLEMENT stage first`,
+        message: `CODE_REVIEW stage failed: ${describeError(error)}`,
       },
     });
   }
-
-  const contextPack = await buildCodeReviewContextPack(
-    options,
-    evidence,
-    baseline.plan,
-    now,
-  );
-  const agentResult = await options.agent.invoke({
-    agent: agentDescriptorOf(options.agent),
-    contextPack,
-    worktreePath: options.worktreePath,
-    timeoutMs: options.timeoutMs,
-    instruction: CODE_REVIEW_STAGE_INSTRUCTION,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-
-  if (agentResult.kind === "failure") {
-    return finalizeWithAgentOutput(options, stageRunId, startedAt, {
-      status: "FAILED",
-      failure: {
-        kind: "error",
-        message: `agent failed: ${agentResult.failure.message}`,
-      },
-      output: agentResult.output,
-    });
-  }
-  if (agentResult.kind === "timeout") {
-    return finalizeWithAgentOutput(options, stageRunId, startedAt, {
-      status: "TIMED_OUT",
-      failure: {
-        kind: "timeout",
-        message: `agent invocation timed out after ${String(options.timeoutMs)} ms`,
-      },
-      output: agentResult.output,
-    });
-  }
-  if (agentResult.kind === "cancelled") {
-    return finalizeWithAgentOutput(options, stageRunId, startedAt, {
-      status: "CANCELLED",
-      failure: {
-        kind: "cancelled",
-        message: "agent invocation was cancelled",
-      },
-      output: agentResult.output,
-    });
-  }
-
-  const review = parseStructuredReview(agentResult.output, CODE_REVIEW_STAGE);
-  if (typeof review === "string") {
-    return finalizeWithAgentOutput(options, stageRunId, startedAt, {
-      status: "FAILED",
-      failure: { kind: "error", message: review },
-      output: agentResult.output,
-    });
-  }
-
-  const mutation = await detectWorktreeMutation(options, baseline);
-  if (mutation !== undefined) {
-    return finalize(options, stageRunId, startedAt, {
-      status: "FAILED",
-      failure: { kind: "error", message: mutation },
-    });
-  }
-
-  return finalizeCompleted(
-    options,
-    stageRunId,
-    startedAt,
-    review,
-    agentResult.output.stdout,
-  );
 }
 
 type Finalization = {
+  readonly usage?: InvocationUsageObservation | undefined;
   readonly status: StageRunStatus;
   readonly failure?: StageRunFailure | undefined;
   readonly output?: StageRunOutput | undefined;
@@ -289,6 +302,7 @@ async function finalize(
     attemptId: options.attemptId,
     stage: CODE_REVIEW_STAGE,
     status: finalization.status,
+    ...(finalization.usage === undefined ? {} : { usage: finalization.usage }),
     startedAt,
     finishedAt,
     ...(finalization.failure === undefined
@@ -319,6 +333,7 @@ async function finalizeCompleted(
   startedAt: IsoTimestamp,
   review: ReviewResult,
   rawOutput: string | undefined,
+  usage: InvocationUsageObservation | undefined,
 ): Promise<CodeReviewStageOutcome> {
   const finishedAt = (options.now ?? defaultClock)();
   const stageRun: StageRun = {
@@ -326,6 +341,7 @@ async function finalizeCompleted(
     attemptId: options.attemptId,
     stage: CODE_REVIEW_STAGE,
     status: "SUCCEEDED",
+    ...(usage === undefined ? {} : { usage }),
     startedAt,
     finishedAt,
     output: {
@@ -348,7 +364,7 @@ async function finalizeCompleted(
  * Failure finalization that preserves the agent's normalized stdout/stderr
  * in the StageRun output so failure information stays durable.
  */
-async function finalizeWithAgentOutput(
+function finalizeWithAgentOutput(
   options: CodeReviewStageOptions,
   stageRunId: StageRunId,
   startedAt: IsoTimestamp,
@@ -356,6 +372,7 @@ async function finalizeWithAgentOutput(
     readonly status: StageRunStatus;
     readonly failure: StageRunFailure;
     readonly output: AgentOutput;
+    readonly usage?: InvocationUsageObservation | undefined;
   },
 ): Promise<CodeReviewStageOutcome> {
   const stdout = input.output.stdout;
@@ -363,6 +380,7 @@ async function finalizeWithAgentOutput(
   const hasAgentOutput = stdout !== undefined || stderr !== undefined;
   return finalize(options, stageRunId, startedAt, {
     status: input.status,
+    usage: input.usage,
     failure: input.failure,
     ...(hasAgentOutput
       ? {

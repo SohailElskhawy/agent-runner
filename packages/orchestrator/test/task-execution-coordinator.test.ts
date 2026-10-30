@@ -43,6 +43,32 @@ describe("task execution coordinator (M061b)", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("defers admission when the runner is paused", async () => {
+    await store.putTask(task("M001", "P0"));
+    await store.putTask(task("M002", "P0"));
+    await store.pauseRunner(createProject().id, "2026-01-01T00:00:00.000Z");
+    const result = await coordinator(store, 2, () => completedExecutor()).dispatchAvailable();
+    expect(result.admissions).toEqual([{ taskId: "M001", kind: "deferred", reason: "runner-paused" }]);
+    expect(result.executions).toEqual([]);
+    expect(await store.listExecutionClaims()).toEqual([]);
+  });
+
+  it("reports pause committed between the pre-admission check and claim", async () => {
+    await store.putTask(task("M001", "P0"));
+    const originalClaim = store.claimTaskExecution.bind(store);
+    store.claimTaskExecution = async (request) => {
+      await store.pauseRunner(createProject().id, "2026-01-01T00:00:00.000Z");
+      return originalClaim(request);
+    };
+    const result = await createTaskExecutionCoordinator({
+      store, projectId: createProject().id, agentCandidates: [candidate], maxParallelism: 1,
+      createExecutor: () => completedExecutor(), now: () => "2026-01-01T00:00:00.000Z",
+    }).dispatchAvailable();
+    expect(result.paused).toBe(true);
+    expect(result.admissions).toEqual([{ taskId: "M001", kind: "deferred", reason: "runner-paused" }]);
+    expect(await store.listAttempts({ taskId: "M001" })).toEqual([]);
+  });
+
   it("admits candidates in deterministic priority and id order", async () => {
     const calls: string[] = [];
     await store.putTask(task("M002", "P1"));
@@ -204,7 +230,7 @@ describe("task execution coordinator (M061b)", () => {
       store,
       agentCandidates: [candidate],
       maxParallelism: 1,
-      leaseDurationMs: 30,
+      leaseDurationMs: 300,
       createExecutor: () => ({
         async run(): Promise<WorkflowTaskRunOutcome> {
           await running;
@@ -234,7 +260,7 @@ describe("task execution coordinator (M061b)", () => {
     });
 
     expect(await store.listExecutionClaims({ status: "ACTIVE" })).toHaveLength(1);
-    expect(Date.parse(renewed.leaseExpiresAt) - Date.parse(renewed.renewedAt)).toBe(30);
+    expect(Date.parse(renewed.leaseExpiresAt) - Date.parse(renewed.renewedAt)).toBe(300);
 
     release?.();
     await run;

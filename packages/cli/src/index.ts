@@ -4,6 +4,8 @@ export { parseArgs, KNOWN_COMMANDS, type ParsedCommand } from "./parse-args.js";
 export { runCli, EXIT_USAGE, type RunCliOptions, type CliServicesFactory } from "./run-cli.js";
 export {
   executeInitCommand,
+  executePauseCommand,
+  executeResumeCommand,
   executeRunCommand,
   executeStatusCommand,
   executeInspectCommand,
@@ -25,6 +27,7 @@ export {
 } from "./application/runner-app-service.js";
 export type {
   InitResult,
+  ControlCommandResult,
   RunResult,
   ApprovalCommandResult,
   RetryCommandResult,

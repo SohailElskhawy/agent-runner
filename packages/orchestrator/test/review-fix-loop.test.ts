@@ -242,6 +242,32 @@ describe("executePlanReviewFixLoop (M058b)", () => {
     };
   }
 
+  it("keeps distinct invocation usage for each review cycle", async () => {
+    const behaviors: AgentBehavior[] = [
+      agentPlans(PLAN_ONE),
+      agentReviews({ decision: "CHANGES_REQUIRED", feedback: FEEDBACK }),
+      agentPlans(PLAN_TWO),
+      agentReviews({ decision: "APPROVED" }),
+    ];
+    const agent = new ScriptedAgentRuntime({}, behaviors.map((behavior, index) => async (invocation) => ({
+      ...await behavior(invocation),
+      usage: { schemaVersion: 1, status: "partial", counters: { inputTokens: index + 1 } },
+    })));
+    const outcome = await executePlanReviewFixLoop(loopOptions(agent, await storedTask()));
+    expect(outcome.kind).toBe("approved");
+    const runs = await store.listStageRuns(attemptId);
+    for (const [index, id] of [
+      `stage_${attemptId}_PLAN`,
+      `stage_${attemptId}_PLAN_REVIEW`,
+      `stage_${attemptId}_PLAN_c2`,
+      `stage_${attemptId}_PLAN_REVIEW_c2`,
+    ].entries()) {
+      expect(stageRunById(runs, id).usage).toEqual({
+        schemaVersion: 1, status: "partial", counters: { inputTokens: index + 1 },
+      });
+    }
+  });
+
   it("passes the review gate on the first APPROVED PLAN_REVIEW", async () => {
     const task = await storedTask();
     const agent = new ScriptedAgentRuntime({}, [
@@ -424,6 +450,32 @@ describe("executeCodeReviewFixLoop (M058b)", () => {
       now: () => FIXED_CLOCK,
     };
   }
+
+  it("keeps distinct invocation usage for each review cycle", async () => {
+    const behaviors: AgentBehavior[] = [
+      agentImplements("src/utils.ts", IMPLEMENTATION_ONE),
+      agentReviews({ decision: "CHANGES_REQUIRED", feedback: FEEDBACK }),
+      agentImplements("src/validation.ts", IMPLEMENTATION_TWO),
+      agentReviews({ decision: "APPROVED" }),
+    ];
+    const agent = new ScriptedAgentRuntime({}, behaviors.map((behavior, index) => async (invocation) => ({
+      ...await behavior(invocation),
+      usage: { schemaVersion: 1, status: "partial", counters: { inputTokens: index + 1 } },
+    })));
+    const outcome = await executeCodeReviewFixLoop(loopOptions(agent, await storedTask()));
+    expect(outcome.kind).toBe("approved");
+    const runs = await store.listStageRuns(attemptId);
+    for (const [index, id] of [
+      `stage_${attemptId}_IMPLEMENT`,
+      `stage_${attemptId}_CODE_REVIEW`,
+      `stage_${attemptId}_IMPLEMENT_c2`,
+      `stage_${attemptId}_CODE_REVIEW_c2`,
+    ].entries()) {
+      expect(stageRunById(runs, id).usage).toEqual({
+        schemaVersion: 1, status: "partial", counters: { inputTokens: index + 1 },
+      });
+    }
+  });
 
   it("passes the review gate on the first APPROVED CODE_REVIEW", async () => {
     const task = await storedTask();

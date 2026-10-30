@@ -167,6 +167,8 @@ describe("Restart-style crash recovery end-to-end", () => {
       },
     ]);
 
+    // Pause survives the crash and must not prevent startup reconciliation.
+    await store1.pauseRunner(createProject().id, "2026-01-01T00:00:04.000Z");
     // Abrupt crash: close store 1 without clean settlement or lock release
     await store1.close();
 
@@ -223,6 +225,7 @@ describe("Restart-style crash recovery end-to-end", () => {
     const unfinishedOutcomes = await crashRecovery2.reconcileUnfinished();
     expect(unfinishedOutcomes).toHaveLength(0);
 
+    expect((await store2.getRunnerControl(createProject().id)).state).toBe("PAUSED");
     const worktreeOutcomes = await worktreeRecovery2.reconcileTerminalWorktrees();
     expect(worktreeOutcomes).toHaveLength(1);
     expect(worktreeOutcomes[0]?.kind).toBe("absent");

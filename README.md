@@ -9,6 +9,8 @@ Agentic Dev Runner is a local-first orchestration engine that executes a bounded
 - **Provider-agnostic.** Provider behavior lives behind adapters; v0.1 ships `opencode` and `codex`.
 - **Cross-platform.** macOS, Linux, and Windows are first-class targets, with no Bash, `/tmp`, shell-quoting, or signal assumptions.
 
+See [examples](examples/README.md) for runnable source-checkout walkthroughs.
+
 ## Status: v0.1 Technical Preview / Early Access
 
 Planning and cheap-first routing are part of the v0.1 scope. The Technical
@@ -32,11 +34,11 @@ V0.1 limitations and deferrals:
 
 - Planning uses bounded repository evidence and a human-edited `.agentic/decisions.md`; it is not an interactive design session or a guarantee of product completeness. Manual JSON tasks remain supported for advanced users.
 - Token and cost telemetry are v0.2; there is no `agentic cost` command yet.
-- `pause`/`resume` are v0.2. A run either continues to completion or is interrupted and recovered on the next invocation.
+- `agentic pause [--reason <text>]` and `agentic resume` provide v0.2 durable runner control. Pause stops new admissions while in-flight tasks and queued integrations drain; it does not interrupt agents. `agentic status` shows the control state and active claims.
 - Learned routing and automatic fallback to a different provider are v0.2. V0.1 routing deterministically selects the cheapest eligible configured profile that meets the task's minimum tier and escalates that minimum after failed attempts.
 - Timeout and cancellation terminate the direct agent process only, not its whole process tree. A terminated agent can leave orphaned child processes behind on the host.
 - The runner is local-only: one engine per machine, no remote workers, no cloud control plane, no GUI.
-- macOS, Linux, and Windows are supported targets; the CI matrix runs lint, typecheck, build, and the full test suite on all three.
+- macOS, Linux, and Windows are supported targets; the CI matrix runs lint, build, typecheck, and the full test suite on all three (build runs before typecheck so a clean checkout typechecks against generated `dist` output).
 
 ## Requirements
 
@@ -58,6 +60,12 @@ corepack pnpm --filter agentic-dev-runner build
 npm install --global ./packages/agentic-dev-runner
 agentic help
 ```
+
+`corepack` is bundled with Node.js 24 but was removed from the Node.js
+distribution in Node.js 25+. If `corepack: command not found`, install pnpm
+directly (for example `npm install --global pnpm@12.4.1`, matching the pinned
+`packageManager` version) and run the same commands as
+`pnpm install && pnpm --filter agentic-dev-runner build`.
 
 To run the CLI directly without installing it, from the source checkout root:
 
@@ -118,8 +126,10 @@ for `adapter: codex` to use the Codex CLI instead.
 `planning.profile` is required for `agentic plan --goal` and must name one of
 the configured agent profiles.
 
-The optional `tier` is `economy`, `standard`, or `strong`; omitted tiers behave
-as `standard` for existing configurations.
+The `model` id is opaque and depends on your provider subscription; pick a real
+one from `opencode models` (for example `opencode-go/glm-5.3-flash`) or the
+Codex CLI. The `tier` is `economy`, `standard`, or `strong`; omitted tiers
+behave as `standard` for existing configurations.
 
 ### 2. Initialize local runner state
 
@@ -128,10 +138,12 @@ agentic init
 ```
 
 Local state lives outside the repository, per machine, keyed to the
-normalized repository path: `~/.agentic/projects/<project-key>/state.db` plus
+canonical repository path: `~/.agentic/projects/<project-key>/state.db` plus
 `~/.agentic/projects/<project-key>/worktrees/`. Moving or renaming the
-repository directory creates a new local state identity; no state migration is
-performed.
+repository directory creates a new local state identity. Directory aliases resolve to
+the same identity, including Windows short names and when a descendant does not yet exist.
+Identity paths are case-folded on Windows and macOS, and preserve case on Linux.
+Existing state under a previous identity is not moved or migrated.
 
 ### 3. Analyze and plan
 
@@ -140,8 +152,23 @@ agentic analyze
 agentic plan --goal "Implement the project described in docs/PROJECT_SPEC.md"
 ```
 
+Planning invokes the agent CLI in read-only mode. The adapter detects the
+installed CLI major version: on `opencode` 1.x it uses the legacy `--pure`
+invocation, and on 2.x it runs with `--standalone` because opencode 2.0
+removed `--pure` and only resolves agents injected through `OPENCODE_CONFIG`
+in a private standalone server (failure modes reproduced on opencode 2.2.0;
+the `--standalone` invocation shape is provisional per ADR-021). The
+injected read-only agent always denies edit, bash, task, and skill tools on
+both versions (see ADR-021).
+
 If planning reports `NEEDS_DISCOVERY`, edit the generated
-`.agentic/decisions.md` answers and rerun the plan command. Review the draft,
+`.agentic/decisions.md` answers and rerun the plan command. For multiline answers,
+indent continuation lines by two spaces; even lines resembling question markers
+are answer text when indented this way. Unindented follow-on prose is preserved
+in the file but is not included in the answer used by planning. If a block has
+multiple `Answer:` lines, planning reads only the first, even if it is empty;
+put the answer there. Answered blocks retain their original wording when questions
+are regenerated. Review the draft,
 then explicitly approve it before execution:
 
 ```bash
@@ -231,6 +258,10 @@ in JSON form:
 Add and run it with:
 
 ```bash
+git add task.json
+git commit -m "chore: add M001 task file"   # or the rest of your project workflow
+git status --short                          # must be empty before execution
+
 agentic tasks add task.json
 agentic run --parallel 3
 agentic status
@@ -242,6 +273,30 @@ validation errors are reported before anything executes. `run --parallel 3`
 lets the unattended scheduler execute up to three independent tasks
 concurrently (tasks whose dependencies are not `DONE` wait). To execute one
 task sequentially instead, use `agentic run M001`.
+
+The runner requires a clean Git working tree before execution, exactly as the
+plan-approval path above. Uncommitted or untracked files in the repository
+root (including the freshly added `task.json`) make integration fail with
+`integration failed: Git operation "integrateBranch" failed (integration
+worktree has uncommitted changes)`; commit them and retry the task with
+`agentic retry <task-id>`.
+
+After a failed attempt the task's minimum routing tier escalates one step
+(shown with `agentic inspect <task-id>`). If no configured profile's tier still
+meets it, unattended `run` reaches quiescence while the task stays `READY` —
+raise the profile's `tier` in `agentic.yaml`, commit the change, then
+`agentic retry <task-id>`.
+
+`agentic inspect <task-id> --usage` shows each attempt's execution mode, usage
+status and invocation coverage, plus independently reported counter subtotals
+and coverage. Missing values are unknown, not zero; partial, inconsistent,
+incompatible cache and overflow reasons remain visible. Exact reported amounts
+are listed separately with currency, source and scope; they are not combined or
+estimated subscription bills. Project planning, VERIFY and INTEGRATE are
+excluded; workflow PLAN, PLAN_REVIEW, IMPLEMENT and CODE_REVIEW are included.
+Provider usage parsers are not yet supported, so observations may be absent.
+Legacy numeric token usage and cost are unverified and are not shown as usage
+evidence. The default inspect output is unchanged.
 
 ## Command reference
 
@@ -256,7 +311,7 @@ task sequentially instead, use `agentic run M001`.
 | `agentic run [--parallel <n>]` | Unattended DAG execution of every runnable task; `--parallel <n>` caps concurrent tasks (positive integer, default 1). |
 | `agentic run-all [--parallel <n>]` | Compatibility alias for unattended `agentic run`. |
 | `agentic status` | Project status: tasks and states, active/failed/blocked tasks, recovery-required work, execution claims, integration queue, and parallel capacity. |
-| `agentic inspect <task-id>` | Explain one task: attempts, agent/profile, workflow stage results, verification evidence, task commit, integration outcome, and recovery events. |
+| `agentic inspect <task-id> [--usage]` | Explain one task: attempts, agent/profile, workflow stage results, verification evidence, task commit, integration outcome, and recovery events. Optionally show per-attempt usage evidence. |
 | `agentic approve <task-id>` | Record durable human approval for a task that declares `approval.required: true`. The grant survives failure and retry. |
 | `agentic retry <task-id>` | Return a `FAILED`, `NEEDS_HUMAN`, or `BLOCKED` task to `READY`. Respects `limits.max_attempts`; approval-required tasks must be approved first. |
 | `agentic tasks [add <task-file>]` | With no subcommand, list persisted tasks (status, priority, milestone, dependencies, attempts, approval). `tasks add` ingests one JSON task file. |

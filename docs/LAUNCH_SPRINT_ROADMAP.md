@@ -539,6 +539,26 @@ Publish the first public Technical Preview.
 
 # Execution Status and Evidence
 
+## Current release status — 2026-10-30
+
+CI run [41034987347](https://github.com/SohailElskhawy/agent-runner/actions/runs/41034987347)
+passed lint, build, typecheck and tests on Linux, macOS and Windows at
+`b6acf720bc52ed2f0caf391bba793e0ad9de6533`. This does not establish CI
+results for a later or eventual release commit.
+
+The [real OpenCode example](../examples/jsonl-error-report/runs/opencode-2026-10-27/final/README.md)
+completed one task with task and integration verification and one completed
+queue entry. It satisfies evidence of a successful live task through a second
+adapter alongside the Codex dogfood; it is not a 20-task release dogfood run.
+
+L015 remains **Open**: the strict live 20-entry serialized queue has not been
+verified, and CI must be green at the release commit. L016 remains unpublished
+and requires owner authorization. This evidence does not establish real provider
+usage counters, a second-adapter 20-task queue, Windows Job Object termination,
+or a new successful live OpenCode planning run.
+
+## Historical status — September 30, 2026
+
 **Reviewed:** September 30, 2026
 
 | Task | Status | Evidence |
@@ -577,6 +597,45 @@ The launch sprint implementation and both TODO dogfood paths have local
 evidence. Release verification remains open until cross-platform CI, successful
 live execution through a second adapter, and the complete 20-entry queue gate
 have results.
+
+The two tables and accompanying assessment above are the September 30, 2026
+historical record; see the current status above for later evidence.
+
+## Release evidence 2026-10-28 (integration `e7da6cd`)
+
+Recorded local release-gate evidence. All runs are Linux-only at the
+integration revision `e7da6cd`; results were observed in the integration
+checkout and recorded here. CI was not re-run at this revision, and no
+publication, tagging, or deployment occurred.
+
+| Check | Command | Result |
+|---|---|---|
+| Workspace gates | `pnpm -r build`, `pnpm -r typecheck`, `eslint .`, `pnpm -r test` | All green; 1,026 tests pass across the workspace. Expected opt-in/live suites (packed smoke, live-provider tests) remain skipped by default. |
+| Packed install smoke | `AGENTIC_PACK_SMOKE=1 pnpm --filter agentic-dev-runner test` from `packages/agentic-dev-runner` | 1 file, 1 test passes. Real `pnpm pack` tarball installed into a clean consumer directory. |
+| Recovery / provider-failure / parallel stress | Focused run of `packages/cli/test/forced-kill-recovery.e2e.test.ts`, `provider-failure-e2e.test.ts`, `parallel-stress-e2e.test.ts` | 3 files, 5 tests pass. |
+
+Claim limits:
+
+- The clean-consumer pack smoke uses a fake agent shim. It proves that the
+  packed tarball installs and runs from a clean consumer directory; it is not a
+  network-disabled/offline proof.
+- The forced-kill recovery test kills the runner's whole process group with
+  SIGKILL. It proves recovery after the runner and its children die together;
+  it does not exercise or prove process-tree cancellation or orphaned-agent
+  handling.
+- The provider-failure and parallel-stress tests use fake adapter fixtures,
+  not live provider invocations.
+- Remote CI run
+  [40661500309](https://github.com/SohailElskhawy/agent-runner/actions/runs/40661500309)
+  ran at the earlier revision `e95fa9e`: Linux succeeded; Windows and macOS
+  failed on path-alias assertions before the CLI suites ran. There is no green
+  cross-platform CI claim, and the portability fix remains parked and unmerged.
+- The only recorded real-provider example on main is the OpenCode JSONL
+  example ([examples/jsonl-error-report](../examples/jsonl-error-report/README.md));
+  a matching Codex example run never completed and was not merged.
+- Still open, keeping L015 Open and L016 unpublished: a strict 20-entry
+  serialized-queue live run, green three-OS CI at the release revision, and
+  explicit release authorization.
 
 # Target CLI Experience
 

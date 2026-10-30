@@ -1,0 +1,3 @@
+Changed path from seed commit: src/report.mjs
+Every seed input SHA-256 unchanged.
+Production source in verified runner matches example branch (only unrelated test change differs).

@@ -68,12 +68,15 @@ let repoPath: string;
 let worktreesDir: string;
 let dbPath: string;
 let runner: ProcessRunner;
+let inFlightRuns: Promise<unknown>[] = [];
 let store: RunnerStore;
 let git: GitManager;
 let agent: FakeAgentRuntime;
 let verification: FakeVerificationEngine;
 
 type WireOptions = {
+  readonly storeOverride?: RunnerStore | undefined;
+  readonly executionId?: string | undefined;
   readonly agent?: AgentBehavior | undefined;
   readonly verification?: VerificationResponse | undefined;
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
@@ -98,7 +101,8 @@ function wireExecutor(options: WireOptions = {}) {
     throw new Error(`fixture workflow "${options.workflowId ?? task.workflow}" did not resolve`);
   }
   return createWorkflowTaskExecutor({
-    store,
+    store: options.storeOverride ?? store,
+    executionId: options.executionId,
     git: effectiveGit,
     agent,
     verification,
@@ -277,13 +281,21 @@ function eventsOfType(
   return events.filter((event) => event.type === type);
 }
 
-describe("WorkflowTaskExecutor", () => {
+describe("WorkflowTaskExecutor", { timeout: 20_000 }, () => {
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), "agentic-runner-m051b-"));
     repoPath = join(directory, "project repo");
     worktreesDir = join(directory, "worktrees");
     dbPath = join(directory, "state.db");
-    runner = createNodeProcessRunner();
+    inFlightRuns = [];
+    const delegateRunner = createNodeProcessRunner();
+    runner = {
+      run(spec) {
+        const promise = delegateRunner.run(spec);
+        inFlightRuns.push(promise);
+        return promise;
+      },
+    };
     store = createSqliteRunnerStore({ path: dbPath });
     await store.initialize();
     git = createGitManager({ runner });
@@ -296,9 +308,62 @@ describe("WorkflowTaskExecutor", () => {
     await store.putTask(createTask({ id: taskId, status: "READY" }));
   });
 
+  it("persists workflow mode before any stage even when worktree creation fails", async () => {
+    const intercepted = new Proxy(git, { get(target, property) {
+      if (property === "createBranch") return async () => {
+        const [attempt] = await store.listAttempts({ taskId });
+        expect(attempt).toMatchObject({ status: "RUNNING", executionMode: "workflow" });
+        expect(await store.listStageRuns(attempt!.id)).toEqual([]);
+        throw gitFailure("createBranch")();
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const outcome = await wireExecutor({ gitOverride: intercepted }).run();
+    expect(outcome.kind).toBe("failed");
+    const [attempt] = await store.listAttempts({ taskId });
+    expect(attempt).toMatchObject({ executionMode: "workflow" });
+    expect(await store.listStageRuns(attempt!.id)).toEqual([]);
+  });
+
+  it("rejects when pause wins immediately before attempt admission", async () => {
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "transaction") return async (body: () => Promise<unknown>) => {
+        await target.pauseRunner("proj-1", new Date().toISOString());
+        return target.transaction(body);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const outcome = await wireExecutor({ storeOverride: intercepted }).run();
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
+  });
+
+  it("drains an already claimed workflow after pause", async () => {
+    const at = new Date().toISOString();
+    expect((await store.claimTaskExecution({ taskId, executionId: "exec-1", maxParallelism: 1, resources: [], claimedAt: at, leaseExpiresAt: "2099-01-01T00:00:00.000Z" })).kind).toBe("claimed");
+    await store.pauseRunner("proj-1", at);
+    const outcome = await wireExecutor({ executionId: "exec-1", agent: stageDispatchAgent({}) }).run();
+    expect(outcome.kind).toBe("completed");
+    expect(await store.listAttempts({ taskId })).toHaveLength(1);
+  });
+
+  it("refuses a paused direct run before creating an attempt or worktree", async () => {
+    await store.pauseRunner("proj-1", new Date().toISOString());
+    const outcome = await wireExecutor().run();
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
+  });
+
   afterEach(async () => {
+    await Promise.allSettled(inFlightRuns);
     await store.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it("runs the default workflow end-to-end and persists DONE only after successful integration", async () => {
@@ -621,6 +686,29 @@ describe("WorkflowTaskExecutor", () => {
     expect(transitions).not.toContainEqual(["CODE_REVIEW", "VERIFYING"]);
     expect(transitions).not.toContainEqual(["VERIFYING", "INTEGRATING"]);
     expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
+  });
+
+  it.each(["scope", "verification", "git"] as const)("preserves all stage evidence after a %s failure", async (failure) => {
+    const behavior = stageDispatchAgent({
+      ...(failure === "scope" ? { implement: agentImplements({ path: "root.txt", content: "outside scope\n" }) } : {}),
+    });
+    let invocation = 0;
+    const executor = wireExecutor({
+      agent: async (input) => ({
+        ...await behavior(input),
+        usage: { schemaVersion: 1, status: "partial", counters: { inputTokens: ++invocation } },
+      }),
+      ...(failure === "verification" ? { verification: (input) => failedVerificationRun(input, "unit", "failed") } : {}),
+      ...(failure === "git" ? { gitFailures: { integrateBranch: gitFailure("integrateBranch") } } : {}),
+    });
+    const outcome = await executor.run();
+    expectFailed(outcome);
+    const runs = await store.listStageRuns(outcome.attempt.id);
+    for (const [index, stage] of ["PLAN", "PLAN_REVIEW", "IMPLEMENT", "CODE_REVIEW"].entries()) {
+      expect(runs.find((run) => run.stage === stage)?.usage).toEqual({
+        schemaVersion: 1, status: "partial", counters: { inputTokens: index + 1 },
+      });
+    }
   });
 
   it("does not integrate when worktree verification fails", async () => {

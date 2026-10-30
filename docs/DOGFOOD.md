@@ -280,3 +280,8 @@ Upon successful completion of the run:
 > For continuous automated verification without external agent credentials, the CI
 > test suite runs this exact 20-task DAG and asserts all 8 criteria via
 > `packages/cli/test/roadmap-20-tasks-e2e.test.ts`.
+>
+> The latest dated gate evidence for the automated suites (packed smoke,
+> recovery, provider failure, parallel stress) and their claim limits is in
+> [Release evidence 2026-10-28](LAUNCH_SPRINT_ROADMAP.md#release-evidence-2026-10-28-integration-e7da6cd).
+> For later CI and second-adapter evidence, see [Current release status 2026-10-30](LAUNCH_SPRINT_ROADMAP.md#current-release-status--2026-10-30).

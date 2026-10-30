@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+'use strict';
+
+const readline = require('readline');
+
+const counts = Object.create(null);
+let failed = false;
+
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+let lineNumber = 0;
+
+rl.on('line', (line) => {
+  lineNumber++;
+  if (line.trim() === '') return;
+  let record;
+  try {
+    record = JSON.parse(line);
+  } catch (err) {
+    failed = true;
+    process.stderr.write(`error: line ${lineNumber}: invalid JSON: ${err.message}\n`);
+    return;
+  }
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+    failed = true;
+    process.stderr.write(`error: line ${lineNumber}: not a JSON object\n`);
+    return;
+  }
+  if (typeof record.service !== 'string' || typeof record.level !== 'string') {
+    failed = true;
+    process.stderr.write(`error: line ${lineNumber}: service and level must be strings\n`);
+    return;
+  }
+  if (record.level === 'error') {
+    counts[record.service] = (counts[record.service] || 0) + 1;
+  }
+});
+
+rl.on('close', () => {
+  if (failed) process.exit(1);
+  const sorted = Object.keys(counts).sort();
+  const out = {};
+  for (const key of sorted) out[key] = counts[key];
+  process.stdout.write(JSON.stringify(out) + '\n');
+});

@@ -9,6 +9,8 @@ import {
   executeApproveCommand,
   executeDoctorCommand,
   executeInitCommand,
+  executePauseCommand,
+  executeResumeCommand,
   executeAnalyzeCommand,
   executePlanCommand,
   executePlanShowCommand,
@@ -65,6 +67,8 @@ export async function runCli(
       case "init":
       case "run":
       case "run-all":
+      case "pause":
+      case "resume":
       case "status":
       case "inspect":
       case "approve":
@@ -90,10 +94,14 @@ export async function runCli(
                     : await executeRunCommand(command.taskId, services, io);
                 case "run-all":
                   return await executeUnattendedRunCommand(command.parallel, services, io);
+                case "pause":
+                  return await executePauseCommand(command.reason, services, io);
+                case "resume":
+                  return await executeResumeCommand(services, io);
                 case "status":
                   return await executeStatusCommand(services, io);
                 case "inspect":
-                  return await executeInspectCommand(command.taskId, services, io);
+                  return await executeInspectCommand(command.taskId, services, io, command.usage);
                 case "approve":
                   return await executeApproveCommand(command.taskId, services, io);
                 case "retry":

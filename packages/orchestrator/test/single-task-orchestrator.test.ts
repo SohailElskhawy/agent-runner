@@ -71,10 +71,13 @@ let baseRevision: string;
 let agent: FakeAgentRuntime;
 let verification: FakeVerificationEngine;
 let orchestrator: SingleTaskOrchestrator;
+let inFlightRuns: Promise<unknown>[] = [];
 
 type WireOptions = {
+  readonly storeOverride?: RunnerStore | undefined;
   readonly agent?: AgentBehavior | undefined;
   readonly verification?: VerificationResponse | undefined;
+  readonly gitOverride?: GitManager | undefined;
   readonly gitFailures?: Partial<Record<string, () => Error>> | undefined;
   readonly projectRoot?: string | undefined;
   readonly signal?: AbortSignal | undefined;
@@ -87,10 +90,10 @@ function wireOrchestrator(options: WireOptions = {}): void {
   );
   const effectiveGit =
     options.gitFailures === undefined
-      ? git
-      : injectGitFailures(git, options.gitFailures);
-  orchestrator = createSingleTaskOrchestrator({
-    store,
+      ? options.gitOverride ?? git
+      : injectGitFailures(options.gitOverride ?? git, options.gitFailures);
+  const delegate = createSingleTaskOrchestrator({
+    store: options.storeOverride ?? store,
     git: effectiveGit,
     agent,
     verification,
@@ -103,6 +106,13 @@ function wireOrchestrator(options: WireOptions = {}): void {
     agentTimeoutMs: 5_000,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
+  orchestrator = {
+    run(taskId) {
+      const promise = delegate.run(taskId);
+      inFlightRuns.push(promise);
+      return promise;
+    },
+  };
 }
 
 async function storedTask(id: string = taskId): Promise<Task> {
@@ -226,8 +236,9 @@ function expectRejected(
   }
 }
 
-describe("SingleTaskOrchestrator", () => {
+describe("SingleTaskOrchestrator", { timeout: 20_000 }, () => {
   beforeEach(async () => {
+    inFlightRuns = [];
     directory = mkdtempSync(join(tmpdir(), "agentic-runner-vs011-"));
     repoPath = join(directory, "project repo");
     worktreesDir = join(directory, "worktrees");
@@ -247,8 +258,110 @@ describe("SingleTaskOrchestrator", () => {
   });
 
   afterEach(async () => {
+    await Promise.allSettled(inFlightRuns);
     await store.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it.each(["success", "failure", "timeout", "cancelled"] as const)("records %s invocation evidence and mode before invoking", async (kind) => {
+    const usage = { schemaVersion: 1 as const, status: "partial" as const, counters: { inputTokens: 42 } };
+    const writes: Attempt[] = [];
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "putAttempt") return async (attempt: Attempt) => {
+        writes.push(attempt);
+        return target.putAttempt(attempt);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    wireOrchestrator({ storeOverride: intercepted, agent: async (invocation) => {
+      expect((await storedAttempts())[0]).toMatchObject({ executionMode: "single-task", status: "RUNNING" });
+      if (kind === "success") writeChangeAt(invocation.worktreePath, change.path, change.content);
+      const result = { output: { stdout: "result log" }, durationMs: 1, usage };
+      return kind === "failure" ? { ...result, kind, failure: { kind: "process", message: "failed" } } : { ...result, kind };
+    } });
+    const outcome = await orchestrator.run(taskId);
+    expect(outcome.kind).toBe(kind === "success" ? "completed" : kind === "cancelled" ? "cancelled" : "failed");
+    expect(writes.find((attempt) => attempt.invocationUsage !== undefined)).toMatchObject({ status: "RUNNING", invocationUsage: usage, logs: { stdout: "result log" } });
+    expect((await storedAttempts())[0]).toMatchObject({ executionMode: "single-task", invocationUsage: usage, logs: { stdout: "result log" } });
+  });
+
+  it.each(["omitted", "throws"] as const)("leaves usage absent when invocation %s", async (kind) => {
+    wireOrchestrator({ agent: () => {
+      if (kind === "throws") throw new Error("invoke failed");
+      return { kind: "failure", failure: { kind: "process", message: "failed" }, output: {}, durationMs: 1 };
+    } });
+    await orchestrator.run(taskId);
+    expect((await storedAttempts())[0]).not.toHaveProperty("invocationUsage");
+  });
+
+  it.each(["verification", "git"] as const)("preserves returned usage after a later %s failure", async (phase) => {
+    const usage = { schemaVersion: 1 as const, status: "partial" as const, counters: { outputTokens: 4 } };
+    wireOrchestrator({
+      agent: (invocation) => {
+        writeChangeAt(invocation.worktreePath, change.path, change.content);
+        return { kind: "success", output: { stdout: "saved" }, durationMs: 1, usage };
+      },
+      ...(phase === "verification" ? { verification: (input: Parameters<VerificationResponse>[0]) => failedVerificationRun(input, "typecheck", "failed") } : { gitFailures: { commitStaged: gitFailure("commitStaged") } }),
+    });
+    expect((await orchestrator.run(taskId)).kind).toBe("failed");
+    expect((await storedAttempts())[0]).toMatchObject({ executionMode: "single-task", invocationUsage: usage, logs: { stdout: "saved" } });
+  });
+
+  it("does not mask a failed result evidence write with a status-only retry", async () => {
+    const usage = { schemaVersion: 1 as const, status: "unknown" as const };
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "putAttempt") return async (attempt: Attempt) => {
+        if (attempt.invocationUsage !== undefined) throw new Error("evidence write failed");
+        return target.putAttempt(attempt);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    wireOrchestrator({ storeOverride: intercepted, agent: () => ({ kind: "success", output: { stdout: "log" }, durationMs: 1, usage }) });
+    await expect(orchestrator.run(taskId)).rejects.toThrow(/evidence write failed/);
+    expect((await storedAttempts())[0]).toMatchObject({ status: "RUNNING", executionMode: "single-task" });
+    expect((await storedAttempts())[0]).not.toHaveProperty("invocationUsage");
+  });
+
+  it("surfaces conflicting result evidence without changing the stored attempt", async () => {
+    const storedUsage = { schemaVersion: 1 as const, status: "unknown" as const };
+    const returnedUsage = { schemaVersion: 1 as const, status: "partial" as const, counters: { inputTokens: 1 } };
+    let before: Attempt | undefined;
+    wireOrchestrator({ agent: async () => {
+      const [attempt] = await storedAttempts();
+      if (attempt === undefined) throw new Error("missing attempt");
+      await store.putAttempt({ ...attempt, invocationUsage: storedUsage });
+      before = (await storedAttempts())[0];
+      return { kind: "success", output: { stdout: "result" }, durationMs: 1, usage: returnedUsage };
+    } });
+    await expect(orchestrator.run(taskId)).rejects.toThrow(/existing invocation usage observation/);
+    expect((await storedAttempts())[0]).toEqual(before);
+  });
+
+  it("rejects when pause wins immediately before attempt admission", async () => {
+    const intercepted = new Proxy(store, { get(target, property) {
+      if (property === "transaction") return async (body: () => Promise<unknown>) => {
+        await target.pauseRunner("proj-1", new Date().toISOString());
+        return target.transaction(body);
+      };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const outcome = await (wireOrchestrator({ storeOverride: intercepted }), orchestrator.run(taskId));
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
+  });
+
+  it("refuses a paused direct run before creating an attempt or worktree", async () => {
+    await store.pauseRunner("proj-1", new Date().toISOString());
+    const outcome = await orchestrator.run(taskId);
+    expect(outcome.kind).toBe("rejected");
+    expect(await store.listAttempts({ taskId })).toEqual([]);
+    expect(await store.listEvents({ taskId })).toEqual([]);
+    expect(existsSync(worktreesDir)).toBe(false);
   });
 
   it("runs one READY task end-to-end and persists DONE only after integration", async () => {
@@ -833,7 +946,6 @@ describe("SingleTaskOrchestrator", () => {
   });
 
   it("matches repository-relative scope patterns against Windows-style host paths", async () => {
-    wireOrchestrator({ agent: agentAppliesChange(change) });
     const scopedGit = withExtraStatusEntries(git, [
       {
         indexStatus: "?",
@@ -841,19 +953,7 @@ describe("SingleTaskOrchestrator", () => {
         path: "docs\\secret.md",
       },
     ]);
-    orchestrator = createSingleTaskOrchestrator({
-      store,
-      git: scopedGit,
-      agent,
-      verification,
-      verificationChecks: [
-        { name: "typecheck", executable: "node", args: ["--version"] },
-        { name: "unit", executable: "node", args: ["--version"] },
-      ],
-      projectRoot: repoPath,
-      worktreesDir,
-      agentTimeoutMs: 5_000,
-    });
+    wireOrchestrator({ agent: agentAppliesChange(change), gitOverride: scopedGit });
 
     const outcome = await orchestrator.run(taskId);
 
@@ -868,20 +968,7 @@ describe("SingleTaskOrchestrator", () => {
     const scopedGit = withExtraStatusEntries(git, [
       { indexStatus: "M", worktreeStatus: "M", path: "src\\utils.ts" },
     ]);
-    wireOrchestrator({ agent: agentAppliesChange(change) });
-    orchestrator = createSingleTaskOrchestrator({
-      store,
-      git: scopedGit,
-      agent,
-      verification,
-      verificationChecks: [
-        { name: "typecheck", executable: "node", args: ["--version"] },
-        { name: "unit", executable: "node", args: ["--version"] },
-      ],
-      projectRoot: repoPath,
-      worktreesDir,
-      agentTimeoutMs: 5_000,
-    });
+    wireOrchestrator({ agent: agentAppliesChange(change), gitOverride: scopedGit });
 
     const outcome = await orchestrator.run(taskId);
 

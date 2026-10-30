@@ -15,6 +15,16 @@ import type { RunnerAppService } from "../application/runner-app-service.js";
 export const EXIT_SUCCESS = 0;
 export const EXIT_FAILURE = 1;
 
+export async function executePauseCommand(reason: string | undefined, services: RunnerAppService, io: CliIo): Promise<number> {
+  io.writeLine((await services.pause(reason)).message);
+  return EXIT_SUCCESS;
+}
+
+export async function executeResumeCommand(services: RunnerAppService, io: CliIo): Promise<number> {
+  io.writeLine((await services.resume()).message);
+  return EXIT_SUCCESS;
+}
+
 export async function executeInitCommand(
   services: RunnerAppService,
   io: CliIo,
@@ -106,13 +116,14 @@ export async function executeInspectCommand(
   taskId: TaskId,
   services: RunnerAppService,
   io: CliIo,
+  usage = false,
 ): Promise<number> {
   const inspection = await services.inspect(taskId);
   if (inspection === null) {
     io.writeError(`task "${taskId}" was not found in runner state`);
     return EXIT_FAILURE;
   }
-  renderTaskInspection(io, inspection);
+  renderTaskInspection(io, inspection, usage);
   return EXIT_SUCCESS;
 }
 

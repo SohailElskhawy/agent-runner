@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,8 +19,8 @@ import type { ContextPack } from "@agentic-dev-runner/core";
 const SPACED_DIR_PREFIX = "agentic worktree m033a spaced dir ";
 const CONTEXT_DIR_PREFIX = "agentic-codex-context-";
 
-function countContextDirs(): number {
-  return readdirSync(tmpdir()).filter((entry) =>
+function countContextDirs(worktreePath: string): number {
+  return readdirSync(worktreePath).filter((entry) =>
     entry.startsWith(CONTEXT_DIR_PREFIX),
   ).length;
 }
@@ -90,7 +90,7 @@ describe("CodexAdapter", () => {
 
   beforeEach(() => {
     runner = createNodeProcessRunner();
-    spacedDir = mkdtempSync(join(tmpdir(), SPACED_DIR_PREFIX));
+    spacedDir = realpathSync(mkdtempSync(join(tmpdir(), SPACED_DIR_PREFIX)));
     worktreePath = join(spacedDir, "task worktree dir");
     mkdirSync(worktreePath, { recursive: true });
     executable = join(spacedDir, "fake codex node copy.exe");
@@ -306,26 +306,37 @@ describe("CodexAdapter", () => {
     expect(report.contextContent).toBe(stableStringify(contextPack));
   });
 
-  it("removes temp context artifacts after a successful invocation", async () => {
-    const before = countContextDirs();
+  it("removes worktree context artifacts after a successful invocation", async () => {
+    const before = countContextDirs(worktreePath);
     const adapter = makeAdapter();
     const result = await adapter.invoke(makeInvocation());
 
     expect(result.kind).toBe("success");
-    expect(countContextDirs()).toBe(before);
+    const report = JSON.parse(result.kind === "success" ? result.output.stdout ?? "" : "") as FakeAgentReport;
+    expect(report.contextContent).toBe(stableStringify(contextPack));
+    expect(report.contextPath).not.toBeNull();
+    expect(existsSync(report.contextPath as string)).toBe(false);
+    expect(countContextDirs(worktreePath)).toBe(before);
   });
 
-  it("removes temp context artifacts after a spawn-error invocation", async () => {
-    const before = countContextDirs();
+  it("removes worktree context artifacts after a spawn-error invocation", async () => {
+    const before = countContextDirs(worktreePath);
     const missing = join(spacedDir, "missing codex.exe");
-    const adapter = new CodexAdapter(runner, { executable: missing });
+    let countDuringSpawn = 0;
+    const adapter = new CodexAdapter({
+      run: (spec) => {
+        countDuringSpawn = countContextDirs(worktreePath);
+        return runner.run(spec);
+      },
+    }, { executable: missing });
     const result = await adapter.invoke(makeInvocation());
 
     expect(result.kind).toBe("failure");
-    expect(countContextDirs()).toBe(before);
+    expect(countDuringSpawn).toBeGreaterThan(before);
+    expect(countContextDirs(worktreePath)).toBe(before);
   });
 
-  it("does not write the context pack into the supplied task worktree", async () => {
+  it("leaves the supplied task worktree clean after invocation", async () => {
     const adapter = makeAdapter();
     const result = await adapter.invoke(makeInvocation());
 
@@ -333,7 +344,7 @@ describe("CodexAdapter", () => {
     expect(readdirSync(worktreePath)).toEqual([]);
   });
 
-  it("resolves with the primary result even when temp cleanup fails", async () => {
+  it("resolves with the primary result even when context cleanup fails", async () => {
     const adapter = new CodexAdapter(runner, {
       executable,
       launcherArgs: [fixturePath("fake-codex.mjs")],
@@ -344,14 +355,14 @@ describe("CodexAdapter", () => {
     const result = await adapter.invoke(makeInvocation());
 
     expect(result.kind).toBe("success");
-    expect(countContextDirs()).toBeGreaterThan(0);
+    expect(countContextDirs(worktreePath)).toBeGreaterThan(0);
     const report = JSON.parse(
       result.kind === "success" ? (result.output.stdout ?? "") : "",
     ) as FakeAgentReport;
     expect(report.contextContent).toBe(stableStringify(contextPack));
   });
 
-  it("resolves with a normalized failure even when temp cleanup fails", async () => {
+  it("resolves with a normalized failure even when context cleanup fails", async () => {
     const missing = join(spacedDir, "missing codex.exe");
     const adapter = new CodexAdapter(runner, {
       executable: missing,

@@ -192,6 +192,7 @@ class SequentialTaskOrchestrator implements SingleTaskOrchestrator {
       taskId,
       number: attemptNumber,
       status: "RUNNING",
+      executionMode: "single-task",
       agent: this.agent.descriptor.id,
       ...(model === undefined ? {} : { model }),
       baseRevision,
@@ -200,6 +201,7 @@ class SequentialTaskOrchestrator implements SingleTaskOrchestrator {
 
     try {
       await this.store.transaction(async () => {
+        if ((await this.store.getRunnerControl(task.projectId)).state === "PAUSED") throw new Error('runner is paused; run "agentic resume" to continue');
         await this.store.putAttempt(attempt);
         await this.store.appendEvents([
           {
@@ -267,7 +269,11 @@ class SequentialTaskOrchestrator implements SingleTaskOrchestrator {
       });
 
       const logs = attemptLogsFrom(agentResult.output);
-      attempt = logs === undefined ? attempt : { ...attempt, logs };
+      attempt = {
+        ...attempt,
+        ...(logs === undefined ? {} : { logs }),
+        ...(agentResult.usage === undefined ? {} : { invocationUsage: agentResult.usage }),
+      };
       await this.store.putAttempt(attempt);
 
       if (agentResult.kind === "failure") {

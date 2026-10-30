@@ -6,6 +6,7 @@ export function renderRunResult(io: CliIo, result: RunResult): void {
     case "completed":
       io.writeLine(result.message);
       break;
+    case "paused":
     case "failed":
     case "cancelled":
     case "blocked":

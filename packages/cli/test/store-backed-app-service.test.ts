@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import type { Task, TaskId, TaskStatus } from "@agentic-dev-runner/core";
+import { deriveAttemptUsage, type Task, type TaskId, type TaskStatus, type StageRun, type InvocationUsageObservation } from "@agentic-dev-runner/core";
 import {
   OrchestrationError,
   type CrashRecovery,
@@ -14,6 +14,7 @@ import type { AgentAvailability, AgentRegistry } from "@agentic-dev-runner/agent
 import { createStoreBackedAppService } from "../src/application/store-backed-app-service.js";
 import { outcomeToRunResult } from "../src/application/runner-app-service.js";
 import { runCli } from "../src/run-cli.js";
+import { renderTaskInspection } from "../src/render/render-inspect.js";
 import {
   captureIo,
   createFixtureAttempt,
@@ -71,7 +72,7 @@ class StubRecovery implements CrashRecovery {
 class StubUnattendedScheduler {
   readonly runCalls: { maxParallelism?: number | undefined }[] = [];
 
-  constructor(private readonly kind: "quiescent" | "blocked") {}
+  constructor(private readonly kind: "quiescent" | "blocked" | "paused") {}
 
   async run(options: { maxParallelism?: number } = {}) {
     this.runCalls.push(options);
@@ -203,6 +204,33 @@ describe("StoreBackedAppService", () => {
     }
     return { service: serviceWithOutcome(completedOutcome), store };
   }
+
+  it("performs startup reconciliation before refusing a paused run", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    await store.pauseRunner("proj-local", new Date().toISOString());
+    const log: string[] = [];
+    const orchestrator = new StubOrchestrator(completedOutcome, log);
+    const service = createStoreBackedAppService({ storePath, projectRoot: directory, store, orchestrator, recovery: new RecordingRecovery(log), agents: stubAgents });
+    expect((await service.run("M001")).kind).toBe("paused");
+    expect(log).toEqual(["reconcileUnfinished"]);
+    expect(orchestrator.calls).toEqual([]);
+  });
+
+  it("rolls back a pause when its event cannot be appended and remains usable", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    const failing = new Proxy(store, { get(target, property) {
+      if (property === "appendEvents") return async () => { throw new Error("event write failed"); };
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    const service = createStoreBackedAppService({ storePath, projectRoot: directory, store: failing, orchestrator: new StubOrchestrator(completedOutcome), recovery: new StubRecovery(), agents: stubAgents });
+    await expect(service.pause("maintenance")).rejects.toThrow("event write failed");
+    expect((await store.getRunnerControl("proj-local")).state).toBe("RUNNING");
+    expect(await store.listEvents({ type: "runner.paused" })).toEqual([]);
+    expect((await serviceWithOutcome(completedOutcome).pause()).changed).toBe(true);
+  });
 
   it("delegates run exactly once to the orchestrator and maps the outcome", async () => {
     const orchestrator = new StubOrchestrator(completedOutcome);
@@ -497,9 +525,11 @@ describe("StoreBackedAppService", () => {
     await store.putProject(createFixtureProject());
     await store.putTask(createFixtureTask({ status: "FAILED" }));
     await store.putAttempt(
-      createFixtureAttempt({
-        status: "FAILED",
-      }),
+      {
+        ...createFixtureAttempt({ status: "FAILED" }),
+        executionMode: "single-task",
+        invocationUsage: { schemaVersion: 1, status: "complete", counters: { inputTokens: 0, outputTokens: 7 } },
+      },
     );
     await store.appendEvents([
       {
@@ -523,6 +553,54 @@ describe("StoreBackedAppService", () => {
     expect(inspection).not.toBeNull();
     expect(inspection?.task.status).toBe("FAILED");
     expect(inspection?.attempts).toHaveLength(1);
+    expect(inspection?.attempts[0]?.usage).toMatchObject({ mode: "single-task", status: "complete", possible: 1, counters: { inputTokens: { subtotal: 0 }, outputTokens: { subtotal: 7 } } });
+    if (inspection === null || inspection.attempts[0] === undefined) throw new Error("Missing inspection attempt");
+    const actual = captureIo();
+    const withoutUsage = captureIo();
+    renderTaskInspection(actual.io, inspection);
+    renderTaskInspection(withoutUsage.io, { ...inspection, attempts: [{ ...inspection.attempts[0], usage: deriveAttemptUsage(createFixtureAttempt({ status: "FAILED" }), []) }] });
+    expect(actual.lines).toEqual(withoutUsage.lines);
+    const requested = captureIo();
+    renderTaskInspection(requested.io, inspection, true);
+    expect(requested.lines.join("\n")).toContain('"inputTokens": known subtotal=0; status="complete"; coverage=1/1 reported');
+    expect(requested.lines.join("\n")).toContain('"totalTokens": known subtotal=unknown');
+    expect(requested.lines.join("\n")).toContain("reported amounts: unknown");
+    expect(requested.lines.join("\n")).toContain("excludes project planning, VERIFY, INTEGRATE; includes workflow PLAN");
+
+    const base = { ...createFixtureAttempt({ id: "a" }), executionMode: "workflow" as const, cost: 98765, tokenUsage: { inputTokens: 87654 } };
+    const stage = (id: string, usage: InvocationUsageObservation): StageRun => ({ id, attemptId: "a", stage: "IMPLEMENT", status: "SUCCEEDED", usage });
+    const evidence = (n: number, relation: "subset" | "independent", amount: string): InvocationUsageObservation => ({
+      schemaVersion: 1, status: "complete", counters: { inputTokens: n, cacheReadTokens: 1 }, cacheRelation: relation,
+      cost: { amount, currency: "USD\u001b[31m", provenance: { source: "source\nINJECTED", scope: "call\u0085tail" } },
+    });
+    const overflow = deriveAttemptUsage(base, [stage("one\nBAD", evidence(Number.MAX_SAFE_INTEGER, "subset", "0.0000000100")), stage("two", evidence(1, "independent", "2.00"))]);
+    const partial = deriveAttemptUsage(base, [stage("partial", { schemaVersion: 1, status: "partial", counters: { outputTokens: 0 } })]);
+    const inconsistent = deriveAttemptUsage(base, [stage("bad", { schemaVersion: 1, status: "inconsistent", inconsistentReasons: ["conflict\nBAD"] })]);
+    const all = captureIo();
+    renderTaskInspection(all.io, { ...inspection, task: { ...inspection.task, id: "task\nBAD" }, attempts: [
+      { ...inspection.attempts[0], id: "retry\nBAD", number: 1, usage: overflow },
+      { ...inspection.attempts[0], id: "retry-2", number: 2, usage: partial },
+      { ...inspection.attempts[0], id: "retry-3", number: 3, usage: inconsistent },
+    ] }, true);
+    const output = all.lines.join("\n");
+    expect(output).toContain("Counter subtotal exceeds safe integer range");
+    expect(output).toContain("Cache relations are missing or incompatible");
+    expect(output).toContain('status="partial"');
+    expect(output).toContain('status="inconsistent"');
+    expect(output).toContain('"outputTokens": known subtotal=0');
+    expect(output).toContain('"0.0000000100"');
+    expect(output).toContain('"2.00"');
+    expect(output).toContain('source="source\\nINJECTED"');
+    expect(output).toContain('scope="call\\u0085tail"');
+    expect(output).toContain('"USD\\u001b[31m"');
+    expect(output).toContain('"one\\nBAD"');
+    expect(output).toContain('"conflict\\nBAD"');
+    expect(output).toContain('#2 "retry-2"');
+    expect(output).toContain('task: "task\\nBAD"');
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toContain("\nBAD");
+    expect(output).not.toContain("98765");
+    expect(output).not.toContain("87654");
     expect(inspection?.events).toHaveLength(1);
     expect(inspection?.events[0]?.type).toBe("task.transitioned");
   });
@@ -564,6 +642,17 @@ describe("StoreBackedAppService", () => {
     expect(result.message).toContain("quiescence");
     expect(result.message).toContain("1 DONE");
     expect(result.message).toContain("1 READY");
+  });
+
+  it("maps a scheduler drain to paused and a nonzero CLI exit", async () => {
+    await store.initialize();
+    await store.putProject(createFixtureProject());
+    const scheduler = new StubUnattendedScheduler("paused");
+    const service = createStoreBackedAppService({ storePath, projectRoot: directory, store, orchestrator: new StubOrchestrator(completedOutcome), recovery: new StubRecovery(), agents: stubAgents, scheduler: scheduler as unknown as never });
+    expect((await service.runUnattended()).kind).toBe("paused");
+    const { io, errors } = captureIo();
+    expect(await runCli(["run"], { io, servicesFactory: () => service })).toBe(1);
+    expect(errors.join(" ")).toContain("paused");
   });
 
   it("reports a blocked unattended run as failed with the final persisted state", async () => {

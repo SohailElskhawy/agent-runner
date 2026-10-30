@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeProcessRunner } from "@agentic-dev-runner/platform";
 import type { ProcessRunner } from "@agentic-dev-runner/platform";
 import { createGitManager } from "@agentic-dev-runner/git";
@@ -292,6 +292,111 @@ describe("executeCodeReviewStage (M055a)", () => {
       ...overrides,
     };
   }
+
+  it("retains usage when result processing throws", async () => {
+    await seedCommittedImplementation();
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 8 } } as const;
+    agent = new FakeAgentRuntime(() => ({
+      kind: "success", durationMs: 5, usage,
+      output: { get stdout(): string { throw new Error("invalid output"); } },
+    }));
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("retains usage when a failure result's output throws during finalization", async () => {
+    await seedCommittedImplementation();
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 5 } } as const;
+    agent = new FakeAgentRuntime(() => ({
+      kind: "failure", durationMs: 5, usage, failure: { kind: "process", message: "failed" },
+      output: { get stdout(): string { throw new Error("invalid output"); } },
+    }));
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("retains usage when the agent changes a read-only worktree", async () => {
+    await seedCommittedImplementation();
+    const usage = { schemaVersion: 1, status: "partial", counters: { outputTokens: 6 } } as const;
+    agent = new FakeAgentRuntime((invocation) => {
+      writeWorktreeFile(invocation.worktreePath, "unexpected.ts", "mutation\n");
+      return { kind: "success", output: { stdout: JSON.stringify({ decision: "APPROVED" }) }, durationMs: 5, usage };
+    });
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+    expect(outcome.stageRun.status).toBe("FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it("does not rewrite a final row if persistence throws after writing it", async () => {
+    await seedCommittedImplementation();
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 3 } } as const;
+    agent = new FakeAgentRuntime(() => {
+      return { kind: "success", output: { stdout: JSON.stringify({ decision: "APPROVED" }) }, durationMs: 5, usage };
+    });
+    const put = store.putStageRun.bind(store);
+    const writes = vi.spyOn(store, "putStageRun").mockImplementation(async (run) => {
+      await put(run);
+      if (run.status !== "RUNNING") throw new Error("after write");
+    });
+    await expect(executeCodeReviewStage(await codeReviewOptions())).rejects.toThrow("after write");
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(writes.mock.calls[1]?.[0]).toMatchObject({ status: "SUCCEEDED", usage });
+    writes.mockRestore();
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId))).toMatchObject({ status: "SUCCEEDED", usage });
+  });
+
+  it.each(["throw", "pre-abort"] as const)("leaves usage absent on %s without a result", async (mode) => {
+    await seedCommittedImplementation();
+    agent = new FakeAgentRuntime(() => { throw new Error("invocation failed"); });
+    const controller = new AbortController();
+    if (mode === "pre-abort") controller.abort();
+    const outcome = await executeCodeReviewStage(await codeReviewOptions({ signal: controller.signal }));
+    expect(outcome.stageRun.status).toBe(mode === "throw" ? "FAILED" : "CANCELLED");
+    expect(outcome.stageRun.usage).toBeUndefined();
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId))?.usage).toBeUndefined();
+  });
+
+  it.each(["", "not json", JSON.stringify({ decision: "CHANGES_REQUIRED", feedback: "Fix this" })])("retains usage for non-approved output %s", async (stdout) => {
+    await seedCommittedImplementation();
+    const usage = { schemaVersion: 1, status: "partial", counters: { outputTokens: 9 } } as const;
+    agent = new FakeAgentRuntime(() => ({ kind: "success", output: { stdout }, durationMs: 5, usage }));
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+    expect(outcome.stageRun.status).toBe(stdout.includes("CHANGES_REQUIRED") ? "SUCCEEDED" : "FAILED");
+    expect(outcome.stageRun.usage).toEqual(usage);
+    expect((await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId))?.usage).toEqual(usage);
+  });
+
+  it.each([
+    ["success", "SUCCEEDED"],
+    ["failure", "FAILED"],
+    ["timeout", "TIMED_OUT"],
+    ["cancelled", "CANCELLED"],
+  ] as const)("persists invocation usage for %s", async (kind, status) => {
+    const usage = { schemaVersion: 1, status: "partial", counters: { inputTokens: 0, outputTokens: 23 } } as const;
+    await seedCommittedImplementation();
+    agent = new FakeAgentRuntime(() => {
+      const output = { stdout: JSON.stringify({ decision: 'APPROVED' }) };
+      const result = kind === "failure"
+        ? { kind, output, durationMs: 5, failure: { kind: "process" as const, message: "failed" }, usage }
+        : { kind, output, durationMs: 5, usage };
+      return result;
+    });
+
+    const writes = vi.spyOn(store, "putStageRun");
+    const outcome = await executeCodeReviewStage(await codeReviewOptions());
+    expect(writes.mock.calls.at(-1)?.[0]).toMatchObject({ status, usage });
+    writes.mockRestore();
+    expect(outcome.stageRun.status).toBe(status);
+    expect(outcome.stageRun.usage).toEqual(usage);
+    const stored = (await store.listStageRuns(attemptId)).find((run) => run.id === codeReviewStageRunId(attemptId));
+    expect(stored?.status).toBe(status);
+    expect(stored?.usage).toEqual(usage);
+  });
 
   it("completes an APPROVED review of the implementation delta", async () => {
     let sawRunningStageRun = false;

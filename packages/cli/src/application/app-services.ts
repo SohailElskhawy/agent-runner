@@ -40,6 +40,7 @@ import {
   loadToleratedProjectConfiguration,
 } from "./project-configuration.js";
 import {
+  DEFAULT_PROJECT_ID,
   resolveAgentTimeoutMs,
   resolveMaxParallelism,
   resolveStorePath,
@@ -206,6 +207,7 @@ export async function createAppServices(
       ? createUnattendedScheduler({
           coordinator: createTaskExecutionCoordinator({
             store,
+            projectId: DEFAULT_PROJECT_ID,
             maxParallelism: resolveMaxParallelism(options),
             agentCandidates: () => discoverAgentCandidates(agentProfiles, agents),
             createExecutor: async (task, executionId) => {
