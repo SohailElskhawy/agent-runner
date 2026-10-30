@@ -670,6 +670,29 @@ describe("WorkflowTaskExecutor", { timeout: 20_000 }, () => {
     expect(transitions).not.toContainEqual(["INTEGRATING", "DONE"]);
   });
 
+  it.each(["scope", "verification", "git"] as const)("preserves all stage evidence after a %s failure", async (failure) => {
+    const behavior = stageDispatchAgent({
+      ...(failure === "scope" ? { implement: agentImplements({ path: "root.txt", content: "outside scope\n" }) } : {}),
+    });
+    let invocation = 0;
+    const executor = wireExecutor({
+      agent: async (input) => ({
+        ...await behavior(input),
+        usage: { schemaVersion: 1, status: "partial", counters: { inputTokens: ++invocation } },
+      }),
+      ...(failure === "verification" ? { verification: (input) => failedVerificationRun(input, "unit", "failed") } : {}),
+      ...(failure === "git" ? { gitFailures: { integrateBranch: gitFailure("integrateBranch") } } : {}),
+    });
+    const outcome = await executor.run();
+    expectFailed(outcome);
+    const runs = await store.listStageRuns(outcome.attempt.id);
+    for (const [index, stage] of ["PLAN", "PLAN_REVIEW", "IMPLEMENT", "CODE_REVIEW"].entries()) {
+      expect(runs.find((run) => run.stage === stage)?.usage).toEqual({
+        schemaVersion: 1, status: "partial", counters: { inputTokens: index + 1 },
+      });
+    }
+  });
+
   it("does not integrate when worktree verification fails", async () => {
     const executor = wireExecutor({
       agent: stageDispatchAgent({}),
