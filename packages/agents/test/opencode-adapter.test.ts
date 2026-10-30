@@ -323,7 +323,7 @@ describe("OpenCodeAdapter", () => {
     expect(report.argv).not.toContain("--standalone");
   });
 
-  it("reproduces AR048: opencode 2.x rejects --pure with Unrecognized flag", async () => {
+  it("does not version-probe non-read-only invocations on opencode 2.x", async () => {
     process.env.FAKE_AGENT_VERSION = "2.2.0";
     const record: { argvs: string[][]; envs: (Record<string, string> | undefined)[] } = {
       argvs: [],

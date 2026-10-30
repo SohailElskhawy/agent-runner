@@ -27,15 +27,15 @@ if (args.includes("--version")) {
 }
 
 if (major >= 2) {
-  // Emulates the opencode 2.x CLI strictness observed live on 2.2.0.
+  // Emulates opencode 2.x strictness observed live on 2.2.0 (AR048).
   if (args.includes("--pure")) {
     process.stderr.write(`Unrecognized flag: --pure\n`);
     process.exit(1);
   }
   const agentIndex = args.indexOf("--agent");
   if (agentIndex !== -1 && !args.includes("--standalone")) {
-    // 2.x `run` without --standalone attaches to the shared background server,
-    // which never received our injected OPENCODE_CONFIG agent.
+    // 2.x `run` without --standalone may attach to a shared background server
+    // started before OPENCODE_CONFIG existed, so the injected agent is unknown.
     process.stderr.write(`Agent not found: "${args[agentIndex + 1]}"\n`);
     process.exit(1);
   }

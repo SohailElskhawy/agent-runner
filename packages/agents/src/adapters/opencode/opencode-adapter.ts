@@ -57,6 +57,7 @@ export class OpenCodeAdapter implements AgentRuntime {
   private readonly runner: ProcessRunner;
   private readonly options: OpenCodeAdapterOptions;
   private readonly removeDirectory: ContextDirectoryRemover;
+  private majorVersionProbe: Promise<number | null> | undefined;
   private cliMajorVersion: Promise<number> | undefined;
 
   constructor(runner: ProcessRunner, options: OpenCodeAdapterOptions = {}) {
