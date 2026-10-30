@@ -539,6 +539,26 @@ Publish the first public Technical Preview.
 
 # Execution Status and Evidence
 
+## Current release status — 2026-10-30
+
+CI run [41034987347](https://github.com/SohailElskhawy/agent-runner/actions/runs/41034987347)
+passed lint, build, typecheck and tests on Linux, macOS and Windows at
+`b6acf720bc52ed2f0caf391bba793e0ad9de6533`. This does not establish CI
+results for a later or eventual release commit.
+
+The [real OpenCode example](../examples/jsonl-error-report/runs/opencode-2026-10-27/final/README.md)
+completed one task with task and integration verification and one completed
+queue entry. It satisfies evidence of a successful live task through a second
+adapter alongside the Codex dogfood; it is not a 20-task release dogfood run.
+
+L015 remains **Open**: the strict live 20-entry serialized queue has not been
+verified, and CI must be green at the release commit. L016 remains unpublished
+and requires owner authorization. This evidence does not establish real provider
+usage counters, a second-adapter 20-task queue, Windows Job Object termination,
+or a new successful live OpenCode planning run.
+
+## Historical status — September 30, 2026
+
 **Reviewed:** September 30, 2026
 
 | Task | Status | Evidence |
@@ -578,8 +598,8 @@ evidence. Release verification remains open until cross-platform CI, successful
 live execution through a second adapter, and the complete 20-entry queue gate
 have results.
 
-The two tables above are the September 30, 2026 historical record and are kept
-as historical.
+The two tables and accompanying assessment above are the September 30, 2026
+historical record; see the current status above for later evidence.
 
 ## Release evidence 2026-10-28 (integration `e7da6cd`)
 

@@ -15,8 +15,8 @@ Before publishing or tagging, all of the following evidence gates must be verifi
 Passing a local command does not complete a release gate until its result and
 commit are recorded. Keep unresolved CI, provider, dogfood, and platform
 checks explicit in `docs/LAUNCH_SPRINT_ROADMAP.md` and `docs/DOGFOOD.md`.
-The latest dated evidence snapshot with its claim limits is
-[Release evidence 2026-10-28](LAUNCH_SPRINT_ROADMAP.md#release-evidence-2026-10-28-integration-e7da6cd).
+See [Current release status 2026-10-30](LAUNCH_SPRINT_ROADMAP.md#current-release-status--2026-10-30)
+and the earlier [release evidence snapshot](LAUNCH_SPRINT_ROADMAP.md#release-evidence-2026-10-28-integration-e7da6cd) for their claim limits.
 
 ### 1. CI Green on All Platforms
 Verify that the release commit passes CI on all three supported operating systems:
