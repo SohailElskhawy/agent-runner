@@ -246,6 +246,11 @@ function applyRunnerControlSchema(db: SchemaMigrationDatabase): void {
   ) STRICT`);
 }
 
+function applyInvocationUsageSchema(db: SchemaMigrationDatabase): void {
+  db.exec(`ALTER TABLE stage_runs ADD COLUMN usage_json TEXT`);
+  db.exec(`ALTER TABLE attempts ADD COLUMN invocation_usage_json TEXT`);
+}
+
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   {
     version: 1,
@@ -298,7 +303,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     up: applyTaskApprovalSchema,
   },
   { version: 11, name: "add-runner-control-state", up: applyRunnerControlSchema },
+  { version: 12, name: "add-invocation-usage-observations", up: applyInvocationUsageSchema },
 ];
+
+/** First schema version carrying the nullable usage observation columns. */
+export const USAGE_COLUMNS_SCHEMA_VERSION = 12;
 
 export const SCHEMA_VERSION: number =
   SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]?.version ?? 0;

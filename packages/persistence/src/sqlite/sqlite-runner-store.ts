@@ -6,11 +6,13 @@ import {
   ATTEMPT_STATUSES,
   EXECUTION_CLAIM_STATUSES,
   INTEGRATION_QUEUE_STATUSES,
+  INVOCATION_USAGE_SCHEMA_VERSION,
   STAGE_KINDS,
   STAGE_RUN_STATUSES,
   TASK_RISKS,
   TASK_TYPES,
   isTaskStatus,
+  parseInvocationUsageObservation,
   type Attempt,
   type AttemptFailure,
   type AttemptId,
@@ -21,6 +23,7 @@ import {
   type ExecutionClaimStatus,
   type IntegrationQueueEntry,
   type IntegrationQueueRequest,
+  type InvocationUsageObservation,
   type IsoTimestamp,
   type Project,
   type ProjectId,
@@ -49,7 +52,11 @@ import {
 } from "../ports/runner-store.js";
 import { PersistenceError, StoreClosedError } from "./errors.js";
 import { migrateSchema } from "./migrations.js";
-import { SCHEMA_MIGRATIONS, type SchemaMigration } from "./schema.js";
+import {
+  SCHEMA_MIGRATIONS,
+  USAGE_COLUMNS_SCHEMA_VERSION,
+  type SchemaMigration,
+} from "./schema.js";
 
 export type SqliteRunnerStoreOptions = {
   path: string;
@@ -68,6 +75,8 @@ export class SqliteRunnerStore implements RunnerStore {
   private readonly busyTimeoutMs: number;
   private readonly migrations: readonly SchemaMigration[];
   private db: DatabaseSync | null = null;
+  /** False when a caller-supplied migration list predates the usage columns. */
+  private hasUsageColumns = false;
   private initializing: Promise<void> | null = null;
 
   constructor(options: SqliteRunnerStoreOptions) {
@@ -91,10 +100,11 @@ export class SqliteRunnerStore implements RunnerStore {
         enableForeignKeyConstraints: true,
       });
       configureSqliteConnection(db, this.busyTimeoutMs);
-      migrateSchema(db, {
+      const version = migrateSchema(db, {
         migrations: this.migrations,
         source: this.path,
       });
+      this.hasUsageColumns = version >= USAGE_COLUMNS_SCHEMA_VERSION;
       this.db = db;
     } catch (error) {
       if (db !== null && db.isOpen) {
@@ -108,6 +118,41 @@ export class SqliteRunnerStore implements RunnerStore {
         error,
       );
     }
+  }
+
+  /**
+   * SQL fragments for the nullable usage column. A put that omits an
+   * observation keeps whatever evidence is already stored (the runner never
+   * erases evidence by omission); an invalid observation throws before any
+   * SQL runs. Stores opened on a migration list that predates the column
+   * keep their previous behavior and refuse only an explicit observation.
+   */
+  private usageSql(
+    observation: InvocationUsageObservation | undefined,
+    owner: string,
+    table: string,
+    column: string,
+  ): {
+    readonly columns: string;
+    readonly values: string;
+    readonly update: string;
+    readonly params: readonly (string | null)[];
+  } {
+    const json = usageObservationJson(observation, owner);
+    if (!this.hasUsageColumns) {
+      if (json !== null) {
+        throw new PersistenceError(
+          `Cannot persist ${owner}: database schema predates invocation usage observations`,
+        );
+      }
+      return { columns: "", values: "", update: "", params: [] };
+    }
+    return {
+      columns: `, ${column}`,
+      values: ", ?",
+      update: `,\n           ${column} = COALESCE(excluded.${column}, ${table}.${column})`,
+      params: [json],
+    };
   }
 
   private requireDb(operation: string): DatabaseSync {
@@ -286,13 +331,19 @@ export class SqliteRunnerStore implements RunnerStore {
 
   async putAttempt(attempt: Attempt): Promise<void> {
     const db = this.requireDb("putAttempt");
+    const usage = this.usageSql(
+      attempt.invocationUsage,
+      `attempt "${attempt.id}"`,
+      "attempts",
+      "invocation_usage_json",
+    );
     db.prepare(
       `INSERT INTO attempts (
          id, task_id, number, status, agent, model, base_revision,
          context_manifest_json, logs_json, token_usage_json, cost,
-         started_at, finished_at, failure_json
+         started_at, finished_at, failure_json${usage.columns}
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${usage.values})
        ON CONFLICT(id) DO UPDATE SET
          task_id = excluded.task_id,
          number = excluded.number,
@@ -306,7 +357,7 @@ export class SqliteRunnerStore implements RunnerStore {
          cost = excluded.cost,
          started_at = excluded.started_at,
          finished_at = excluded.finished_at,
-         failure_json = excluded.failure_json`,
+         failure_json = excluded.failure_json${usage.update}`,
     ).run(
       attempt.id,
       attempt.taskId,
@@ -326,6 +377,7 @@ export class SqliteRunnerStore implements RunnerStore {
       attempt.startedAt,
       attempt.finishedAt ?? null,
       attempt.failure === undefined ? null : JSON.stringify(attempt.failure),
+      ...usage.params,
     );
   }
 
@@ -584,12 +636,18 @@ export class SqliteRunnerStore implements RunnerStore {
 
   async putStageRun(stageRun: StageRun): Promise<void> {
     const db = this.requireDb("putStageRun");
+    const usage = this.usageSql(
+      stageRun.usage,
+      `stage run "${stageRun.id}"`,
+      "stage_runs",
+      "usage_json",
+    );
     try {
       db.prepare(
         `INSERT INTO stage_runs (
-           id, attempt_id, stage, status, started_at, finished_at, failure_json, output_json
+           id, attempt_id, stage, status, started_at, finished_at, failure_json, output_json${usage.columns}
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?${usage.values})
          ON CONFLICT(id) DO UPDATE SET
            attempt_id = excluded.attempt_id,
            stage = excluded.stage,
@@ -597,7 +655,7 @@ export class SqliteRunnerStore implements RunnerStore {
            started_at = excluded.started_at,
            finished_at = excluded.finished_at,
            failure_json = excluded.failure_json,
-           output_json = excluded.output_json`,
+           output_json = excluded.output_json${usage.update}`,
       ).run(
         stageRun.id,
         stageRun.attemptId,
@@ -611,6 +669,7 @@ export class SqliteRunnerStore implements RunnerStore {
         stageRun.output === undefined
           ? null
           : JSON.stringify(stageRun.output),
+        ...usage.params,
       );
     } catch (error) {
       if (isForeignKeyViolation(error)) {
@@ -1165,6 +1224,7 @@ function attemptFromRow(row: Record<string, unknown>): Attempt {
   const cost = optionalNumberColumn(row, "cost");
   const finishedAt = optionalTextColumn(row, "finished_at");
   const failure = optionalJsonColumn<AttemptFailure>(row, "failure_json");
+  const invocationUsage = usageObservationColumn(row, "invocation_usage_json");
 
   return {
     id: textColumn(row, "id"),
@@ -1185,6 +1245,7 @@ function attemptFromRow(row: Record<string, unknown>): Attempt {
     startedAt: textColumn(row, "started_at"),
     ...(finishedAt === null ? {} : { finishedAt }),
     ...(failure === null ? {} : { failure }),
+    ...(invocationUsage === null ? {} : { invocationUsage }),
   };
 }
 
@@ -1432,6 +1493,7 @@ function stageRunFromRow(row: Record<string, unknown>): StageRun {  const starte
   const finishedAt = optionalTextColumn(row, "finished_at");
   const failure = optionalJsonColumn<StageRunFailure>(row, "failure_json");
   const output = optionalJsonColumn<StageRunOutput>(row, "output_json");
+  const usage = usageObservationColumn(row, "usage_json");
 
   return {
     id: textColumn(row, "id"),
@@ -1446,7 +1508,52 @@ function stageRunFromRow(row: Record<string, unknown>): StageRun {  const starte
     ...(finishedAt === null ? {} : { finishedAt }),
     ...(failure === null ? {} : { failure }),
     ...(output === null ? {} : { output }),
+    ...(usage === null ? {} : { usage }),
   };
+}
+
+/**
+ * Validates an observation before it is written. Only the sanitized copy is
+ * serialized; anything the contract rejects (malformed, contradictory, future
+ * or unsupported schema version) throws before any SQL runs.
+ */
+function usageObservationJson(
+  observation: InvocationUsageObservation | undefined,
+  owner: string,
+): string | null {
+  if (observation === undefined) return null;
+  const parsed = parseInvocationUsageObservation(observation);
+  if (parsed === null) {
+    throw new PersistenceError(
+      `Cannot persist ${owner}: invalid invocation usage observation (malformed, contradictory or unsupported schema version)`,
+    );
+  }
+  return JSON.stringify(parsed);
+}
+
+/**
+ * Reads a stored observation. Stored evidence that no longer validates is
+ * never repaired, defaulted or dropped: the read fails explicitly and the
+ * stored value is left untouched.
+ */
+function usageObservationColumn(
+  row: Record<string, unknown>,
+  column: string,
+): InvocationUsageObservation | null {
+  const text = optionalTextColumn(row, column);
+  if (text === null) return null;
+  const value = parseJsonColumn<unknown>(text, column);
+  const parsed = parseInvocationUsageObservation(value);
+  if (parsed !== null) return parsed;
+  const version =
+    typeof value === "object" && value !== null
+      ? (value as { readonly schemaVersion?: unknown }).schemaVersion
+      : undefined;
+  throw new PersistenceError(
+    typeof version === "number" && version !== INVOCATION_USAGE_SCHEMA_VERSION
+      ? `Column "${column}" holds invocation usage schema version ${String(version)}, which is unsupported (supported: ${String(INVOCATION_USAGE_SCHEMA_VERSION)})`
+      : `Column "${column}" does not hold a valid invocation usage observation`,
+  );
 }
 
 function isForeignKeyViolation(error: unknown): boolean {
